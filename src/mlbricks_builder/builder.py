@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import uuid
 
-from .graph import new_project, primitive_catalog
+from .graph import new_project, primitive_catalog, tinystories_30m_project
 from .runtime import get_mlbricks_info
 
 _STATIC = Path(__file__).parent / "static"
@@ -17,8 +17,13 @@ class Builder:
     Notebook rendering uses the standard `_repr_html_` protocol.
     """
 
-    def __init__(self, project=None):
-        self.state = project or new_project()
+    def __init__(self, project=None, preset=None):
+        if project is not None:
+            self.state = project
+        elif preset in {"tinystories", "tinystories-30m", "demo"}:
+            self.state = tinystories_30m_project()
+        else:
+            self.state = new_project()
         self.catalog = primitive_catalog()
         self._instance_id = f"mlb_{uuid.uuid4().hex}"
 
