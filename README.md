@@ -228,3 +228,19 @@ The canvas overlays no longer move when the graph is horizontally scrolled:
 - expanding Model Details does **not** resize the canvas or move the node row/banner
 - when Model Details opens, it covers the lower canvas/banner area as requested
   instead of pushing the banner upward
+
+
+## v0.3.9 — horizontal-only HUD persistence
+
+Blueprint and the node-layout instruction banner now remain horizontally
+persistent during left/right graph scrolling, but they are **not vertically
+pinned**.
+
+The vertical layout behaves as one continuous stack:
+
+`Blueprint → fixed gap → node row → fixed gap → instruction banner`
+
+So when the user scrolls the canvas vertically, all three move together and
+their relative vertical distances stay unchanged.
+
+Model Details remains an overlay drawer and does not reflow the graph.

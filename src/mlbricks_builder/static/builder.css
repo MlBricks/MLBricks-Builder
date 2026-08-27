@@ -82,7 +82,7 @@
 .mlb-breadcrumbs{display:flex;gap:5px;align-items:center}
 .mlb-crumb{border:0;background:transparent;color:#a794ff;font-size:9px;cursor:pointer}
 .mlb-flow-wrap{position:relative;min-width:max-content}
-.mlb-flow{display:flex;align-items:flex-start;gap:12px;min-height:0;width:max-content;padding:106px 18px 82px}
+.mlb-flow{display:flex;align-items:flex-start;gap:12px;min-height:0;width:max-content;padding:0 18px}
 .mlb-node{
   width:112px;height:295px;box-sizing:border-box;border:1.5px solid #3a4a5b;border-radius:10px;
   background:linear-gradient(180deg,#17212c,#121a23);position:relative;padding:10px 8px;
@@ -127,7 +127,6 @@
   position:sticky;
   z-index:26;
   left:12px;
-  bottom:12px;
   width:max-content;
   max-width:calc(100% - 28px);
   box-sizing:border-box;
@@ -138,12 +137,13 @@
   padding:7px 9px;
   font-size:8px;
   white-space:nowrap;
-  box-shadow:0 3px 10px rgba(0,0,0,.18)
+  box-shadow:0 3px 10px rgba(0,0,0,.18);
+  margin-top:28px;
+  margin-bottom:10px
 }
 .mlb-minimap{
   position:sticky;
   z-index:28;
-  top:12px;
   left:calc(100% - 140px);
   width:132px;
   height:72px;
@@ -153,7 +153,9 @@
   padding:6px 7px;
   box-sizing:border-box;
   pointer-events:none;
-  box-shadow:0 4px 14px rgba(0,0,0,.22)
+  box-shadow:0 4px 14px rgba(0,0,0,.22);
+  margin-top:10px;
+  margin-bottom:28px
 }
 .mlb-minimap-grid{
   display:flex;gap:3px;align-items:center;height:43px;overflow:hidden
@@ -285,4 +287,4 @@
 
 /* Persistent runway around the node row:
    Blueprint HUD at the top, graph nodes in the middle, instruction HUD at bottom. */
-.mlb-flow-wrap{padding-top:8px;padding-bottom:8px}
+.mlb-flow-wrap{padding-top:0;padding-bottom:0}

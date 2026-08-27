@@ -375,7 +375,7 @@
 
       // Top bar
       const top=document.createElement("div");top.className="mlb-topbar";
-      const logo=document.createElement("div");logo.className="mlb-logo";logo.innerHTML='<span class="mlb-logo-mark">◇</span>MLBricks Builder <span class="mlb-beta">v0.3.8</span>';top.appendChild(logo);
+      const logo=document.createElement("div");logo.className="mlb-logo";logo.innerHTML='<span class="mlb-logo-mark">◇</span>MLBricks Builder <span class="mlb-beta">v0.3.9</span>';top.appendChild(logo);
       const title=document.createElement("div");title.className="mlb-project-title";title.textContent=state.project?.name||"Untitled";top.appendChild(title);
       const saved=document.createElement("div");saved.className="mlb-save-state";saved.textContent="• Saved";top.appendChild(saved);
       const sp=document.createElement("div");sp.className="mlb-topspacer";top.appendChild(sp);
