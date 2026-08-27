@@ -189,3 +189,29 @@ growing with the Brick Library or Inspector.
 - large blank space above/below the node row was reduced
 - Presets/Graph Info/Compute/Shortcuts moved into a compact **Model Details**
   drawer that is collapsed by default
+
+
+## v0.3.7 — sketch-accurate 3-in / 3-out node terminals
+
+The six terminals now match the hand-drawn design instead of putting all three
+inputs on the left and all three outputs on the right.
+
+Each node has:
+
+- **Top edge**
+  - input near the top-left
+  - output near the top-right
+- **Middle**
+  - input on the left side
+  - output on the right side
+- **Bottom edge**
+  - input near the bottom-left
+  - output near the bottom-right
+
+This keeps all signals left-to-right while allowing:
+
+- top routes to travel above intervening nodes
+- normal main routes through the center
+- bottom routes below intervening nodes
+
+The Builder notebook workspace is also about 20% taller than v0.3.6.

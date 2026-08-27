@@ -249,14 +249,31 @@
 
 
     function portButtons(node, side){
-      const positions=[24,50,76];
       let html="";
       for(let i=0;i<3;i++){
-        html += '<button class="mlb-port '+side+' lane-'+i+'" data-side="'+side+'" data-port-index="'+i+'" style="top:'+positions[i]+'%" type="button" aria-label="'+portLabel(side,i)+'" title="'+portLabel(side,i)+'"></button>';
+        let style="";
+        let posClass="";
+
+        if(i===0){
+          // Top lane: ports live ON the top edge, input on left half / output on right half.
+          const left = side==="in" ? 28 : 72;
+          style='left:'+left+'%;top:-6px;transform:translateX(-50%)';
+          posClass="top-edge";
+        }else if(i===1){
+          // Main lane: conventional side-center input/output.
+          style='top:50%;transform:translateY(-50%)';
+          posClass="middle-side";
+        }else{
+          // Bottom lane: ports live ON the bottom edge, input on left half / output on right half.
+          const left = side==="in" ? 28 : 72;
+          style='left:'+left+'%;bottom:-6px;top:auto;transform:translateX(-50%)';
+          posClass="bottom-edge";
+        }
+
+        html += '<button class="mlb-port '+side+' lane-'+i+' '+posClass+'" data-side="'+side+'" data-port-index="'+i+'" style="'+style+'" type="button" aria-label="'+portLabel(side,i)+'" title="'+portLabel(side,i)+'"></button>';
       }
       return html;
     }
-
     function nodeMiniFields(node,info){
       const api=apiInfo(node);const source=(api.parameters||info.api||[]).slice(0,4);
       return source.map(f=>{
@@ -358,7 +375,7 @@
 
       // Top bar
       const top=document.createElement("div");top.className="mlb-topbar";
-      const logo=document.createElement("div");logo.className="mlb-logo";logo.innerHTML='<span class="mlb-logo-mark">◇</span>MLBricks Builder <span class="mlb-beta">v0.3.6</span>';top.appendChild(logo);
+      const logo=document.createElement("div");logo.className="mlb-logo";logo.innerHTML='<span class="mlb-logo-mark">◇</span>MLBricks Builder <span class="mlb-beta">v0.3.7</span>';top.appendChild(logo);
       const title=document.createElement("div");title.className="mlb-project-title";title.textContent=state.project?.name||"Untitled";top.appendChild(title);
       const saved=document.createElement("div");saved.className="mlb-save-state";saved.textContent="• Saved";top.appendChild(saved);
       const sp=document.createElement("div");sp.className="mlb-topspacer";top.appendChild(sp);
@@ -489,8 +506,8 @@
       wrap.appendChild(flow);canvas.appendChild(wrap);
       const hint=document.createElement("div");hint.className="mlb-hint";
       hint.textContent=pendingPort
-        ?"Choose the matching input lane: Skip ↔ Skip, Main ↔ Main, Extra ↔ Extra."
-        :"Every node has 3 left inputs and 3 right outputs. Top = Skip, Middle = Main, Bottom = Extra. Auto-connect uses Main.";
+        ?"Choose the matching lane: Top ↔ Top, Main ↔ Main, Bottom ↔ Bottom."
+        :"Each node has 3 inputs + 3 outputs: top-edge pair, middle side pair, bottom-edge pair. Auto-connect uses the middle Main lane.";
       canvas.appendChild(hint);
       main.appendChild(canvas);
       requestAnimationFrame(()=>drawEdges(wrap,flow));

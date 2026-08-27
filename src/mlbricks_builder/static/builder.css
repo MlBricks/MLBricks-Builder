@@ -6,7 +6,7 @@
   font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
   background:var(--bg);color:var(--text);border:1px solid #202a35;border-radius:12px;
   overflow:hidden;min-width:1080px;box-shadow:0 8px 24px rgba(0,0,0,.18);
-  height:min(760px,78vh);min-height:600px;max-height:760px;
+  height:min(910px,92vh);min-height:720px;max-height:910px;
   display:flex;flex-direction:column
 }
 .mlb-topbar{
@@ -82,7 +82,7 @@
 .mlb-breadcrumbs{display:flex;gap:5px;align-items:center}
 .mlb-crumb{border:0;background:transparent;color:#a794ff;font-size:9px;cursor:pointer}
 .mlb-flow-wrap{position:relative;min-width:max-content}
-.mlb-flow{display:flex;align-items:flex-start;gap:12px;min-height:0;width:max-content;padding:48px 18px 28px}
+.mlb-flow{display:flex;align-items:flex-start;gap:12px;min-height:0;width:max-content;padding:62px 18px 42px}
 .mlb-node{
   width:112px;height:295px;box-sizing:border-box;border:1.5px solid #3a4a5b;border-radius:10px;
   background:linear-gradient(180deg,#17212c,#121a23);position:relative;padding:10px 8px;
@@ -110,10 +110,14 @@
 .mlb-mini-field strong{color:#e4e9ef;font-weight:600}
 .mlb-node .node-meta{font-size:7.5px;color:#8390a0;margin-top:auto;line-height:1.45}
 .mlb-port{
-  position:absolute;top:50%;transform:translateY(-50%);width:10px;height:10px;border-radius:50%;
+  position:absolute;width:10px;height:10px;border-radius:50%;
   background:#8063ee;border:1.5px solid #c5b9ff;cursor:crosshair;z-index:4;padding:0
 }
-.mlb-port.in{left:-6px}.mlb-port.out{right:-6px}
+/* Only the middle lane uses conventional left/right side ports. */
+.mlb-port.middle-side.in{left:-6px}
+.mlb-port.middle-side.out{right:-6px}
+/* Top/bottom lanes are placed on the horizontal node edges via inline left positions. */
+.mlb-port.top-edge,.mlb-port.bottom-edge{right:auto}
 .mlb-port:hover,.mlb-port.armed{width:13px;height:13px;background:#f7a742;border-color:#ffe0a8}
 .mlb-arrow{font-size:16px;color:#607183;pointer-events:none}
 .mlb-edge-layer{position:absolute;left:0;top:0;pointer-events:none;overflow:visible;z-index:1}
@@ -218,3 +222,16 @@
 .mlb-sidebar::-webkit-scrollbar,.mlb-ins-body::-webkit-scrollbar,.mlb-canvas::-webkit-scrollbar{width:8px;height:8px}
 .mlb-sidebar::-webkit-scrollbar-thumb,.mlb-ins-body::-webkit-scrollbar-thumb,.mlb-canvas::-webkit-scrollbar-thumb{background:#344353;border-radius:8px}
 .mlb-sidebar::-webkit-scrollbar-track,.mlb-ins-body::-webkit-scrollbar-track,.mlb-canvas::-webkit-scrollbar-track{background:#0c131a}
+
+/* v0.3.7 sketch-accurate six-terminal node layout */
+.mlb-port.top-edge,.mlb-port.bottom-edge{
+  width:11px;height:11px;
+}
+.mlb-port.middle-side{
+  width:11px;height:11px;
+}
+.mlb-port.top-edge::after,.mlb-port.bottom-edge::after{
+  content:"";
+  position:absolute;
+  inset:-5px;
+}
