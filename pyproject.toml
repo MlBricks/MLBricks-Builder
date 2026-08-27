@@ -1,34 +1,66 @@
 [build-system]
-requires = ["hatchling>=1.27"]
-build-backend = "hatchling.build"
+requires = ["setuptools>=77.0.3", "wheel"]
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "mlbricks-builder"
 version = "0.1.1"
-description = "Hierarchical visual node builder for MLBricks models in Jupyter, Kaggle and Colab."
+description = "Visual layer-by-layer model builder for MLBricks in Jupyter, Kaggle and Colab."
 readme = "README.md"
 requires-python = ">=3.10"
 
-license = "LicenseRef-PolyForm-Noncommercial-1.0.0"
-license-files = ["LICENSE"]
+license = "PolyForm-Noncommercial-1.0.0"
+license-files = [
+  "LICENSE"
+]
 
 authors = [
-    { name = "Zameer Hussain" },
-    { name = "Akhtar Hussain" }
+  { name = "Zameer Hussain" },
+  { name = "Akhtar Hussain" }
+]
+
+keywords = [
+  "MLBricks",
+  "machine learning",
+  "artificial intelligence",
+  "visual model builder",
+  "neural network",
+  "Jupyter",
+  "Kaggle",
+  "model design"
+]
+
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Education",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Science/Research",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence"
 ]
 
 dependencies = [
-    "anywidget>=0.9.18",
-    "traitlets>=5.14.3",
-    "mlbricks @ git+https://github.com/MlBricks/MLBricks.git"
+  "anywidget>=0.9.18",
+  "traitlets>=5.14.3",
+  "mlbricks @ git+https://github.com/MlBricks/MLBricks.git"
 ]
 
 [project.urls]
 Homepage = "https://github.com/MlBricks/MLBricks-Builder"
 Repository = "https://github.com/MlBricks/MLBricks-Builder"
+Issues = "https://github.com/MlBricks/MLBricks-Builder/issues"
+License = "https://polyformproject.org/licenses/noncommercial/1.0.0"
+"MLBricks" = "https://github.com/MlBricks/MLBricks"
 
-[tool.hatch.build.targets.wheel]
-packages = ["src/mlbricks_builder"]
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["mlbricks_builder*"]
 
-[tool.hatch.build.targets.wheel.force-include]
-"src/mlbricks_builder/static" = "mlbricks_builder/static"
+[tool.setuptools.package-data]
+mlbricks_builder = [
+  "static/*.js",
+  "static/*.css"
+]
