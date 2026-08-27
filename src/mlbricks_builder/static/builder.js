@@ -86,6 +86,35 @@
       return mlapi[node.type] || cat(catalog,node.type).real_api || {};
     }
 
+    function normalizedBrickName(name){
+      return String(name||"").trim().replace(/\s+/g," ").toLowerCase();
+    }
+
+    function customNameExists(name, exceptId=null){
+      const wanted=normalizedBrickName(name);
+      if(!wanted) return false;
+      return Object.values(state.custom_components||{}).some(def=>{
+        if(exceptId && def.id===exceptId) return false;
+        return normalizedBrickName(def.name)===wanted;
+      });
+    }
+
+    function askUniqueCustomName(defaultName, titleText){
+      let proposed=prompt(titleText||"Component name:",defaultName||"");
+      if(proposed===null) return null;
+      proposed=String(proposed).trim().replace(/\s+/g," ");
+      if(!proposed){
+        setStatus("Custom brick name cannot be empty.");
+        return null;
+      }
+      if(customNameExists(proposed)){
+        setStatus('A custom brick named "'+proposed+'" already exists.');
+        alert('A custom brick named "'+proposed+'" already exists. Choose a unique name.');
+        return null;
+      }
+      return proposed;
+    }
+
     function pythonValue(v){
       if(v===null||v===undefined||v==="") return "None";
       if(typeof v==="boolean") return v?"True":"False";
@@ -168,21 +197,45 @@
     }
 
     function createCustom(){
-      const c=current(state);
-      if(!c.nodes.length){setStatus("Add layers first.");draw();return;}
-      const name=prompt("Component name:","My Component");if(!name)return;
+      const name=askUniqueCustomName("My Component","New custom brick name:");
+      if(!name){draw();return;}
+
       checkpoint("Create custom brick");
       const id=uid("custom");
+
+      // IMPORTANT: creating a custom brick creates an EMPTY reusable shell.
+      // It never captures siblings or the current model canvas.
       state.custom_components[id]={
-        id,name,
+        id,
+        name,
         description:"Reusable nested layer",
         revision:1,
-        nodes:cp(c.nodes),
-        edges:cp(c.edges||[]),
+        nodes:[],
+        edges:[],
         input_count:3,
         output_count:3
       };
-      setStatus(name+" saved to My Bricks.");draw();
+
+      // Open the new empty shell immediately so the user can build its
+      // internal architecture without accidentally copying model siblings.
+      const vid="view_"+id+"_"+uid("n");
+      state.components[vid]={
+        id:vid,
+        name,
+        kind:"custom_edit",
+        definition_id:id,
+        revision:1,
+        input_count:3,
+        output_count:3,
+        nodes:[],
+        edges:[]
+      };
+      state.view_component_id=vid;
+      state.breadcrumbs.push({id:vid,name});
+      selected=null;
+      pendingPort=null;
+      setStatus(name+" created as an empty custom brick.");
+      draw();
     }
 
     function addCustom(def){
@@ -225,8 +278,10 @@
       const c=current(state),def=state.custom_components[c.definition_id];if(!def)return;
       checkpoint(asNew?"Save custom as new":"Override custom component");
       if(asNew){
-        const name=prompt("Save as new component:",def.name+" Copy");if(!name)return;
-        const id=uid("custom");state.custom_components[id]={
+        const name=askUniqueCustomName(def.name+" Copy","Save as new custom brick:");
+        if(!name){draw();return;}
+        const id=uid("custom");
+        state.custom_components[id]={
           id,name,
           description:def.description||"",
           revision:1,
@@ -481,7 +536,7 @@
 
       // Top bar
       const top=document.createElement("div");top.className="mlb-topbar";
-      const logo=document.createElement("div");logo.className="mlb-logo";logo.innerHTML='<span class="mlb-logo-mark">◇</span>MLBricks Builder <span class="mlb-beta">v0.3.11</span>';top.appendChild(logo);
+      const logo=document.createElement("div");logo.className="mlb-logo";logo.innerHTML='<span class="mlb-logo-mark">◇</span>MLBricks Builder <span class="mlb-beta">v0.3.12</span>';top.appendChild(logo);
       const title=document.createElement("div");title.className="mlb-project-title";title.textContent=state.project?.name||"Untitled";top.appendChild(title);
       const saved=document.createElement("div");saved.className="mlb-save-state";saved.textContent="• Saved";top.appendChild(saved);
       const sp=document.createElement("div");sp.className="mlb-topspacer";top.appendChild(sp);
@@ -558,7 +613,8 @@
       if(!myBricksCollapsed){
         Object.values(state.custom_components||{}).forEach(def=>{
           const b=document.createElement("button");b.className="mlb-custom-card";b.type="button";
-          b.innerHTML='<span class="mlb-pal-icon">MY</span><span><strong>'+def.name+'</strong><span class="mlb-pal-sub">Custom · v'+def.revision+"</span></span>";
+          const emptyLabel=(def.nodes||[]).length===0?" · Empty":" · "+(def.nodes||[]).length+" blocks";
+        b.innerHTML='<span class="mlb-pal-icon">MY</span><span><strong>'+def.name+'</strong><span class="mlb-pal-sub">Custom · v'+def.revision+emptyLabel+"</span></span>";
           b.addEventListener("click",()=>addCustom(def));side.appendChild(b);
         });
         const create=btn("+ Create Custom Brick","mlb-create");create.addEventListener("click",createCustom);side.appendChild(create);
@@ -599,7 +655,13 @@
       const comp=current(state);
 
       if(!comp.nodes.length){
-        const e=document.createElement("div");e.className="mlb-empty";e.innerHTML="<strong>Build your model layer by layer.</strong><br><br>Add a brick from the left or load TinyStories 30M.";flow.appendChild(e);
+        const e=document.createElement("div");e.className="mlb-empty";
+        if(comp.kind==="custom_edit"){
+          e.innerHTML="<strong>Empty custom brick.</strong><br><br>Add internal bricks from the left. Nothing from the parent model is copied into this shell.";
+        }else{
+          e.innerHTML="<strong>Build your model layer by layer.</strong><br><br>Add a brick from the left or load TinyStories 30M.";
+        }
+        flow.appendChild(e);
       }else{
         comp.nodes.forEach((n,i)=>{
           if(i){const a=document.createElement("div");a.className="mlb-arrow";a.textContent="→";flow.appendChild(a);}

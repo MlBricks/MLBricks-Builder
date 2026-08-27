@@ -271,3 +271,18 @@ history operations.
   deletion, duplication, or movement while Skip and Extra connections are preserved.
 - The Inspector now provides **Move Left** and **Move Right** controls for the selected layer.
 - Move/add/delete/reorder operations are included in Undo/Redo history.
+
+
+## v0.3.12 — empty custom-brick shells + unique names
+
+Custom-brick creation is now isolated from the current model canvas.
+
+- **Create Custom Brick** always creates an empty nested component:
+  - `nodes = []`
+  - `edges = []`
+- Existing model nodes/siblings are never copied into a newly created custom brick.
+- The new empty custom brick opens immediately for internal editing.
+- Custom brick names must be unique after trimming spaces and ignoring case.
+  For example, `SAM`, `sam`, and ` Sam ` are treated as the same name.
+- The same unique-name rule applies to **Save As New**.
+- Empty shells are visibly marked as `Empty` in **My Bricks**.
