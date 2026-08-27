@@ -375,7 +375,7 @@
 
       // Top bar
       const top=document.createElement("div");top.className="mlb-topbar";
-      const logo=document.createElement("div");logo.className="mlb-logo";logo.innerHTML='<span class="mlb-logo-mark">◇</span>MLBricks Builder <span class="mlb-beta">v0.3.7</span>';top.appendChild(logo);
+      const logo=document.createElement("div");logo.className="mlb-logo";logo.innerHTML='<span class="mlb-logo-mark">◇</span>MLBricks Builder <span class="mlb-beta">v0.3.8</span>';top.appendChild(logo);
       const title=document.createElement("div");title.className="mlb-project-title";title.textContent=state.project?.name||"Untitled";top.appendChild(title);
       const saved=document.createElement("div");saved.className="mlb-save-state";saved.textContent="• Saved";top.appendChild(saved);
       const sp=document.createElement("div");sp.className="mlb-topspacer";top.appendChild(sp);
@@ -473,7 +473,12 @@
       state.breadcrumbs.forEach((c,i)=>{const b=btn(c.name,"mlb-crumb");b.addEventListener("click",()=>{state.view_component_id=c.id;state.breadcrumbs=state.breadcrumbs.slice(0,i+1);selected=null;draw();});crumbs.appendChild(b);if(i<state.breadcrumbs.length-1){const s=document.createElement("span");s.textContent="/";crumbs.appendChild(s);}});
       ctop.appendChild(crumbs);canvas.appendChild(ctop);
 
-      const mini=document.createElement("div");mini.className="mlb-minimap";const mg=document.createElement("div");mg.className="mlb-minimap-grid";current(state).nodes.forEach(()=>{const m=document.createElement("div");m.className="mlb-mini-node";mg.appendChild(m);});mini.appendChild(mg);canvas.appendChild(mini);
+      const mini=document.createElement("div");mini.className="mlb-minimap";
+      const miniTitle=document.createElement("div");miniTitle.className="mlb-minimap-title";miniTitle.textContent="BLUEPRINT";
+      const mg=document.createElement("div");mg.className="mlb-minimap-grid";
+      current(state).nodes.forEach(()=>{const m=document.createElement("div");m.className="mlb-mini-node";mg.appendChild(m);});
+      mini.append(miniTitle,mg);
+      canvas.appendChild(mini);
 
       const wrap=document.createElement("div");wrap.className="mlb-flow-wrap";
       const flow=document.createElement("div");flow.className="mlb-flow";flow.style.transformOrigin="left center";flow.style.transform="scale("+zoom+")";
@@ -525,7 +530,7 @@
       const p3=document.createElement("div");p3.className="mlb-bottom-card";p3.innerHTML='<div class="mlb-bottom-title">COMPUTE ESTIMATE</div><div class="mlb-stat-row"><span>Target Params</span><strong>'+(state.project?.estimated_parameters||"—")+'</strong></div><div class="mlb-stat-row"><span>Dataset</span><strong>'+(state.project?.dataset||"—")+'</strong></div><div class="mlb-stat-row"><span>Precision</span><strong>float16</strong></div><div class="mlb-stat-row"><span>Backend</span><strong>MLBricks</strong></div>';
       const p4=document.createElement("div");p4.className="mlb-bottom-card";p4.innerHTML='<div class="mlb-bottom-title">CONNECTION LANES</div><div class="mlb-stat-row"><span>Skip</span><strong>Top Out → Top In</strong></div><div class="mlb-stat-row"><span>Main</span><strong>Middle Out → Middle In</strong></div><div class="mlb-stat-row"><span>Extra</span><strong>Bottom Out → Bottom In</strong></div><div class="mlb-stat-row"><span>Remove</span><strong>Inspector → Remove</strong></div>';
       panels.append(p1,p2,p3,p4);
-      if(bottomExpanded) details.appendChild(panels);
+      details.appendChild(panels);
       main.appendChild(details);
 
       // Inspector

@@ -215,3 +215,16 @@ This keeps all signals left-to-right while allowing:
 - bottom routes below intervening nodes
 
 The Builder notebook workspace is also about 20% taller than v0.3.6.
+
+
+## v0.3.8 — persistent canvas HUD spacing
+
+The canvas overlays no longer move when the graph is horizontally scrolled:
+
+- **Blueprint** stays pinned above the node row
+- the port-layout instruction banner stays pinned near the bottom
+- extra vertical runway keeps a visible gap between Blueprint/top routes and nodes
+- **Model Details** is now an overlay drawer
+- expanding Model Details does **not** resize the canvas or move the node row/banner
+- when Model Details opens, it covers the lower canvas/banner area as requested
+  instead of pushing the banner upward
