@@ -160,3 +160,32 @@ per-node residual ports:
 - the inspector now lists all connections for the selected node and gives a
   **Remove** button for each connection
 - a **Remove All Links** action is also provided
+
+
+## v0.3.5 — fixed 3-lane left-to-right ports
+
+Every node now has exactly three inputs on the left and three outputs on the right:
+
+- top: **Skip In / Skip Out** — residual and skip connections, routed above intervening nodes
+- middle: **Main In / Main Out** — normal model flow; Auto Connect uses this lane
+- bottom: **Extra In / Extra Out** — auxiliary/custom signals, routed below intervening nodes
+
+Multiple skip connections are supported. Skip routes receive separate vertical offsets so multiple residual paths stay readable. Existing per-connection **Remove** buttons and **Remove All Links** remain available in the Inspector. Custom/nested layers use the same fixed three-lane public interface.
+
+
+## v0.3.6 — compact Kaggle workspace
+
+The Builder is now constrained to an app-like notebook height instead of
+growing with the Brick Library or Inspector.
+
+- left Brick Library scrolls independently
+- right API Inspector scrolls independently
+- Input/Core/Advanced/Position/Heads/Outputs sections are clickable
+  collapse/expand controls
+- Advanced, Position, Heads, and Outputs start collapsed to save space
+- search temporarily expands matching categories
+- all categories can be expanded and the library remains scrollable
+- the center graph canvas keeps the remaining vertical space
+- large blank space above/below the node row was reduced
+- Presets/Graph Info/Compute/Shortcuts moved into a compact **Model Details**
+  drawer that is collapsed by default

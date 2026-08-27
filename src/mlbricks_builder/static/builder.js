@@ -20,11 +20,12 @@
       definition_id:null,
       repeat:1,
       params,
-      input_count:item.type==="residual"?2:1,
-      output_count:1,
+      input_count:3,
+      output_count:3,
       position:{x:0,y:0}
     };
   }
+
 
   function mount(root,payload){
     if(!root || root.dataset.mounted==="1") return;
@@ -34,18 +35,20 @@
     const catalog=cp(payload.catalog);
     const mlapi=cp(payload.mlbricks_api||{});
     let selected=null,pendingPort=null,filter="All",search="",inspectorTab="settings",zoom=1,status="Ready";
+    // Compact notebook defaults: keep the most-used sections open and the rest collapsed.
+    const collapsedCategories=new Set(["Advanced","Position","Heads","Outputs"]);
+    let myBricksCollapsed=false;
+    let bottomExpanded=false;
 
     Object.values(state.components||{}).forEach(c=>{if(!c.edges)c.edges=[];});
     if(state.auto_connect===undefined) state.auto_connect=true;
 
     function btn(text,cls){const b=document.createElement("button");b.type="button";b.className=cls||"";b.textContent=text;return b;}
     function portLabel(side,index){
-      if(side==="in") return "in"+(index+1);
-      if(side==="out") return "out"+(index+1);
-      if(side==="res_in") return "skip in";
-      if(side==="res_out") return "skip out";
-      return side+" "+(index+1);
+      const lane=["Skip","Main","Extra"][index] || ("Lane "+(index+1));
+      return lane+" "+(side==="in"?"In":"Out");
     }
+
     function selectedNode(){return current(state).nodes.find(n=>n.id===selected)||null;}
     function setStatus(s){status=s;}
 
@@ -85,18 +88,23 @@
       return "from mlbricks import "+api.public_name+"\n\n"+varname+" = "+api.public_name+"("+args.join(", ")+")";
     }
 
-    function connect(a,b,kind="main",sourcePort="out0",targetPort="in0"){
+    function connect(a,b,kind="main",sourcePort="main_out",targetPort="main_in"){
       if(a===b){setStatus("A layer cannot connect to itself.");return;}
       const c=current(state);
-      if(c.edges.some(e=>e.source===a&&e.target===b&&e.kind===kind&&e.source_port===sourcePort&&e.target_port===targetPort)){setStatus("Connection already exists.");return;}
-      const e=edge(a,b,kind);e.source_port=sourcePort;e.target_port=targetPort;c.edges.push(e);
-      setStatus(kind==="residual"?"Residual pipeline created.":"Connection created.");
+      if(c.edges.some(e=>e.source===a&&e.target===b&&e.kind===kind&&e.source_port===sourcePort&&e.target_port===targetPort)){
+        setStatus("Connection already exists.");return;
+      }
+      const e=edge(a,b,kind);
+      e.source_port=sourcePort;
+      e.target_port=targetPort;
+      c.edges.push(e);
+      setStatus(kind==="residual"?"Skip connection created.":(kind==="aux"?"Extra connection created.":"Main connection created."));
     }
 
     function autoConnectNew(node){
-      const c=current(state);if(!state.auto_connect||c.nodes.length<2)return;
-      const targetPort=node.type==="residual"&&node.input_count>0?"in0":"in0";
-      connect(c.nodes[c.nodes.length-2].id,node.id,"main","out0",targetPort);
+      const c=current(state);
+      if(!state.auto_connect||c.nodes.length<2)return;
+      connect(c.nodes[c.nodes.length-2].id,node.id,"main","main_out","main_in");
     }
 
     function addPrimitive(item){
@@ -114,8 +122,8 @@
         revision:1,
         nodes:cp(c.nodes),
         edges:cp(c.edges||[]),
-        input_count:1,
-        output_count:1
+        input_count:3,
+        output_count:3
       };
       setStatus(name+" saved to My Bricks.");draw();
     }
@@ -128,8 +136,8 @@
         definition_id:def.id,
         repeat:1,
         params:{},
-        input_count:def.input_count||1,
-        output_count:def.output_count||1,
+        input_count:3,
+        output_count:3,
         position:{x:0,y:0}
       };
       current(state).nodes.push(n);autoConnectNew(n);selected=n.id;draw();
@@ -145,8 +153,8 @@
         kind:"custom_edit",
         definition_id:def.id,
         revision:def.revision,
-        input_count:def.input_count||1,
-        output_count:def.output_count||1,
+        input_count:3,
+        output_count:3,
         nodes:cp(def.nodes),
         edges:cp(def.edges||[])
       };
@@ -163,15 +171,15 @@
           revision:1,
           nodes:cp(c.nodes),
           edges:cp(c.edges||[]),
-          input_count:c.input_count||def.input_count||1,
-          output_count:c.output_count||def.output_count||1
+          input_count:3,
+          output_count:3
         };
         setStatus(name+" created.");
       }else{
         def.nodes=cp(c.nodes);
         def.edges=cp(c.edges||[]);
-        def.input_count=c.input_count||def.input_count||1;
-        def.output_count=c.output_count||def.output_count||1;
+        def.input_count=3;
+        def.output_count=3;
         def.revision=(def.revision||1)+1;c.revision=def.revision;
         setStatus(def.name+" updated to v"+def.revision+".");
       }
@@ -191,20 +199,26 @@
 
     function portClick(nodeId,side,portIndex,ev){
       ev.stopPropagation();
-      const isOutput = side==="out" || side==="res_out";
-      const isInput = side==="in" || side==="res_in";
-
-      if(isOutput){
+      if(side==="out"){
         pendingPort={nodeId,side,portIndex};
-        setStatus(side==="res_out" ? "Residual output selected. Click a residual input." : "Output selected. Click an input port.");
+        const lane=["Skip","Main","Extra"][portIndex]||"Lane";
+        setStatus(lane+" output selected. Click the matching "+lane.toLowerCase()+" input.");
         draw();
         return;
       }
 
-      if(isInput && pendingPort && (pendingPort.side==="out" || pendingPort.side==="res_out")){
-        const kind = (pendingPort.side==="res_out" || side==="res_in") ? "residual" : "main";
-        const sourcePort = pendingPort.side==="res_out" ? "res_out0" : "out"+pendingPort.portIndex;
-        const targetPort = side==="res_in" ? "res_in0" : "in"+portIndex;
+      if(side==="in" && pendingPort?.side==="out"){
+        if(pendingPort.portIndex!==portIndex){
+          const lane=["Skip","Main","Extra"][pendingPort.portIndex]||"Lane";
+          setStatus("For a clean graph connect matching lanes: "+lane+" Out → "+lane+" In.");
+          pendingPort=null;
+          draw();
+          return;
+        }
+        const lane=portIndex;
+        const kind=lane===0?"residual":(lane===2?"aux":"main");
+        const sourcePort=lane===0?"skip_out":(lane===2?"extra_out":"main_out");
+        const targetPort=lane===0?"skip_in":(lane===2?"extra_in":"main_in");
         connect(pendingPort.nodeId,nodeId,kind,sourcePort,targetPort);
         pendingPort=null;
         draw();
@@ -212,9 +226,10 @@
       }
 
       pendingPort={nodeId,side,portIndex};
-      setStatus("Input selected. Choose an output port.");
+      setStatus("Input selected. Choose an output from the same lane.");
       draw();
     }
+
 
     function renderField(body,node,f){
       const wrap=document.createElement("div");wrap.className="mlb-field";
@@ -234,29 +249,14 @@
 
 
     function portButtons(node, side){
-      let count = 1;
-      let cls = side;
-      if(side==="in" || side==="out"){
-        count = Math.max(1, Number(side==="in" ? (node.input_count||1) : (node.output_count||1)));
-      } else {
-        count = 1;
-      }
+      const positions=[24,50,76];
       let html="";
-      for(let i=0;i<count;i++){
-        let top = 50;
-        let style = "";
-        if(side==="in" || side==="out"){
-          top = count===1 ? 50 : (20 + (60*i/Math.max(1,count-1)));
-          style = 'style="top:'+top+'%"';
-        } else if(side==="res_in"){
-          style = 'style="left:50%;top:-7px;transform:translateX(-50%)"';
-        } else if(side==="res_out"){
-          style = 'style="left:50%;bottom:-7px;top:auto;transform:translateX(-50%)"';
-        }
-        html += '<button class="mlb-port '+cls+'" data-side="'+side+'" data-port-index="'+i+'" '+style+' type="button" aria-label="'+portLabel(side,i)+'"></button>';
+      for(let i=0;i<3;i++){
+        html += '<button class="mlb-port '+side+' lane-'+i+'" data-side="'+side+'" data-port-index="'+i+'" style="top:'+positions[i]+'%" type="button" aria-label="'+portLabel(side,i)+'" title="'+portLabel(side,i)+'"></button>';
       }
       return html;
     }
+
     function nodeMiniFields(node,info){
       const api=apiInfo(node);const source=(api.parameters||info.api||[]).slice(0,4);
       return source.map(f=>{
@@ -267,41 +267,56 @@
     }
 
     function drawEdges(wrap,flow){
-      const svg=document.createElementNS("http://www.w3.org/2000/svg","svg");svg.setAttribute("class","mlb-edge-layer");
-      svg.setAttribute("width",Math.max(flow.scrollWidth,flow.getBoundingClientRect().width));svg.setAttribute("height",Math.max(flow.scrollHeight,560));wrap.appendChild(svg);
+      const svg=document.createElementNS("http://www.w3.org/2000/svg","svg");
+      svg.setAttribute("class","mlb-edge-layer");
+      svg.setAttribute("width",Math.max(flow.scrollWidth,flow.getBoundingClientRect().width));
+      svg.setAttribute("height",Math.max(flow.scrollHeight,650));
+      wrap.appendChild(svg);
       const wr=wrap.getBoundingClientRect();
+      let skipRoute=0, extraRoute=0;
 
-      function portRect(nodeEl, side, index){
+      function portRect(nodeEl,side,index){
         const el=nodeEl.querySelector('.mlb-port[data-side="'+side+'"][data-port-index="'+index+'"]');
         return el ? el.getBoundingClientRect() : nodeEl.getBoundingClientRect();
       }
 
+      function laneOf(e){
+        if(e.kind==="residual") return 0;
+        if(e.kind==="aux") return 2;
+        const sp=String(e.source_port||"");
+        if(sp.includes("skip")||sp.includes("res_")) return 0;
+        if(sp.includes("extra")) return 2;
+        return 1;
+      }
+
       (current(state).edges||[]).forEach(e=>{
-        const a=flow.querySelector('[data-node-id="'+e.source+'"]'), b=flow.querySelector('[data-node-id="'+e.target+'"]'); if(!a||!b)return;
-
-        if(e.kind==="residual"){
-          const ar = portRect(a,"res_out",0), br = portRect(b,"res_in",0);
-          const x1 = ar.left-wr.left + ar.width/2, y1 = ar.top-wr.top + ar.height/2;
-          const x2 = br.left-wr.left + br.width/2, y2 = br.top-wr.top + br.height/2;
-          const lift = Math.max(42, Math.abs(x2-x1)*0.16);
-          const p=document.createElementNS("http://www.w3.org/2000/svg","path");
-          p.setAttribute("d",`M ${x1} ${y1} C ${x1} ${y1-lift}, ${x2} ${y2-lift}, ${x2} ${y2}`);
-          p.setAttribute("class","mlb-edge-residual");
-          p.setAttribute("data-edge-id", e.id);
-          svg.appendChild(p);
-          return;
-        }
-
-        const sourceIndex = Number(String(e.source_port||"out0").replace("out","")) || 0;
-        const targetIndex = Number(String(e.target_port||"in0").replace("in","")) || 0;
-        const ar=portRect(a,"out",sourceIndex), br=portRect(b,"in",targetIndex);
-        const x1=ar.left-wr.left + ar.width/2, y1=ar.top-wr.top + ar.height/2;
-        const x2=br.left-wr.left + br.width/2, y2=br.top-wr.top + br.height/2;
-        const mid=(x1+x2)/2;
+        const a=flow.querySelector('[data-node-id="'+e.source+'"]');
+        const b=flow.querySelector('[data-node-id="'+e.target+'"]');
+        if(!a||!b)return;
+        const lane=laneOf(e);
+        const ar=portRect(a,"out",lane), br=portRect(b,"in",lane);
+        const x1=ar.left-wr.left+ar.width/2, y1=ar.top-wr.top+ar.height/2;
+        const x2=br.left-wr.left+br.width/2, y2=br.top-wr.top+br.height/2;
         const p=document.createElementNS("http://www.w3.org/2000/svg","path");
-        p.setAttribute("d",`M ${x1} ${y1} C ${mid} ${y1}, ${mid} ${y2}, ${x2} ${y2}`);
-        p.setAttribute("class","mlb-edge-main");
-        p.setAttribute("data-edge-id", e.id);
+        p.setAttribute("data-edge-id",e.id);
+
+        if(lane===0){
+          const ab=a.getBoundingClientRect(), bb=b.getBoundingClientRect();
+          const route=skipRoute++;
+          const topY=Math.min(ab.top-wr.top,bb.top-wr.top)-34-(route%4)*16;
+          p.setAttribute("d",`M ${x1} ${y1} C ${x1+16} ${y1}, ${x1+16} ${topY}, ${x1+34} ${topY} L ${x2-34} ${topY} C ${x2-16} ${topY}, ${x2-16} ${y2}, ${x2} ${y2}`);
+          p.setAttribute("class","mlb-edge-skip");
+        }else if(lane===2){
+          const ab=a.getBoundingClientRect(), bb=b.getBoundingClientRect();
+          const route=extraRoute++;
+          const bottomY=Math.max(ab.bottom-wr.top,bb.bottom-wr.top)+34+(route%4)*16;
+          p.setAttribute("d",`M ${x1} ${y1} C ${x1+16} ${y1}, ${x1+16} ${bottomY}, ${x1+34} ${bottomY} L ${x2-34} ${bottomY} C ${x2-16} ${bottomY}, ${x2-16} ${y2}, ${x2} ${y2}`);
+          p.setAttribute("class","mlb-edge-extra");
+        }else{
+          const mid=(x1+x2)/2;
+          p.setAttribute("d",`M ${x1} ${y1} C ${mid} ${y1}, ${mid} ${y2}, ${x2} ${y2}`);
+          p.setAttribute("class","mlb-edge-main");
+        }
         svg.appendChild(p);
       });
     }
@@ -318,20 +333,20 @@
         name:"TinyStories ESA Block",
         revision:1,
         description:"ESA → RMSNorm → FFN → Residual",
-        input_count:1,
-        output_count:1,
+        input_count:3,
+        output_count:3,
         nodes:[esa,norm,ffn,res],
         edges:[
           edge(esa.id,norm.id),
           edge(norm.id,ffn.id),
-          Object.assign(edge(ffn.id,res.id),{source_port:"out0",target_port:"in0"}),
-          Object.assign(edge(esa.id,res.id,"residual"),{source_port:"res_out0",target_port:"res_in0"})
+          Object.assign(edge(ffn.id,res.id),{source_port:"main_out",target_port:"main_in"}),
+          Object.assign(edge(esa.id,res.id,"residual"),{source_port:"skip_out",target_port:"skip_in"})
         ]
       };
       const nodes=[];
       const input=makeNode(cat(catalog,"text_input"));nodes.push(input);
       const emb=makeNode(cat(catalog,"embedding"));nodes.push(emb);
-      for(let i=1;i<=6;i++)nodes.push({id:uid("node"),type:"custom",name:"Layer "+i,definition_id:defId,repeat:1,params:{},position:{x:0,y:0}});
+      for(let i=1;i<=6;i++)nodes.push({id:uid("node"),type:"custom",name:"Layer "+i,definition_id:defId,repeat:1,params:{},input_count:3,output_count:3,position:{x:0,y:0}});
       const head=makeNode(cat(catalog,"lm_head")),out=makeNode(cat(catalog,"text_output"));nodes.push(head,out);
       const edges=[];for(let i=0;i<nodes.length-1;i++)edges.push(edge(nodes[i].id,nodes[i+1].id));
       state.components[rootId]={id:rootId,name:"TinyStories 30M",kind:"model",revision:1,nodes,edges};
@@ -343,7 +358,7 @@
 
       // Top bar
       const top=document.createElement("div");top.className="mlb-topbar";
-      const logo=document.createElement("div");logo.className="mlb-logo";logo.innerHTML='<span class="mlb-logo-mark">◇</span>MLBricks Builder <span class="mlb-beta">v0.3.4</span>';top.appendChild(logo);
+      const logo=document.createElement("div");logo.className="mlb-logo";logo.innerHTML='<span class="mlb-logo-mark">◇</span>MLBricks Builder <span class="mlb-beta">v0.3.6</span>';top.appendChild(logo);
       const title=document.createElement("div");title.className="mlb-project-title";title.textContent=state.project?.name||"Untitled";top.appendChild(title);
       const saved=document.createElement("div");saved.className="mlb-save-state";saved.textContent="• Saved";top.appendChild(saved);
       const sp=document.createElement("div");sp.className="mlb-topspacer";top.appendChild(sp);
@@ -361,7 +376,11 @@
       const searchInput=document.createElement("input");searchInput.className="mlb-search";searchInput.placeholder="Search bricks...";searchInput.value=search;searchInput.addEventListener("input",()=>{search=searchInput.value;draw();});
       sr.append(searchInput,btn("☷","mlb-filter-btn"));side.appendChild(sr);
       const chips=document.createElement("div");chips.className="mlb-chips";
-      ["All","Inputs","Core Blocks","Norm","Heads","Outputs"].forEach(x=>{const b=btn(x.replace(" Blocks",""),"mlb-chip"+(filter===x?" active":""));b.addEventListener("click",()=>{filter=x;draw();});chips.appendChild(b);});side.appendChild(chips);
+      ["All","Inputs","Core Blocks","Norm","Heads","Outputs"].forEach(x=>{const b=btn(x.replace(" Blocks",""),"mlb-chip"+(filter===x?" active":""));b.addEventListener("click",()=>{
+          filter=x;
+          if(x!=="All"&&x!=="Norm") collapsedCategories.delete(x);
+          draw();
+        });chips.appendChild(b);});side.appendChild(chips);
 
       const visible=catalog.filter(item=>{
         const q=(item.name+" "+item.description+" "+item.category).toLowerCase();
@@ -372,22 +391,49 @@
       });
 
       [...new Set(visible.map(x=>x.category))].forEach(category=>{
-        const h=document.createElement("div");h.className="mlb-category";h.innerHTML="<span>"+category+"</span><span>⌃</span>";side.appendChild(h);
-        const pal=document.createElement("div");pal.className="mlb-palette";
-        visible.filter(x=>x.category===category).forEach(item=>{
-          const b=document.createElement("button");b.type="button";
-          const ico=document.createElement("span");ico.className="mlb-pal-icon";ico.textContent=item.icon||"ML";
-          const text=document.createElement("span");text.innerHTML="<strong>"+item.name+'</strong><span class="mlb-pal-sub">'+(item.description||"MLBricks component")+"</span>";
-          b.append(ico,text);b.addEventListener("click",()=>addPrimitive(item));pal.appendChild(b);
-        });side.appendChild(pal);
+        // Search results always expand so a matching component can never be hidden.
+        const collapsed=collapsedCategories.has(category) && !search;
+        const h=document.createElement("button");
+        h.type="button";
+        h.className="mlb-category";
+        h.setAttribute("aria-expanded",String(!collapsed));
+        h.innerHTML="<span>"+category+"</span><span class='mlb-category-caret'>"+(collapsed?"▸":"▾")+"</span>";
+        h.addEventListener("click",()=>{
+          if(collapsedCategories.has(category)) collapsedCategories.delete(category);
+          else collapsedCategories.add(category);
+          draw();
+        });
+        side.appendChild(h);
+
+        const pal=document.createElement("div");
+        pal.className="mlb-palette"+(collapsed?" collapsed":"");
+        if(!collapsed){
+          visible.filter(x=>x.category===category).forEach(item=>{
+            const b=document.createElement("button");b.type="button";
+            const ico=document.createElement("span");ico.className="mlb-pal-icon";ico.textContent=item.icon||"ML";
+            const text=document.createElement("span");text.innerHTML="<strong>"+item.name+'</strong><span class="mlb-pal-sub">'+(item.description||"MLBricks component")+"</span>";
+            b.append(ico,text);b.addEventListener("click",()=>addPrimitive(item));pal.appendChild(b);
+          });
+        }
+        side.appendChild(pal);
       });
-      const mh=document.createElement("div");mh.className="mlb-category";mh.innerHTML="<span>MY BRICKS</span><span>⌃</span>";side.appendChild(mh);
-      Object.values(state.custom_components||{}).forEach(def=>{
-        const b=document.createElement("button");b.className="mlb-custom-card";b.type="button";
-        b.innerHTML='<span class="mlb-pal-icon">MY</span><span><strong>'+def.name+'</strong><span class="mlb-pal-sub">Custom · v'+def.revision+"</span></span>";
-        b.addEventListener("click",()=>addCustom(def));side.appendChild(b);
-      });
-      const create=btn("+ Create Custom Brick","mlb-create");create.addEventListener("click",createCustom);side.appendChild(create);
+
+      const mh=document.createElement("button");
+      mh.type="button";
+      mh.className="mlb-category";
+      mh.setAttribute("aria-expanded",String(!myBricksCollapsed));
+      mh.innerHTML="<span>MY BRICKS</span><span class='mlb-category-caret'>"+(myBricksCollapsed?"▸":"▾")+"</span>";
+      mh.addEventListener("click",()=>{myBricksCollapsed=!myBricksCollapsed;draw();});
+      side.appendChild(mh);
+
+      if(!myBricksCollapsed){
+        Object.values(state.custom_components||{}).forEach(def=>{
+          const b=document.createElement("button");b.className="mlb-custom-card";b.type="button";
+          b.innerHTML='<span class="mlb-pal-icon">MY</span><span><strong>'+def.name+'</strong><span class="mlb-pal-sub">Custom · v'+def.revision+"</span></span>";
+          b.addEventListener("click",()=>addCustom(def));side.appendChild(b);
+        });
+        const create=btn("+ Create Custom Brick","mlb-create");create.addEventListener("click",createCustom);side.appendChild(create);
+      }
 
       // Main
       const main=document.createElement("main");main.className="mlb-main";
@@ -423,15 +469,14 @@
           if(i){const a=document.createElement("div");a.className="mlb-arrow";a.textContent="→";flow.appendChild(a);}
           const info=n.type==="custom"?{accent:"purple",description:"Nested reusable layer",icon:"LAY",api:[]}:cat(catalog,n.type);
           const card=document.createElement("div");card.className="mlb-node"+(selected===n.id?" selected":"");card.dataset.nodeId=n.id;card.dataset.accent=info.accent||"purple";
-          card.innerHTML='<span class="index">'+(i+1)+'</span>'+portButtons(n,"res_in")+portButtons(n,"in")+'<div class="node-head"><div class="node-name"></div><div class="node-icon"></div></div><div class="node-desc"></div><div class="mlb-node-fields"></div><div class="node-meta"></div>'+portButtons(n,"out")+portButtons(n,"res_out");
+          card.innerHTML='<span class="index">'+(i+1)+'</span>'+portButtons(n,"in")+'<div class="node-head"><div class="node-name"></div><div class="node-icon"></div></div><div class="node-desc"></div><div class="mlb-node-fields"></div><div class="node-meta"></div>'+portButtons(n,"out");
           card.querySelector(".node-name").textContent=n.name;card.querySelector(".node-icon").textContent=info.icon||"ML";card.querySelector(".node-desc").textContent=info.description||"MLBricks layer";
           card.querySelector(".mlb-node-fields").innerHTML=n.type==="custom"
             ?('<div class="mlb-mini-field"><span>Architecture</span><strong>Open</strong></div>'+
-              '<div class="mlb-mini-field"><span>Inputs</span><strong>'+(n.input_count||1)+'</strong></div>'+
-              '<div class="mlb-mini-field"><span>Outputs</span><strong>'+(n.output_count||1)+'</strong></div>')
+              '<div class="mlb-mini-field"><span>Ports</span><strong>Skip / Main / Extra</strong></div>')
             :nodeMiniFields(n,info);
           const meta=card.querySelector(".node-meta");
-          meta.textContent=n.type==="custom"?"Nested component · double-click to edit":((apiInfo(n).public_name||n.type)+" · "+(n.input_count||1)+" in / "+(n.output_count||1)+" out");
+          meta.textContent=n.type==="custom"?"Nested component · 3-lane interface":((apiInfo(n).public_name||n.type)+" · Skip / Main / Extra");
           card.querySelectorAll('.mlb-port').forEach(portEl=>{
             const side=portEl.dataset.side, idx=Number(portEl.dataset.portIndex||0);
             if(pendingPort?.nodeId===n.id&&pendingPort.side===side&&pendingPort.portIndex===idx) portEl.classList.add("armed");
@@ -444,19 +489,27 @@
       wrap.appendChild(flow);canvas.appendChild(wrap);
       const hint=document.createElement("div");hint.className="mlb-hint";
       hint.textContent=pendingPort
-        ?(pendingPort.side==="res_out" ? "Choose a top residual input to create a skip connection." : "Choose a destination input port.")
-        :"Auto-connect builds the normal layer flow. For custom wiring use side ports. Use the bottom purple port and top purple port for residual/skip connections.";
+        ?"Choose the matching input lane: Skip ↔ Skip, Main ↔ Main, Extra ↔ Extra."
+        :"Every node has 3 left inputs and 3 right outputs. Top = Skip, Middle = Main, Bottom = Extra. Auto-connect uses Main.";
       canvas.appendChild(hint);
       main.appendChild(canvas);
       requestAnimationFrame(()=>drawEdges(wrap,flow));
 
-      // Bottom dashboard
-      const panels=document.createElement("div");panels.className="mlb-bottom-panels";
+      // Bottom details are collapsed by default so Kaggle gives the graph maximum space.
+      const details=document.createElement("div");details.className="mlb-details";
+      const detailsBar=document.createElement("button");detailsBar.type="button";detailsBar.className="mlb-details-bar";
+      detailsBar.innerHTML="<span>Model Details</span><span>"+(bottomExpanded?"▾ Hide":"▴ Show")+"</span>";
+      detailsBar.addEventListener("click",()=>{bottomExpanded=!bottomExpanded;draw();});
+      details.appendChild(detailsBar);
+
+      const panels=document.createElement("div");panels.className="mlb-bottom-panels"+(bottomExpanded?" expanded":" collapsed");
       const p1=document.createElement("div");p1.className="mlb-bottom-card";p1.innerHTML='<div class="mlb-bottom-title">PRESETS</div><div class="mlb-preset-card"><strong>★ TinyStories 30M (6L)</strong>Context 512 · Batch 16<br>~30M parameters</div>';p1.querySelector(".mlb-preset-card").addEventListener("click",loadTinyStories);
       const p2=document.createElement("div");p2.className="mlb-bottom-card";p2.innerHTML='<div class="mlb-bottom-title">GRAPH INFO</div><div class="mlb-stat-row"><span>Layers</span><strong>'+current(state).nodes.length+'</strong></div><div class="mlb-stat-row"><span>Connections</span><strong>'+(current(state).edges||[]).length+'</strong></div><div class="mlb-stat-row"><span>Context</span><strong>'+(state.project?.context_length||"—")+'</strong></div><div class="mlb-stat-row"><span>Batch Size</span><strong>'+(state.project?.batch_size||"—")+'</strong></div><div class="mlb-stat-row"><span>Status</span><strong class="mlb-good">✓ Valid</strong></div>';
       const p3=document.createElement("div");p3.className="mlb-bottom-card";p3.innerHTML='<div class="mlb-bottom-title">COMPUTE ESTIMATE</div><div class="mlb-stat-row"><span>Target Params</span><strong>'+(state.project?.estimated_parameters||"—")+'</strong></div><div class="mlb-stat-row"><span>Dataset</span><strong>'+(state.project?.dataset||"—")+'</strong></div><div class="mlb-stat-row"><span>Precision</span><strong>float16</strong></div><div class="mlb-stat-row"><span>Backend</span><strong>MLBricks</strong></div>';
-      const p4=document.createElement("div");p4.className="mlb-bottom-card";p4.innerHTML='<div class="mlb-bottom-title">SHORTCUTS</div><div class="mlb-stat-row"><span>Connect</span><strong>Side out → side in</strong></div><div class="mlb-stat-row"><span>Residual</span><strong>Bottom port → top port</strong></div><div class="mlb-stat-row"><span>Delete Edge</span><strong>Inspector buttons</strong></div><div class="mlb-stat-row"><span>Open Layer</span><strong>Double Click</strong></div>';
-      panels.append(p1,p2,p3,p4);main.appendChild(panels);
+      const p4=document.createElement("div");p4.className="mlb-bottom-card";p4.innerHTML='<div class="mlb-bottom-title">CONNECTION LANES</div><div class="mlb-stat-row"><span>Skip</span><strong>Top Out → Top In</strong></div><div class="mlb-stat-row"><span>Main</span><strong>Middle Out → Middle In</strong></div><div class="mlb-stat-row"><span>Extra</span><strong>Bottom Out → Bottom In</strong></div><div class="mlb-stat-row"><span>Remove</span><strong>Inspector → Remove</strong></div>';
+      panels.append(p1,p2,p3,p4);
+      if(bottomExpanded) details.appendChild(panels);
+      main.appendChild(details);
 
       // Inspector
       const ins=document.createElement("aside");ins.className="mlb-inspector";
@@ -495,18 +548,9 @@
           [["Internal Components",def?.nodes?.length||0],["Connections",def?.edges?.length||0],["Revision","v"+(def?.revision||1)]].forEach(([a,b])=>{const r=document.createElement("div");r.className="mlb-summary-row";r.innerHTML="<span>"+a+"</span><strong>"+b+"</strong>";s.appendChild(r);});
           body.appendChild(s);
           const st=document.createElement("div");st.className="mlb-section-title";st.textContent="CUSTOM LAYER PORTS";body.appendChild(st);
-          [{key:"input_count",label:"Input Connections"},{key:"output_count",label:"Output Connections"}].forEach(f=>{
-            const wrap=document.createElement("div");wrap.className="mlb-field";
-            const label=document.createElement("label");label.textContent=f.label;
-            const input=document.createElement("input");input.type="number";input.min="1";input.max="8";input.value=n[f.key]||1;
-            input.addEventListener("change",()=>{
-              n[f.key]=Math.max(1,Math.min(8,Number(input.value)||1));
-              if(def){def[f.key]=n[f.key];}
-              setStatus("Custom layer ports updated.");
-              draw();
-            });
-            wrap.append(label,input);body.appendChild(wrap);
-          });
+          const fixed=document.createElement("div");fixed.className="mlb-api-path";
+          fixed.textContent="Fixed clean interface: Top Skip, Middle Main, Bottom Extra — on both left and right sides.";
+          body.appendChild(fixed);
         }else{
           const st=document.createElement("div");st.className="mlb-section-title";st.textContent="PARAMETERS";body.appendChild(st);
           (api.parameters||info.api||[]).forEach(f=>renderField(body,n,f));
@@ -521,7 +565,8 @@
           relEdges.forEach(ed=>{
             const row=document.createElement("div");row.className="mlb-connection-row";
             const src=current(state).nodes.find(x=>x.id===ed.source), tgt=current(state).nodes.find(x=>x.id===ed.target);
-            const left=(src?.name||"Node")+" → "+(tgt?.name||"Node")+" · "+(ed.kind==="residual"?"Residual":"Main");
+            const laneName=ed.kind==="residual"?"Skip":(ed.kind==="aux"?"Extra":"Main");
+            const left=(src?.name||"Node")+" → "+(tgt?.name||"Node")+" · "+laneName;
             const txt=document.createElement("div");txt.className="mlb-connection-text";txt.textContent=left;
             const delBtn=btn("Remove","mlb-conn-remove");
             delBtn.addEventListener("click",()=>{
@@ -540,7 +585,7 @@
         if(current(state).kind==="custom_edit"){
           const parentCfg=document.createElement("div");
           parentCfg.className="mlb-summary";
-          parentCfg.innerHTML='<div class="mlb-summary-row"><span>Custom Layer Interface</span><strong>'+(current(state).input_count||1)+' in / '+(current(state).output_count||1)+' out</strong></div>';
+          parentCfg.innerHTML='<div class="mlb-summary-row"><span>Custom Layer Interface</span><strong>Skip / Main / Extra</strong></div>';
           body.appendChild(parentCfg);
 
           const sv=document.createElement("div");sv.className="mlb-action-grid";const ov=btn("Override");ov.addEventListener("click",()=>saveCustom(false));const sn=btn("Save As New");sn.addEventListener("click",()=>saveCustom(true));sv.append(ov,sn);body.appendChild(sv);
