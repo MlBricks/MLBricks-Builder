@@ -163,3 +163,8 @@
 .mlb-api-status{font-size:8px;border-radius:6px;padding:7px 8px;margin:-3px 0 10px;border:1px solid #334252;background:#111922}
 .mlb-api-status.ok{color:#61d397;border-color:#285c45;background:#10231b}
 .mlb-api-status.bad{color:#f08b8b;border-color:#693939;background:#281515}
+
+.mlb-edge-residual-pipeline{fill:none;stroke:#ff4040;stroke-width:3.2;stroke-linecap:round;stroke-linejoin:round}
+.mlb-edge-residual-tap{fill:#3040ff;stroke:#9fb0ff;stroke-width:1.2}
+.mlb-port[data-port-index]{box-shadow:0 0 0 1px rgba(0,0,0,.14)}
+.mlb-node .node-meta{min-height:28px}

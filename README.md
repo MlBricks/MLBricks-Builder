@@ -101,3 +101,47 @@ builder.diagnostics()
 ```
 
 to verify which real MLBricks APIs were discovered.
+
+
+## v0.3.2 — Source-backed API schema
+
+The API inspector no longer depends on importing every MLBricks component
+successfully at notebook startup.
+
+This release's API schema was generated directly from the supplied
+`MLBricks-main (2)(2).zip` source (MLBricks 1.0.0). Runtime introspection is
+still attempted; when it works, it takes precedence. If it does not work,
+the exact source-derived constructor/config schema remains available.
+
+Examples:
+
+- ESA: `embd`, `head`, `batch`, `block`, `backend`, `precision`, `compass`,
+  `dropout`, `gate_min`, `gate_max`, `eps`, `device`, `auto_compile`,
+  `compile_mode`, `auto_move_input`, `strict_checks`
+- Bolt: `d_model`, `num_heads`, `latent_dim`, `bias`, `dropout`, `causal`,
+  `backend`, `autotune_kernels`, `eps`, `use_sdpa`, `position`,
+  `native_full_sequence`
+- FFN: `hidden_size`, `intermediate_size`, `activation`, `dropout`, `bias`,
+  `gated`, `device`, `dtype`
+- StateAwareFFN, MicroVirtualFFN, VirtualStateAwareFFN
+- RMSNorm, LayerNorm, Residual, ResController
+- Vesa/VesaConfig and VisionBolt/VisionBoltConfig
+- ElasticBit, ElasticLinear, ElasticEmbedding
+- RoPE, LearnedPosition, SinusoidalPosition
+- Brick and Bricks
+
+Builder-owned input/output nodes also have their own valid interface and never
+display “API unavailable”.
+
+
+## v0.3.3 — residual pipeline + custom ports
+
+This release adds the workflow behavior requested for kids and custom builders:
+
+- residual connections are drawn like a top pipeline / bus
+- auto-connect still builds the normal left-to-right layer flow
+- users can also create manual custom connections between layers
+- custom layers can expose a chosen number of input and output ports
+- `Residual Add` defaults to 2 inputs and 1 output
+- nested custom layers save and reload their chosen public interface
+- hold **Shift** while connecting to create a residual pipeline

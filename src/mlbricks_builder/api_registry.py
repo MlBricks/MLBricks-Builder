@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import importlib
 import inspect
+import json
+from copy import deepcopy
+from pathlib import Path
 from typing import Any
 
+_SCHEMA_PATH = Path(__file__).with_name("mlbricks_api_schema.json")
 
 PUBLIC_COMPONENTS = {
     "embedding": ("mlbricks", "Embedding"),
@@ -19,37 +23,38 @@ PUBLIC_COMPONENTS = {
     "residual": ("mlbricks", "Residual"),
     "rescontroller": ("mlbricks", "ResController"),
     "lm_head": ("mlbricks", "LMHead"),
-    "brick": ("mlbricks", "Brick"),
-    "bricks_model": ("mlbricks", "Bricks"),
-    "visionbolt": ("mlbricks", "VisionBolt"),
+    "visualbolt": ("mlbricks", "VisionBolt"),
     "elasticbit": ("mlbricks", "ElasticBit"),
     "elastic_linear": ("mlbricks", "ElasticLinear"),
     "elastic_embedding": ("mlbricks", "ElasticEmbedding"),
     "rope": ("mlbricks", "RoPE"),
     "learned_position": ("mlbricks", "LearnedPosition"),
     "sinusoidal_position": ("mlbricks", "SinusoidalPosition"),
+    "brick": ("mlbricks", "Brick"),
+    "bricks_model": ("mlbricks", "Bricks"),
 }
 
-# Vesa and VisionBolt expose config=None, **kwargs. Their real tunable API
-# is defined by these exported config classes, so inspect those as well.
 CONFIG_BACKED = {
     "vesa": ("mlbricks", "VesaConfig"),
-    "visionbolt": ("mlbricks", "VisionBoltConfig"),
+    "visualbolt": ("mlbricks", "VisionBoltConfig"),
 }
 
 CHOICES = {
     "backend": ["auto", "native", "pytorch"],
     "precision": ["fp32", "fp16", "bf16"],
-    "device": ["auto", "cpu", "cuda"],
     "activation": ["gelu", "gelu_tanh", "relu", "silu", "swish", "tanh"],
-    "position": ["none", "auto", "rope", "learned", "sinusoidal"],
-    "norm": ["rmsnorm", "layernorm"],
-    "ffn": ["standard", "state_aware", "virtual_state_aware", "micro_virtual"],
-    "residual": ["standard", "controller"],
-    "engine": ["Serpentine", "ViT", "CNN"],
+    "device": ["auto", "cpu", "cuda", "None"],
+    "position": ["none", "auto", "learned", "sinusoidal", "rope"],
+    "engine": ["Serpentine", "ViT", "CNN", "Diffusion", "AR"],
     "scan": ["cross", "raster", "serpentine"],
+    "ffn": ["standard", "ffnbrick", "virtual_ffnbrick", "micro_ffnbrick"],
+    "residual": ["standard", "rescontroller"],
+    "norm": ["rmsnorm", "layernorm"],
 }
 
+def _fallback_schema():
+    payload = json.loads(_SCHEMA_PATH.read_text(encoding="utf-8"))
+    return deepcopy(payload["components"])
 
 def _safe_default(value: Any):
     if value is inspect._empty:
@@ -58,15 +63,13 @@ def _safe_default(value: Any):
         return value
     return str(value)
 
-
-def _field_type(name: str, annotation: Any, default: Any) -> str:
+def _field_type(name, annotation, default):
     if name in CHOICES:
         return "select"
     if isinstance(default, bool):
         return "bool"
     if isinstance(default, (int, float)):
         return "number"
-
     text = "" if annotation is inspect._empty else str(annotation).lower()
     if "bool" in text:
         return "bool"
@@ -74,69 +77,76 @@ def _field_type(name: str, annotation: Any, default: Any) -> str:
         return "number"
     return "text"
 
-
-def _signature_fields(obj) -> tuple[inspect.Signature, list[dict]]:
+def _fields(obj):
     sig = inspect.signature(obj)
-    fields = []
-    for name, param in sig.parameters.items():
+    out = []
+    for name, p in sig.parameters.items():
         if name in {"self", "args", "kwargs"}:
             continue
-        default = _safe_default(param.default)
-        field = {
+        default = _safe_default(p.default)
+        item = {
             "key": name,
             "label": name.replace("_", " ").title(),
-            "type": _field_type(name, param.annotation, default),
-            "required": param.default is inspect._empty,
+            "type": _field_type(name, p.annotation, default),
+            "required": p.default is inspect._empty,
             "value": default,
-            "annotation": "" if param.annotation is inspect._empty else str(param.annotation),
+            "annotation": "" if p.annotation is inspect._empty else str(p.annotation),
         }
         if name in CHOICES:
-            field["options"] = CHOICES[name]
-        fields.append(field)
-    return sig, fields
+            item["options"] = CHOICES[name]
+        out.append(item)
+    return sig, out
 
-
-def discover_mlbricks_api() -> dict[str, dict]:
-    """Discover the API from the installed MLBricks package at runtime."""
-    result: dict[str, dict] = {}
+def discover_mlbricks_api():
+    # Start from the schema generated directly from the supplied MLBricks source.
+    # This means the UI works even if importing mlbricks fails because of a
+    # native/runtime dependency in the notebook environment.
+    result = _fallback_schema()
 
     for component_type, (module_name, public_name) in PUBLIC_COMPONENTS.items():
+        fallback = result.get(component_type, {})
         try:
             module = importlib.import_module(module_name)
             obj = getattr(module, public_name)
-            sig, fields = _signature_fields(obj)
+            sig, fields = _fields(obj)
 
-            config_info = None
+            config_info = fallback.get("config_api")
             if component_type in CONFIG_BACKED:
-                cfg_module_name, cfg_name = CONFIG_BACKED[component_type]
-                cfg_module = importlib.import_module(cfg_module_name)
-                cfg_obj = getattr(cfg_module, cfg_name)
-                cfg_sig, cfg_fields = _signature_fields(cfg_obj)
-                config_info = {
-                    "public_name": cfg_name,
-                    "signature": f"{cfg_name}{cfg_sig}",
-                    "parameters": cfg_fields,
-                }
-                # For config-backed wrappers, use the real config fields as the UI API.
-                fields = cfg_fields
+                cfg_mod, cfg_name = CONFIG_BACKED[component_type]
+                cfg_obj = getattr(importlib.import_module(cfg_mod), cfg_name)
+                cfg_sig, cfg_fields = _fields(cfg_obj)
+                # If runtime inspection exposes the real dataclass fields use it.
+                # If it only exposes config/**kwargs, preserve the source schema.
+                if len(cfg_fields) > 1:
+                    fields = cfg_fields
+                    config_info = {
+                        "public_name": cfg_name,
+                        "signature": f"{cfg_name}{cfg_sig}",
+                        "parameters": cfg_fields,
+                    }
 
             doc = inspect.getdoc(obj) or ""
             result[component_type] = {
+                **fallback,
                 "available": True,
+                "runtime_available": True,
+                "source": "runtime inspection",
                 "public_name": public_name,
                 "import_path": f"{module_name}.{public_name}",
                 "signature": f"{public_name}{sig}",
-                "description": doc.splitlines()[0] if doc else "",
-                "parameters": fields,
+                "description": doc.splitlines()[0] if doc else fallback.get("description", ""),
+                "parameters": fields if fields else fallback.get("parameters", []),
                 "config_api": config_info,
+                "runtime_error": None,
             }
         except Exception as exc:
+            # API schema remains available from the exact supplied source.
             result[component_type] = {
-                "available": False,
-                "public_name": public_name,
-                "import_path": f"{module_name}.{public_name}",
-                "parameters": [],
-                "error": f"{type(exc).__name__}: {exc}",
+                **fallback,
+                "available": True,
+                "runtime_available": False,
+                "source": "MLBricks 1.0.0 source schema",
+                "runtime_error": f"{type(exc).__name__}: {exc}",
             }
 
     return result

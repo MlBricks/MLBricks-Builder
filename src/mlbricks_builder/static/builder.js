@@ -13,7 +13,17 @@
     (item.api||[]).forEach(f=>{
       if(f.value!==undefined) params[f.key]=f.value;
     });
-    return {id:uid("node"),type:item.type,name:item.name,definition_id:null,repeat:1,params,position:{x:0,y:0}};
+    return {
+      id:uid("node"),
+      type:item.type,
+      name:item.name,
+      definition_id:null,
+      repeat:1,
+      params,
+      input_count:item.type==="residual"?2:1,
+      output_count:1,
+      position:{x:0,y:0}
+    };
   }
 
   function mount(root,payload){
@@ -68,16 +78,18 @@
       return "from mlbricks import "+api.public_name+"\n\n"+varname+" = "+api.public_name+"("+args.join(", ")+")";
     }
 
-    function connect(a,b,kind="main"){
+    function connect(a,b,kind="main",sourcePort="out0",targetPort="in0"){
       if(a===b){setStatus("A layer cannot connect to itself.");return;}
       const c=current(state);
-      if(c.edges.some(e=>e.source===a&&e.target===b&&e.kind===kind)){setStatus("Connection already exists.");return;}
-      c.edges.push(edge(a,b,kind));setStatus(kind==="residual"?"Residual connection created.":"Connection created.");
+      if(c.edges.some(e=>e.source===a&&e.target===b&&e.kind===kind&&e.source_port===sourcePort&&e.target_port===targetPort)){setStatus("Connection already exists.");return;}
+      const e=edge(a,b,kind);e.source_port=sourcePort;e.target_port=targetPort;c.edges.push(e);
+      setStatus(kind==="residual"?"Residual pipeline created.":"Connection created.");
     }
 
     function autoConnectNew(node){
       const c=current(state);if(!state.auto_connect||c.nodes.length<2)return;
-      connect(c.nodes[c.nodes.length-2].id,node.id);
+      const targetPort=node.type==="residual"&&node.input_count>0?"in0":"in0";
+      connect(c.nodes[c.nodes.length-2].id,node.id,"main","out0",targetPort);
     }
 
     function addPrimitive(item){
@@ -89,12 +101,30 @@
       if(!c.nodes.length){setStatus("Add layers first.");draw();return;}
       const name=prompt("Component name:","My Component");if(!name)return;
       const id=uid("custom");
-      state.custom_components[id]={id,name,description:"Reusable nested layer",revision:1,nodes:cp(c.nodes),edges:cp(c.edges||[])};
+      state.custom_components[id]={
+        id,name,
+        description:"Reusable nested layer",
+        revision:1,
+        nodes:cp(c.nodes),
+        edges:cp(c.edges||[]),
+        input_count:1,
+        output_count:1
+      };
       setStatus(name+" saved to My Bricks.");draw();
     }
 
     function addCustom(def){
-      const n={id:uid("node"),type:"custom",name:def.name,definition_id:def.id,repeat:1,params:{},position:{x:0,y:0}};
+      const n={
+        id:uid("node"),
+        type:"custom",
+        name:def.name,
+        definition_id:def.id,
+        repeat:1,
+        params:{},
+        input_count:def.input_count||1,
+        output_count:def.output_count||1,
+        position:{x:0,y:0}
+      };
       current(state).nodes.push(n);autoConnectNew(n);selected=n.id;draw();
     }
 
@@ -102,7 +132,17 @@
       if(!node.definition_id)return;
       const def=state.custom_components[node.definition_id];if(!def)return;
       const vid="view_"+def.id+"_"+uid("n");
-      state.components[vid]={id:vid,name:def.name,kind:"custom_edit",definition_id:def.id,revision:def.revision,nodes:cp(def.nodes),edges:cp(def.edges||[])};
+      state.components[vid]={
+        id:vid,
+        name:def.name,
+        kind:"custom_edit",
+        definition_id:def.id,
+        revision:def.revision,
+        input_count:def.input_count||1,
+        output_count:def.output_count||1,
+        nodes:cp(def.nodes),
+        edges:cp(def.edges||[])
+      };
       state.view_component_id=vid;state.breadcrumbs.push({id:vid,name:def.name});selected=null;pendingPort=null;draw();
     }
 
@@ -110,10 +150,22 @@
       const c=current(state),def=state.custom_components[c.definition_id];if(!def)return;
       if(asNew){
         const name=prompt("Save as new component:",def.name+" Copy");if(!name)return;
-        const id=uid("custom");state.custom_components[id]={id,name,description:def.description||"",revision:1,nodes:cp(c.nodes),edges:cp(c.edges||[])};
+        const id=uid("custom");state.custom_components[id]={
+          id,name,
+          description:def.description||"",
+          revision:1,
+          nodes:cp(c.nodes),
+          edges:cp(c.edges||[]),
+          input_count:c.input_count||def.input_count||1,
+          output_count:c.output_count||def.output_count||1
+        };
         setStatus(name+" created.");
       }else{
-        def.nodes=cp(c.nodes);def.edges=cp(c.edges||[]);def.revision=(def.revision||1)+1;c.revision=def.revision;
+        def.nodes=cp(c.nodes);
+        def.edges=cp(c.edges||[]);
+        def.input_count=c.input_count||def.input_count||1;
+        def.output_count=c.output_count||def.output_count||1;
+        def.revision=(def.revision||1)+1;c.revision=def.revision;
         setStatus(def.name+" updated to v"+def.revision+".");
       }
       draw();
@@ -130,11 +182,24 @@
       const idx=c.nodes.findIndex(x=>x.id===n.id);c.nodes.splice(idx+1,0,d);selected=d.id;setStatus("Layer duplicated.");draw();
     }
 
-    function portClick(nodeId,side,ev){
+    function portClick(nodeId,side,portIndex,ev){
       ev.stopPropagation();
-      if(side==="out"){pendingPort={nodeId,side};setStatus("Output selected. Click an input port.");draw();return;}
-      if(side==="in"&&pendingPort?.side==="out"){connect(pendingPort.nodeId,nodeId,ev.shiftKey?"residual":"main");pendingPort=null;draw();return;}
-      pendingPort={nodeId,side};setStatus("Input selected. Choose an output port.");draw();
+      if(side==="out"){
+        pendingPort={nodeId,side,portIndex};
+        setStatus("Output selected. Click an input port.");
+        draw();
+        return;
+      }
+      if(side==="in"&&pendingPort?.side==="out"){
+        const kind=ev.shiftKey?"residual":"main";
+        connect(pendingPort.nodeId,nodeId,kind,"out"+pendingPort.portIndex,"in"+portIndex);
+        pendingPort=null;
+        draw();
+        return;
+      }
+      pendingPort={nodeId,side,portIndex};
+      setStatus("Input selected. Choose an output port.");
+      draw();
     }
 
     function renderField(body,node,f){
@@ -153,6 +218,16 @@
       wrap.append(label,input);body.appendChild(wrap);
     }
 
+
+    function portButtons(node, side){
+      const count=Math.max(1, Number(side==="in" ? (node.input_count||1) : (node.output_count||1)));
+      let html="";
+      for(let i=0;i<count;i++){
+        const top = count===1 ? 50 : (20 + (60*i/Math.max(1,count-1)));
+        html += '<button class="mlb-port '+side+'" data-side="'+side+'" data-port-index="'+i+'" style="top:'+top+'%" type="button" aria-label="'+side+' port '+(i+1)+'"></button>';
+      }
+      return html;
+    }
     function nodeMiniFields(node,info){
       const api=apiInfo(node);const source=(api.parameters||info.api||[]).slice(0,4);
       return source.map(f=>{
@@ -164,16 +239,41 @@
 
     function drawEdges(wrap,flow){
       const svg=document.createElementNS("http://www.w3.org/2000/svg","svg");svg.setAttribute("class","mlb-edge-layer");
-      svg.setAttribute("width",Math.max(flow.scrollWidth,flow.getBoundingClientRect().width));svg.setAttribute("height",Math.max(flow.scrollHeight,480));wrap.appendChild(svg);
+      svg.setAttribute("width",Math.max(flow.scrollWidth,flow.getBoundingClientRect().width));svg.setAttribute("height",Math.max(flow.scrollHeight,520));wrap.appendChild(svg);
       const wr=wrap.getBoundingClientRect();
+
+      function portRect(nodeEl, side, index){
+        const el=nodeEl.querySelector('.mlb-port[data-side="'+side+'"][data-port-index="'+index+'"]');
+        return el ? el.getBoundingClientRect() : nodeEl.getBoundingClientRect();
+      }
+
       (current(state).edges||[]).forEach(e=>{
         const a=flow.querySelector('[data-node-id="'+e.source+'"]'),b=flow.querySelector('[data-node-id="'+e.target+'"]');if(!a||!b)return;
-        const ar=a.getBoundingClientRect(),br=b.getBoundingClientRect();
-        const x1=ar.right-wr.left,y1=ar.top-wr.top+ar.height/2,x2=br.left-wr.left,y2=br.top-wr.top+br.height/2;
+        const sourceIndex = Number(String(e.source_port||"out0").replace("out","")) || 0;
+        const targetIndex = Number(String(e.target_port||"in0").replace("in","")) || 0;
+        const ar=portRect(a,"out",sourceIndex), br=portRect(b,"in",targetIndex);
+        const x1=ar.left-wr.left + ar.width/2, y1=ar.top-wr.top + ar.height/2;
+        const x2=br.left-wr.left + br.width/2, y2=br.top-wr.top + br.height/2;
         const p=document.createElementNS("http://www.w3.org/2000/svg","path");
-        if(e.kind==="residual"){const y=Math.max(y1,y2)+65;p.setAttribute("d",`M ${x1} ${y1} C ${x1+28} ${y}, ${x2-28} ${y}, ${x2} ${y2}`);p.setAttribute("class","mlb-edge-residual");}
-        else{const mid=(x1+x2)/2;p.setAttribute("d",`M ${x1} ${y1} C ${mid} ${y1}, ${mid} ${y2}, ${x2} ${y2}`);p.setAttribute("class","mlb-edge-main");}
-        svg.appendChild(p);
+        if(e.kind==="residual"){
+          const startNode = a.getBoundingClientRect();
+          const endNode = b.getBoundingClientRect();
+          const topY = Math.min(startNode.top-wr.top, endNode.top-wr.top) - 42;
+          p.setAttribute("d",`M ${x1} ${y1} C ${x1+12} ${y1}, ${x1+6} ${topY}, ${x1} ${topY}
+                               L ${x2} ${topY}
+                               C ${x2-6} ${topY}, ${x2-12} ${y2}, ${x2} ${y2}`);
+          p.setAttribute("class","mlb-edge-residual-pipeline");
+          const tap1=document.createElementNS("http://www.w3.org/2000/svg","circle");
+          tap1.setAttribute("cx", x1); tap1.setAttribute("cy", topY); tap1.setAttribute("r", 4.5); tap1.setAttribute("class","mlb-edge-residual-tap");
+          const tap2=document.createElementNS("http://www.w3.org/2000/svg","circle");
+          tap2.setAttribute("cx", x2); tap2.setAttribute("cy", topY); tap2.setAttribute("r", 4.5); tap2.setAttribute("class","mlb-edge-residual-tap");
+          svg.appendChild(p); svg.appendChild(tap1); svg.appendChild(tap2);
+        } else {
+          const mid=(x1+x2)/2;
+          p.setAttribute("d",`M ${x1} ${y1} C ${mid} ${y1}, ${mid} ${y2}, ${x2} ${y2}`);
+          p.setAttribute("class","mlb-edge-main");
+          svg.appendChild(p);
+        }
       });
     }
 
@@ -184,7 +284,21 @@
       state.breadcrumbs=[{id:rootId,name:"TinyStories 30M"}];
       const defId=uid("custom");
       const esa=makeNode(cat(catalog,"esa")),norm=makeNode(cat(catalog,"rmsnorm")),ffn=makeNode(cat(catalog,"ffn")),res=makeNode(cat(catalog,"residual"));
-      state.custom_components[defId]={id:defId,name:"TinyStories ESA Block",revision:1,description:"ESA → RMSNorm → FFN → Residual",nodes:[esa,norm,ffn,res],edges:[edge(esa.id,norm.id),edge(norm.id,ffn.id),edge(ffn.id,res.id),edge(esa.id,res.id,"residual")]};
+      state.custom_components[defId]={
+        id:defId,
+        name:"TinyStories ESA Block",
+        revision:1,
+        description:"ESA → RMSNorm → FFN → Residual",
+        input_count:1,
+        output_count:1,
+        nodes:[esa,norm,ffn,res],
+        edges:[
+          edge(esa.id,norm.id),
+          edge(norm.id,ffn.id),
+          Object.assign(edge(ffn.id,res.id),{source_port:"out0",target_port:"in0"}),
+          Object.assign(edge(esa.id,res.id,"residual"),{source_port:"out0",target_port:"in1"})
+        ]
+      };
       const nodes=[];
       const input=makeNode(cat(catalog,"text_input"));nodes.push(input);
       const emb=makeNode(cat(catalog,"embedding"));nodes.push(emb);
@@ -200,7 +314,7 @@
 
       // Top bar
       const top=document.createElement("div");top.className="mlb-topbar";
-      const logo=document.createElement("div");logo.className="mlb-logo";logo.innerHTML='<span class="mlb-logo-mark">◇</span>MLBricks Builder <span class="mlb-beta">v0.3.1</span>';top.appendChild(logo);
+      const logo=document.createElement("div");logo.className="mlb-logo";logo.innerHTML='<span class="mlb-logo-mark">◇</span>MLBricks Builder <span class="mlb-beta">v0.3.3</span>';top.appendChild(logo);
       const title=document.createElement("div");title.className="mlb-project-title";title.textContent=state.project?.name||"Untitled";top.appendChild(title);
       const saved=document.createElement("div");saved.className="mlb-save-state";saved.textContent="• Saved";top.appendChild(saved);
       const sp=document.createElement("div");sp.className="mlb-topspacer";top.appendChild(sp);
@@ -280,18 +394,30 @@
           if(i){const a=document.createElement("div");a.className="mlb-arrow";a.textContent="→";flow.appendChild(a);}
           const info=n.type==="custom"?{accent:"purple",description:"Nested reusable layer",icon:"LAY",api:[]}:cat(catalog,n.type);
           const card=document.createElement("div");card.className="mlb-node"+(selected===n.id?" selected":"");card.dataset.nodeId=n.id;card.dataset.accent=info.accent||"purple";
-          card.innerHTML='<span class="index">'+(i+1)+'</span><button class="mlb-port in" type="button" aria-label="Input port"></button><div class="node-head"><div class="node-name"></div><div class="node-icon"></div></div><div class="node-desc"></div><div class="mlb-node-fields"></div><div class="node-meta"></div><button class="mlb-port out" type="button" aria-label="Output port"></button>';
+          card.innerHTML='<span class="index">'+(i+1)+'</span>'+portButtons(n,"in")+'<div class="node-head"><div class="node-name"></div><div class="node-icon"></div></div><div class="node-desc"></div><div class="mlb-node-fields"></div><div class="node-meta"></div>'+portButtons(n,"out");
           card.querySelector(".node-name").textContent=n.name;card.querySelector(".node-icon").textContent=info.icon||"ML";card.querySelector(".node-desc").textContent=info.description||"MLBricks layer";
-          card.querySelector(".mlb-node-fields").innerHTML=n.type==="custom"?'<div class="mlb-mini-field"><span>Architecture</span><strong>Open</strong></div>':nodeMiniFields(n,info);
-          const meta=card.querySelector(".node-meta");meta.textContent=n.type==="custom"?"Nested component · double-click to edit":(apiInfo(n).public_name||n.type);
-          const ip=card.querySelector(".in"),op=card.querySelector(".out");if(pendingPort?.nodeId===n.id&&pendingPort.side==="in")ip.classList.add("armed");if(pendingPort?.nodeId===n.id&&pendingPort.side==="out")op.classList.add("armed");
-          ip.addEventListener("click",ev=>portClick(n.id,"in",ev));op.addEventListener("click",ev=>portClick(n.id,"out",ev));
+          card.querySelector(".mlb-node-fields").innerHTML=n.type==="custom"
+            ?('<div class="mlb-mini-field"><span>Architecture</span><strong>Open</strong></div>'+
+              '<div class="mlb-mini-field"><span>Inputs</span><strong>'+(n.input_count||1)+'</strong></div>'+
+              '<div class="mlb-mini-field"><span>Outputs</span><strong>'+(n.output_count||1)+'</strong></div>')
+            :nodeMiniFields(n,info);
+          const meta=card.querySelector(".node-meta");
+          meta.textContent=n.type==="custom"?"Nested component · double-click to edit":((apiInfo(n).public_name||n.type)+" · "+(n.input_count||1)+" in / "+(n.output_count||1)+" out");
+          card.querySelectorAll('.mlb-port').forEach(portEl=>{
+            const side=portEl.dataset.side, idx=Number(portEl.dataset.portIndex||0);
+            if(pendingPort?.nodeId===n.id&&pendingPort.side===side&&pendingPort.portIndex===idx) portEl.classList.add("armed");
+            portEl.addEventListener("click",ev=>portClick(n.id,side,idx,ev));
+          });
           card.addEventListener("click",()=>{selected=n.id;draw();});card.addEventListener("dblclick",()=>{if(n.definition_id)openInside(n);});
           flow.appendChild(card);
         });
       }
       wrap.appendChild(flow);canvas.appendChild(wrap);
-      const hint=document.createElement("div");hint.className="mlb-hint";hint.textContent=pendingPort?"Click a destination input • Shift = residual":"Connect like ComfyUI: click output ● then input ● • Double-click nested layer to open";canvas.appendChild(hint);
+      const hint=document.createElement("div");hint.className="mlb-hint";
+      hint.textContent=pendingPort
+        ?"Choose destination input port • Hold Shift to create residual pipeline"
+        :"Auto-connect builds the layer flow. For custom wiring click an output port, then an input port. Double-click nested layers to edit.";
+      canvas.appendChild(hint);
       main.appendChild(canvas);
       requestAnimationFrame(()=>drawEdges(wrap,flow));
 
@@ -300,7 +426,7 @@
       const p1=document.createElement("div");p1.className="mlb-bottom-card";p1.innerHTML='<div class="mlb-bottom-title">PRESETS</div><div class="mlb-preset-card"><strong>★ TinyStories 30M (6L)</strong>Context 512 · Batch 16<br>~30M parameters</div>';p1.querySelector(".mlb-preset-card").addEventListener("click",loadTinyStories);
       const p2=document.createElement("div");p2.className="mlb-bottom-card";p2.innerHTML='<div class="mlb-bottom-title">GRAPH INFO</div><div class="mlb-stat-row"><span>Layers</span><strong>'+current(state).nodes.length+'</strong></div><div class="mlb-stat-row"><span>Connections</span><strong>'+(current(state).edges||[]).length+'</strong></div><div class="mlb-stat-row"><span>Context</span><strong>'+(state.project?.context_length||"—")+'</strong></div><div class="mlb-stat-row"><span>Batch Size</span><strong>'+(state.project?.batch_size||"—")+'</strong></div><div class="mlb-stat-row"><span>Status</span><strong class="mlb-good">✓ Valid</strong></div>';
       const p3=document.createElement("div");p3.className="mlb-bottom-card";p3.innerHTML='<div class="mlb-bottom-title">COMPUTE ESTIMATE</div><div class="mlb-stat-row"><span>Target Params</span><strong>'+(state.project?.estimated_parameters||"—")+'</strong></div><div class="mlb-stat-row"><span>Dataset</span><strong>'+(state.project?.dataset||"—")+'</strong></div><div class="mlb-stat-row"><span>Precision</span><strong>float16</strong></div><div class="mlb-stat-row"><span>Backend</span><strong>MLBricks</strong></div>';
-      const p4=document.createElement("div");p4.className="mlb-bottom-card";p4.innerHTML='<div class="mlb-bottom-title">SHORTCUTS</div><div class="mlb-stat-row"><span>Connect</span><strong>Click → Click</strong></div><div class="mlb-stat-row"><span>Residual</span><strong>Shift + Click</strong></div><div class="mlb-stat-row"><span>Open Layer</span><strong>Double Click</strong></div><div class="mlb-stat-row"><span>Zoom</span><strong>+/−</strong></div>';
+      const p4=document.createElement("div");p4.className="mlb-bottom-card";p4.innerHTML='<div class="mlb-bottom-title">SHORTCUTS</div><div class="mlb-stat-row"><span>Connect</span><strong>Out port → In port</strong></div><div class="mlb-stat-row"><span>Residual</span><strong>Shift + click input</strong></div><div class="mlb-stat-row"><span>Custom Ports</span><strong>Editable in inspector</strong></div><div class="mlb-stat-row"><span>Open Layer</span><strong>Double Click</strong></div>';
       panels.append(p1,p2,p3,p4);main.appendChild(panels);
 
       // Inspector
@@ -324,13 +450,34 @@
         if(n.type!=="custom"){
           const apiStatus=document.createElement("div");
           apiStatus.className="mlb-api-status "+(api.available?"ok":"bad");
-          apiStatus.textContent=api.available
-            ? "✓ Real MLBricks API loaded: "+(api.import_path||api.public_name)
-            : "✕ MLBricks API unavailable: "+(api.error||"unknown error");
+          if(api.available && api.runtime_available===true){
+            apiStatus.textContent="✓ Real MLBricks API: "+(api.import_path||api.public_name);
+          }else if(api.available){
+            apiStatus.textContent="✓ API loaded from MLBricks source: "+(api.public_name||n.type);
+            apiStatus.title=api.runtime_error||"Runtime import was not required for the inspector.";
+          }else{
+            apiStatus.textContent="✕ API unavailable";
+          }
           body.appendChild(apiStatus);
         }
         if(n.type==="custom"){
-          const def=state.custom_components[n.definition_id];const s=document.createElement("div");s.className="mlb-summary";[["Internal Components",def?.nodes?.length||0],["Connections",def?.edges?.length||0],["Revision","v"+(def?.revision||1)]].forEach(([a,b])=>{const r=document.createElement("div");r.className="mlb-summary-row";r.innerHTML="<span>"+a+"</span><strong>"+b+"</strong>";s.appendChild(r);});body.appendChild(s);
+          const def=state.custom_components[n.definition_id];
+          const s=document.createElement("div");s.className="mlb-summary";
+          [["Internal Components",def?.nodes?.length||0],["Connections",def?.edges?.length||0],["Revision","v"+(def?.revision||1)]].forEach(([a,b])=>{const r=document.createElement("div");r.className="mlb-summary-row";r.innerHTML="<span>"+a+"</span><strong>"+b+"</strong>";s.appendChild(r);});
+          body.appendChild(s);
+          const st=document.createElement("div");st.className="mlb-section-title";st.textContent="CUSTOM PORTS";body.appendChild(st);
+          [{key:"input_count",label:"Input Connections"},{key:"output_count",label:"Output Connections"}].forEach(f=>{
+            const wrap=document.createElement("div");wrap.className="mlb-field";
+            const label=document.createElement("label");label.textContent=f.label;
+            const input=document.createElement("input");input.type="number";input.min="1";input.max="8";input.value=n[f.key]||1;
+            input.addEventListener("change",()=>{
+              n[f.key]=Math.max(1,Math.min(8,Number(input.value)||1));
+              if(def){def[f.key]=n[f.key];}
+              setStatus("Custom layer ports updated.");
+              draw();
+            });
+            wrap.append(label,input);body.appendChild(wrap);
+          });
         }else{
           const st=document.createElement("div");st.className="mlb-section-title";st.textContent="PARAMETERS";body.appendChild(st);
           (api.parameters||info.api||[]).forEach(f=>renderField(body,n,f));
@@ -343,6 +490,11 @@
         const disc=btn("Disconnect");disc.addEventListener("click",()=>{current(state).edges=current(state).edges.filter(e=>e.source!==n.id&&e.target!==n.id);draw();});actions.appendChild(disc);
         const del=btn("Delete");del.addEventListener("click",()=>deleteNode(n.id));actions.appendChild(del);body.appendChild(actions);
         if(current(state).kind==="custom_edit"){
+          const parentCfg=document.createElement("div");
+          parentCfg.className="mlb-summary";
+          parentCfg.innerHTML='<div class="mlb-summary-row"><span>Custom Layer Interface</span><strong>'+(current(state).input_count||1)+' in / '+(current(state).output_count||1)+' out</strong></div>';
+          body.appendChild(parentCfg);
+
           const sv=document.createElement("div");sv.className="mlb-action-grid";const ov=btn("Override");ov.addEventListener("click",()=>saveCustom(false));const sn=btn("Save As New");sn.addEventListener("click",()=>saveCustom(true));sv.append(ov,sn);body.appendChild(sv);
         }
       }

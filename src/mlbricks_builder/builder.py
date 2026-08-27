@@ -60,8 +60,8 @@ class Builder:
         available = [k for k, v in self.mlbricks_api.items() if v.get("available")]
         unavailable = {k: v.get("error") for k, v in self.mlbricks_api.items() if not v.get("available")}
         return {
-            "builder_version": "0.3.1",
-            "frontend_version": "0.3.1",
+            "builder_version": "0.3.3",
+            "frontend_version": "0.3.3",
             "mlbricks": info,
             "api_components_available": available,
             "api_components_unavailable": unavailable,
@@ -80,7 +80,7 @@ class Builder:
         }).replace("</", "<\\/")
         return f"""
 <style>{css}</style>
-<div id="{html.escape(self._instance_id)}" class="mlb-root" data-mlbricks-builder-version="0.3.1"></div>
+<div id="{html.escape(self._instance_id)}" class="mlb-root" data-mlbricks-builder-version="0.3.3"></div>
 <script>
 /* IMPORTANT: Kaggle/Jupyter keeps browser globals alive even after Python
    package upgrades or kernel restarts. Remove any old renderer before

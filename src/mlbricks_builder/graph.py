@@ -194,6 +194,15 @@ def primitive_catalog():
         {"type":"rescontroller","name":"ResController","icon":"RSC","category":"Core Blocks","description":"Adaptive residual controller","accent":"cyan","api":[]},
         {"type":"micro_ffn","name":"MicroVirtualFFN","icon":"MVF","category":"Core Blocks","description":"Micro virtual FFN","accent":"pink","api":[]},
         {"type":"virtual_saffn","name":"VirtualStateAwareFFN","icon":"VSF","category":"Core Blocks","description":"Virtual state-aware FFN","accent":"pink","api":[]},
+
+        {"type":"elasticbit","name":"ElasticBit","icon":"EB","category":"Advanced","description":"MLBricks quantization interface","accent":"blue","api":[]},
+        {"type":"elastic_linear","name":"ElasticLinear","icon":"EL","category":"Advanced","description":"Packed ElasticBit linear layer","accent":"blue","api":[]},
+        {"type":"elastic_embedding","name":"ElasticEmbedding","icon":"EE","category":"Advanced","description":"Packed ElasticBit embedding","accent":"blue","api":[]},
+        {"type":"rope","name":"RoPE","icon":"RP","category":"Position","description":"Rotary position transform","accent":"purple","api":[]},
+        {"type":"learned_position","name":"Learned Position","icon":"LP","category":"Position","description":"Learned positional embedding","accent":"purple","api":[]},
+        {"type":"sinusoidal_position","name":"Sinusoidal Position","icon":"SP","category":"Position","description":"Sinusoidal positional encoding","accent":"purple","api":[]},
+        {"type":"brick","name":"Brick","icon":"BR","category":"Advanced","description":"Composable MLBricks layer container","accent":"cyan","api":[]},
+        {"type":"bricks_model","name":"Bricks Model","icon":"BM","category":"Advanced","description":"Complete MLBricks model container","accent":"cyan","api":[]},
         {
             "type": "lm_head",
             "name": "LM Head",
