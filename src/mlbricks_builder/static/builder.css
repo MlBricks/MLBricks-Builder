@@ -81,7 +81,7 @@
 .mlb-canvas-top{display:flex;justify-content:space-between;align-items:center;position:sticky;left:0;z-index:5}
 .mlb-breadcrumbs{display:flex;gap:5px;align-items:center}
 .mlb-crumb{border:0;background:transparent;color:#a794ff;font-size:9px;cursor:pointer}
-.mlb-flow-wrap{position:relative;min-width:max-content}
+.mlb-flow-wrap{position:relative;display:block;flex:0 0 auto;overflow:visible}
 .mlb-flow{display:flex;align-items:flex-start;gap:12px;min-height:0;width:max-content;padding:0 18px}
 .mlb-node{
   width:112px;height:295px;box-sizing:border-box;border:1.5px solid #3a4a5b;border-radius:10px;
@@ -120,7 +120,7 @@
 .mlb-port.top-edge,.mlb-port.bottom-edge{right:auto}
 .mlb-port:hover,.mlb-port.armed{width:13px;height:13px;background:#f7a742;border-color:#ffe0a8}
 .mlb-arrow{font-size:16px;color:#607183;pointer-events:none}
-.mlb-edge-layer{position:absolute;left:0;top:0;pointer-events:none;overflow:visible;z-index:1}
+.mlb-edge-layer{position:absolute;left:0;top:0;pointer-events:none;overflow:visible;z-index:1;width:100%;height:100%}
 .mlb-edge-main{fill:none;stroke:#8e6fec;stroke-width:1.8}
 .mlb-edge-residual{fill:none;stroke:#e1ad46;stroke-width:1.8}
 .mlb-hint{
@@ -288,3 +288,5 @@
 /* Persistent runway around the node row:
    Blueprint HUD at the top, graph nodes in the middle, instruction HUD at bottom. */
 .mlb-flow-wrap{padding-top:0;padding-bottom:0}
+
+.mlb-history-btn:disabled{opacity:.34;cursor:not-allowed;filter:saturate(.45)}

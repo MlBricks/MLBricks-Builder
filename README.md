@@ -244,3 +244,19 @@ So when the user scrolls the canvas vertically, all three move together and
 their relative vertical distances stay unchanged.
 
 Model Details remains an overlay drawer and does not reflow the graph.
+
+
+## v0.3.10 — zoom-safe graph + Undo / Redo
+
+### Zoom fix
+The graph wrapper now grows to the scaled visual dimensions. At 110–150% zoom,
+right-side nodes, bottom ports, routed edges and the instruction banner remain
+inside the real scrollable canvas instead of being clipped or overlapping due
+to CSS transform layout mismatch.
+
+### Undo / Redo
+The toolbar now has **Undo** and **Redo** buttons backed by a 60-step model
+history. History includes node add/delete/duplicate, connections, connection
+removal, API parameter edits, custom bricks, TinyStories preset loading, Clear,
+and Auto Connect changes. Zoom and sidebar UI state are intentionally not model
+history operations.

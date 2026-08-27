@@ -31,10 +31,39 @@
     if(!root || root.dataset.mounted==="1") return;
     root.dataset.mounted="1";
 
-    const state=cp(payload.state);
+    let state=cp(payload.state);
     const catalog=cp(payload.catalog);
     const mlapi=cp(payload.mlbricks_api||{});
     let selected=null,pendingPort=null,filter="All",search="",inspectorTab="settings",zoom=1,status="Ready";
+    let canvasScrollLeft=0,canvasScrollTop=0;
+    const undoStack=[],redoStack=[];
+    const historyLimit=60;
+
+    function snapshot(){ return cp(state); }
+    function checkpoint(label){
+      undoStack.push({state:snapshot(),label:label||"Edit"});
+      if(undoStack.length>historyLimit) undoStack.shift();
+      redoStack.length=0;
+    }
+    function undo(){
+      if(!undoStack.length){setStatus("Nothing to undo.");draw();return;}
+      redoStack.push({state:snapshot(),label:"Redo"});
+      const item=undoStack.pop();
+      state=cp(item.state);
+      selected=null;pendingPort=null;
+      setStatus("Undo: "+item.label);
+      draw();
+    }
+    function redo(){
+      if(!redoStack.length){setStatus("Nothing to redo.");draw();return;}
+      undoStack.push({state:snapshot(),label:"Undo"});
+      const item=redoStack.pop();
+      state=cp(item.state);
+      selected=null;pendingPort=null;
+      setStatus("Redo");
+      draw();
+    }
+
     // Compact notebook defaults: keep the most-used sections open and the rest collapsed.
     const collapsedCategories=new Set(["Advanced","Position","Heads","Outputs"]);
     let myBricksCollapsed=false;
@@ -88,12 +117,13 @@
       return "from mlbricks import "+api.public_name+"\n\n"+varname+" = "+api.public_name+"("+args.join(", ")+")";
     }
 
-    function connect(a,b,kind="main",sourcePort="main_out",targetPort="main_in"){
+    function connect(a,b,kind="main",sourcePort="main_out",targetPort="main_in",record=true){
       if(a===b){setStatus("A layer cannot connect to itself.");return;}
       const c=current(state);
       if(c.edges.some(e=>e.source===a&&e.target===b&&e.kind===kind&&e.source_port===sourcePort&&e.target_port===targetPort)){
         setStatus("Connection already exists.");return;
       }
+      if(record) checkpoint(kind==="residual"?"Create skip connection":(kind==="aux"?"Create extra connection":"Create main connection"));
       const e=edge(a,b,kind);
       e.source_port=sourcePort;
       e.target_port=targetPort;
@@ -104,10 +134,11 @@
     function autoConnectNew(node){
       const c=current(state);
       if(!state.auto_connect||c.nodes.length<2)return;
-      connect(c.nodes[c.nodes.length-2].id,node.id,"main","main_out","main_in");
+      connect(c.nodes[c.nodes.length-2].id,node.id,"main","main_out","main_in",false);
     }
 
     function addPrimitive(item){
+      checkpoint("Add "+item.name);
       const n=makeNode(item);current(state).nodes.push(n);autoConnectNew(n);selected=n.id;draw();
     }
 
@@ -115,6 +146,7 @@
       const c=current(state);
       if(!c.nodes.length){setStatus("Add layers first.");draw();return;}
       const name=prompt("Component name:","My Component");if(!name)return;
+      checkpoint("Create custom brick");
       const id=uid("custom");
       state.custom_components[id]={
         id,name,
@@ -129,6 +161,7 @@
     }
 
     function addCustom(def){
+      checkpoint("Add "+def.name);
       const n={
         id:uid("node"),
         type:"custom",
@@ -163,6 +196,7 @@
 
     function saveCustom(asNew){
       const c=current(state),def=state.custom_components[c.definition_id];if(!def)return;
+      checkpoint(asNew?"Save custom as new":"Override custom component");
       if(asNew){
         const name=prompt("Save as new component:",def.name+" Copy");if(!name)return;
         const id=uid("custom");state.custom_components[id]={
@@ -187,12 +221,14 @@
     }
 
     function deleteNode(id){
+      checkpoint("Delete node");
       const c=current(state);c.nodes=c.nodes.filter(n=>n.id!==id);c.edges=c.edges.filter(e=>e.source!==id&&e.target!==id);
       if(selected===id)selected=null;draw();
     }
 
     function duplicateSelected(){
       const n=selectedNode();if(!n)return;
+      checkpoint("Duplicate "+n.name);
       const c=current(state),d=cp(n);d.id=uid("node");d.name=n.name+" Copy";
       const idx=c.nodes.findIndex(x=>x.id===n.id);c.nodes.splice(idx+1,0,d);selected=d.id;setStatus("Layer duplicated.");draw();
     }
@@ -243,7 +279,13 @@
       }else{
         input=document.createElement("input");input.type=f.type==="number"?"number":"text";input.step="any";input.value=node.params?.[f.key]??f.value??"";
       }
-      input.addEventListener("change",()=>{node.params=node.params||{};node.params[f.key]=f.type==="number"?Number(input.value):input.value;setStatus(node.name+" API updated.");});
+      input.addEventListener("change",()=>{
+        checkpoint("Edit "+node.name+"."+f.key);
+        node.params=node.params||{};
+        node.params[f.key]=f.type==="number"?Number(input.value):input.value;
+        setStatus(node.name+" API updated.");
+        draw();
+      });
       wrap.append(label,input);body.appendChild(wrap);
     }
 
@@ -286,8 +328,9 @@
     function drawEdges(wrap,flow){
       const svg=document.createElementNS("http://www.w3.org/2000/svg","svg");
       svg.setAttribute("class","mlb-edge-layer");
-      svg.setAttribute("width",Math.max(flow.scrollWidth,flow.getBoundingClientRect().width));
-      svg.setAttribute("height",Math.max(flow.scrollHeight,650));
+      const scaledRect=wrap.getBoundingClientRect();
+      svg.setAttribute("width",Math.max(wrap.clientWidth,scaledRect.width));
+      svg.setAttribute("height",Math.max(wrap.clientHeight,scaledRect.height,650));
       wrap.appendChild(svg);
       const wr=wrap.getBoundingClientRect();
       let skipRoute=0, extraRoute=0;
@@ -339,6 +382,7 @@
     }
 
     function loadTinyStories(){
+      checkpoint("Load TinyStories 30M");
       const rootId=state.root_component_id;
       state.view_component_id=rootId;
       state.project={...(state.project||{}),name:"TinyStories 30M",context_length:512,batch_size:16,dataset:"TinyStories",estimated_parameters:"~30M"};
@@ -371,17 +415,28 @@
     }
 
     function draw(){
+      const oldCanvas=root.querySelector(".mlb-canvas");
+      if(oldCanvas){
+        canvasScrollLeft=oldCanvas.scrollLeft;
+        canvasScrollTop=oldCanvas.scrollTop;
+      }
       root.innerHTML="";
 
       // Top bar
       const top=document.createElement("div");top.className="mlb-topbar";
-      const logo=document.createElement("div");logo.className="mlb-logo";logo.innerHTML='<span class="mlb-logo-mark">◇</span>MLBricks Builder <span class="mlb-beta">v0.3.9</span>';top.appendChild(logo);
+      const logo=document.createElement("div");logo.className="mlb-logo";logo.innerHTML='<span class="mlb-logo-mark">◇</span>MLBricks Builder <span class="mlb-beta">v0.3.10</span>';top.appendChild(logo);
       const title=document.createElement("div");title.className="mlb-project-title";title.textContent=state.project?.name||"Untitled";top.appendChild(title);
       const saved=document.createElement("div");saved.className="mlb-save-state";saved.textContent="• Saved";top.appendChild(saved);
       const sp=document.createElement("div");sp.className="mlb-topspacer";top.appendChild(sp);
       const acts=document.createElement("div");acts.className="mlb-top-actions";
       const run=btn("▶ Run","mlb-run");run.addEventListener("click",()=>{setStatus("Graph ready for MLBricks runtime compilation.");draw();});
-      acts.append(run,btn("□ Stop","mlb-stop"),btn("↻ Clear","mlb-dark-btn"),btn("▣ Save","mlb-dark-btn"),btn("⇧ Load","mlb-dark-btn"),btn("⇩ Export","mlb-dark-btn"),btn("⌯ Share","mlb-dark-btn"),btn("?","mlb-dark-btn"),btn("⚙","mlb-dark-btn"));top.appendChild(acts);
+      const undoBtn=btn("↶ Undo","mlb-dark-btn mlb-history-btn");undoBtn.disabled=undoStack.length===0;undoBtn.title="Undo last model edit";undoBtn.addEventListener("click",undo);
+      const redoBtn=btn("↷ Redo","mlb-dark-btn mlb-history-btn");redoBtn.disabled=redoStack.length===0;redoBtn.title="Redo last undone edit";redoBtn.addEventListener("click",redo);
+      const clearBtn=btn("↻ Clear","mlb-dark-btn");clearBtn.addEventListener("click",()=>{
+        const c=current(state);if(!c.nodes.length&&!c.edges.length)return;
+        checkpoint("Clear graph");c.nodes=[];c.edges=[];selected=null;pendingPort=null;setStatus("Graph cleared.");draw();
+      });
+      acts.append(run,btn("□ Stop","mlb-stop"),undoBtn,redoBtn,clearBtn,btn("▣ Save","mlb-dark-btn"),btn("⇧ Load","mlb-dark-btn"),btn("⇩ Export","mlb-dark-btn"),btn("⌯ Share","mlb-dark-btn"),btn("?","mlb-dark-btn"),btn("⚙","mlb-dark-btn"));top.appendChild(acts);
       root.appendChild(top);
 
       const shell=document.createElement("div");shell.className="mlb-shell";
@@ -460,7 +515,7 @@
       const demo=btn("★ TinyStories 30M","mlb-tool");demo.addEventListener("click",loadTinyStories);
       toolbar.append(auto,add,demo);
       const tsp=document.createElement("div");tsp.className="mlb-toolspacer";toolbar.appendChild(tsp);
-      const toggle=document.createElement("label");toggle.className="mlb-toggle";const cb=document.createElement("input");cb.type="checkbox";cb.checked=!!state.auto_connect;cb.addEventListener("change",()=>{state.auto_connect=cb.checked;draw();});toggle.append(document.createTextNode("Auto Connect"),cb);toolbar.appendChild(toggle);
+      const toggle=document.createElement("label");toggle.className="mlb-toggle";const cb=document.createElement("input");cb.type="checkbox";cb.checked=!!state.auto_connect;cb.addEventListener("change",()=>{checkpoint("Change Auto Connect");state.auto_connect=cb.checked;draw();});toggle.append(document.createTextNode("Auto Connect"),cb);toolbar.appendChild(toggle);
       const z=document.createElement("div");z.className="mlb-zoom";
       const zm=btn("−");zm.addEventListener("click",()=>{zoom=Math.max(.65,zoom-.1);draw();});
       const zs=document.createElement("span");zs.textContent=Math.round(zoom*100)+"%";
@@ -481,7 +536,9 @@
       canvas.appendChild(mini);
 
       const wrap=document.createElement("div");wrap.className="mlb-flow-wrap";
-      const flow=document.createElement("div");flow.className="mlb-flow";flow.style.transformOrigin="left center";flow.style.transform="scale("+zoom+")";
+      const flow=document.createElement("div");flow.className="mlb-flow";
+      flow.style.transformOrigin="left top";
+      flow.style.transform="scale("+zoom+")";
       const comp=current(state);
 
       if(!comp.nodes.length){
@@ -515,7 +572,18 @@
         :"Each node has 3 inputs + 3 outputs: top-edge pair, middle side pair, bottom-edge pair. Auto-connect uses the middle Main lane.";
       canvas.appendChild(hint);
       main.appendChild(canvas);
-      requestAnimationFrame(()=>drawEdges(wrap,flow));
+      requestAnimationFrame(()=>{
+        // transform:scale changes pixels but not layout. Give the wrapper the
+        // scaled dimensions so zoom creates the correct scroll area instead
+        // of clipping nodes, bottom ports, edges, or the instruction banner.
+        const baseW=Math.max(flow.scrollWidth,flow.offsetWidth);
+        const baseH=Math.max(flow.scrollHeight,flow.offsetHeight);
+        wrap.style.width=Math.ceil(baseW*zoom)+"px";
+        wrap.style.height=Math.ceil(baseH*zoom)+"px";
+        drawEdges(wrap,flow);
+        canvas.scrollLeft=canvasScrollLeft;
+        canvas.scrollTop=canvasScrollTop;
+      });
 
       // Bottom details are collapsed by default so Kaggle gives the graph maximum space.
       const details=document.createElement("div");details.className="mlb-details";
@@ -592,6 +660,7 @@
             const txt=document.createElement("div");txt.className="mlb-connection-text";txt.textContent=left;
             const delBtn=btn("Remove","mlb-conn-remove");
             delBtn.addEventListener("click",()=>{
+              checkpoint("Remove connection");
               current(state).edges=current(state).edges.filter(x=>x.id!==ed.id);
               setStatus("Connection removed.");
               draw();
@@ -602,7 +671,11 @@
         const actions=document.createElement("div");actions.className="mlb-action-grid";
         if(n.definition_id){const open=btn("Open Architecture");open.addEventListener("click",()=>openInside(n));actions.appendChild(open);}
         const dup=btn("Duplicate");dup.addEventListener("click",duplicateSelected);actions.appendChild(dup);
-        const disc=btn("Remove All Links");disc.addEventListener("click",()=>{current(state).edges=current(state).edges.filter(e=>e.source!==n.id&&e.target!==n.id);setStatus("All connections removed.");draw();});actions.appendChild(disc);
+        const disc=btn("Remove All Links");disc.addEventListener("click",()=>{
+          checkpoint("Remove all links from "+n.name);
+          current(state).edges=current(state).edges.filter(e=>e.source!==n.id&&e.target!==n.id);
+          setStatus("All connections removed.");draw();
+        });actions.appendChild(disc);
         const del=btn("Delete");del.addEventListener("click",()=>deleteNode(n.id));actions.appendChild(del);body.appendChild(actions);
         if(current(state).kind==="custom_edit"){
           const parentCfg=document.createElement("div");
