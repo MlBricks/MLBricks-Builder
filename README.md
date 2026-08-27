@@ -145,3 +145,18 @@ This release adds the workflow behavior requested for kids and custom builders:
 - `Residual Add` defaults to 2 inputs and 1 output
 - nested custom layers save and reload their chosen public interface
 - hold **Shift** while connecting to create a residual pipeline
+
+
+## v0.3.4 — per-node residual ports and removable connections
+
+This release removes the residual top bus and replaces it with clearer
+per-node residual ports:
+
+- every node has a **top residual input port**
+- every node has a **bottom residual output port**
+- side ports remain for the normal left-to-right data flow
+- residual connections are created using **bottom residual port → top residual port**
+- users can create multiple residual/skip connections
+- the inspector now lists all connections for the selected node and gives a
+  **Remove** button for each connection
+- a **Remove All Links** action is also provided

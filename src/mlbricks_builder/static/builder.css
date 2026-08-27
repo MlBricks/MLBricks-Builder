@@ -168,3 +168,20 @@
 .mlb-edge-residual-tap{fill:#3040ff;stroke:#9fb0ff;stroke-width:1.2}
 .mlb-port[data-port-index]{box-shadow:0 0 0 1px rgba(0,0,0,.14)}
 .mlb-node .node-meta{min-height:28px}
+
+.mlb-port.res_in,.mlb-port.res_out{
+  background:#9d6bff;border-color:#eadbff;
+}
+.mlb-port.res_in:hover,.mlb-port.res_out:hover,.mlb-port.res_in.armed,.mlb-port.res_out.armed{
+  background:#c087ff;border-color:#fff0ff;
+}
+.mlb-edge-residual{fill:none;stroke:#b16cff;stroke-width:2.2;stroke-linecap:round}
+.mlb-connection-row{
+  display:flex;justify-content:space-between;align-items:center;gap:8px;
+  border:1px solid #2b3947;background:#111922;border-radius:7px;padding:7px 8px;margin-bottom:6px;
+}
+.mlb-connection-text{font-size:8px;color:#c8d2dd;line-height:1.35;word-break:break-word}
+.mlb-conn-remove{
+  border:1px solid #5c3340;background:#231419;color:#f0b7c4;border-radius:6px;
+  padding:5px 8px;font-size:8px;cursor:pointer;flex:0 0 auto;
+}

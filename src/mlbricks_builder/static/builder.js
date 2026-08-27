@@ -39,6 +39,13 @@
     if(state.auto_connect===undefined) state.auto_connect=true;
 
     function btn(text,cls){const b=document.createElement("button");b.type="button";b.className=cls||"";b.textContent=text;return b;}
+    function portLabel(side,index){
+      if(side==="in") return "in"+(index+1);
+      if(side==="out") return "out"+(index+1);
+      if(side==="res_in") return "skip in";
+      if(side==="res_out") return "skip out";
+      return side+" "+(index+1);
+    }
     function selectedNode(){return current(state).nodes.find(n=>n.id===selected)||null;}
     function setStatus(s){status=s;}
 
@@ -184,19 +191,26 @@
 
     function portClick(nodeId,side,portIndex,ev){
       ev.stopPropagation();
-      if(side==="out"){
+      const isOutput = side==="out" || side==="res_out";
+      const isInput = side==="in" || side==="res_in";
+
+      if(isOutput){
         pendingPort={nodeId,side,portIndex};
-        setStatus("Output selected. Click an input port.");
+        setStatus(side==="res_out" ? "Residual output selected. Click a residual input." : "Output selected. Click an input port.");
         draw();
         return;
       }
-      if(side==="in"&&pendingPort?.side==="out"){
-        const kind=ev.shiftKey?"residual":"main";
-        connect(pendingPort.nodeId,nodeId,kind,"out"+pendingPort.portIndex,"in"+portIndex);
+
+      if(isInput && pendingPort && (pendingPort.side==="out" || pendingPort.side==="res_out")){
+        const kind = (pendingPort.side==="res_out" || side==="res_in") ? "residual" : "main";
+        const sourcePort = pendingPort.side==="res_out" ? "res_out0" : "out"+pendingPort.portIndex;
+        const targetPort = side==="res_in" ? "res_in0" : "in"+portIndex;
+        connect(pendingPort.nodeId,nodeId,kind,sourcePort,targetPort);
         pendingPort=null;
         draw();
         return;
       }
+
       pendingPort={nodeId,side,portIndex};
       setStatus("Input selected. Choose an output port.");
       draw();
@@ -220,11 +234,26 @@
 
 
     function portButtons(node, side){
-      const count=Math.max(1, Number(side==="in" ? (node.input_count||1) : (node.output_count||1)));
+      let count = 1;
+      let cls = side;
+      if(side==="in" || side==="out"){
+        count = Math.max(1, Number(side==="in" ? (node.input_count||1) : (node.output_count||1)));
+      } else {
+        count = 1;
+      }
       let html="";
       for(let i=0;i<count;i++){
-        const top = count===1 ? 50 : (20 + (60*i/Math.max(1,count-1)));
-        html += '<button class="mlb-port '+side+'" data-side="'+side+'" data-port-index="'+i+'" style="top:'+top+'%" type="button" aria-label="'+side+' port '+(i+1)+'"></button>';
+        let top = 50;
+        let style = "";
+        if(side==="in" || side==="out"){
+          top = count===1 ? 50 : (20 + (60*i/Math.max(1,count-1)));
+          style = 'style="top:'+top+'%"';
+        } else if(side==="res_in"){
+          style = 'style="left:50%;top:-7px;transform:translateX(-50%)"';
+        } else if(side==="res_out"){
+          style = 'style="left:50%;bottom:-7px;top:auto;transform:translateX(-50%)"';
+        }
+        html += '<button class="mlb-port '+cls+'" data-side="'+side+'" data-port-index="'+i+'" '+style+' type="button" aria-label="'+portLabel(side,i)+'"></button>';
       }
       return html;
     }
@@ -239,7 +268,7 @@
 
     function drawEdges(wrap,flow){
       const svg=document.createElementNS("http://www.w3.org/2000/svg","svg");svg.setAttribute("class","mlb-edge-layer");
-      svg.setAttribute("width",Math.max(flow.scrollWidth,flow.getBoundingClientRect().width));svg.setAttribute("height",Math.max(flow.scrollHeight,520));wrap.appendChild(svg);
+      svg.setAttribute("width",Math.max(flow.scrollWidth,flow.getBoundingClientRect().width));svg.setAttribute("height",Math.max(flow.scrollHeight,560));wrap.appendChild(svg);
       const wr=wrap.getBoundingClientRect();
 
       function portRect(nodeEl, side, index){
@@ -248,32 +277,32 @@
       }
 
       (current(state).edges||[]).forEach(e=>{
-        const a=flow.querySelector('[data-node-id="'+e.source+'"]'),b=flow.querySelector('[data-node-id="'+e.target+'"]');if(!a||!b)return;
+        const a=flow.querySelector('[data-node-id="'+e.source+'"]'), b=flow.querySelector('[data-node-id="'+e.target+'"]'); if(!a||!b)return;
+
+        if(e.kind==="residual"){
+          const ar = portRect(a,"res_out",0), br = portRect(b,"res_in",0);
+          const x1 = ar.left-wr.left + ar.width/2, y1 = ar.top-wr.top + ar.height/2;
+          const x2 = br.left-wr.left + br.width/2, y2 = br.top-wr.top + br.height/2;
+          const lift = Math.max(42, Math.abs(x2-x1)*0.16);
+          const p=document.createElementNS("http://www.w3.org/2000/svg","path");
+          p.setAttribute("d",`M ${x1} ${y1} C ${x1} ${y1-lift}, ${x2} ${y2-lift}, ${x2} ${y2}`);
+          p.setAttribute("class","mlb-edge-residual");
+          p.setAttribute("data-edge-id", e.id);
+          svg.appendChild(p);
+          return;
+        }
+
         const sourceIndex = Number(String(e.source_port||"out0").replace("out","")) || 0;
         const targetIndex = Number(String(e.target_port||"in0").replace("in","")) || 0;
         const ar=portRect(a,"out",sourceIndex), br=portRect(b,"in",targetIndex);
         const x1=ar.left-wr.left + ar.width/2, y1=ar.top-wr.top + ar.height/2;
         const x2=br.left-wr.left + br.width/2, y2=br.top-wr.top + br.height/2;
+        const mid=(x1+x2)/2;
         const p=document.createElementNS("http://www.w3.org/2000/svg","path");
-        if(e.kind==="residual"){
-          const startNode = a.getBoundingClientRect();
-          const endNode = b.getBoundingClientRect();
-          const topY = Math.min(startNode.top-wr.top, endNode.top-wr.top) - 42;
-          p.setAttribute("d",`M ${x1} ${y1} C ${x1+12} ${y1}, ${x1+6} ${topY}, ${x1} ${topY}
-                               L ${x2} ${topY}
-                               C ${x2-6} ${topY}, ${x2-12} ${y2}, ${x2} ${y2}`);
-          p.setAttribute("class","mlb-edge-residual-pipeline");
-          const tap1=document.createElementNS("http://www.w3.org/2000/svg","circle");
-          tap1.setAttribute("cx", x1); tap1.setAttribute("cy", topY); tap1.setAttribute("r", 4.5); tap1.setAttribute("class","mlb-edge-residual-tap");
-          const tap2=document.createElementNS("http://www.w3.org/2000/svg","circle");
-          tap2.setAttribute("cx", x2); tap2.setAttribute("cy", topY); tap2.setAttribute("r", 4.5); tap2.setAttribute("class","mlb-edge-residual-tap");
-          svg.appendChild(p); svg.appendChild(tap1); svg.appendChild(tap2);
-        } else {
-          const mid=(x1+x2)/2;
-          p.setAttribute("d",`M ${x1} ${y1} C ${mid} ${y1}, ${mid} ${y2}, ${x2} ${y2}`);
-          p.setAttribute("class","mlb-edge-main");
-          svg.appendChild(p);
-        }
+        p.setAttribute("d",`M ${x1} ${y1} C ${mid} ${y1}, ${mid} ${y2}, ${x2} ${y2}`);
+        p.setAttribute("class","mlb-edge-main");
+        p.setAttribute("data-edge-id", e.id);
+        svg.appendChild(p);
       });
     }
 
@@ -296,7 +325,7 @@
           edge(esa.id,norm.id),
           edge(norm.id,ffn.id),
           Object.assign(edge(ffn.id,res.id),{source_port:"out0",target_port:"in0"}),
-          Object.assign(edge(esa.id,res.id,"residual"),{source_port:"out0",target_port:"in1"})
+          Object.assign(edge(esa.id,res.id,"residual"),{source_port:"res_out0",target_port:"res_in0"})
         ]
       };
       const nodes=[];
@@ -314,7 +343,7 @@
 
       // Top bar
       const top=document.createElement("div");top.className="mlb-topbar";
-      const logo=document.createElement("div");logo.className="mlb-logo";logo.innerHTML='<span class="mlb-logo-mark">◇</span>MLBricks Builder <span class="mlb-beta">v0.3.3</span>';top.appendChild(logo);
+      const logo=document.createElement("div");logo.className="mlb-logo";logo.innerHTML='<span class="mlb-logo-mark">◇</span>MLBricks Builder <span class="mlb-beta">v0.3.4</span>';top.appendChild(logo);
       const title=document.createElement("div");title.className="mlb-project-title";title.textContent=state.project?.name||"Untitled";top.appendChild(title);
       const saved=document.createElement("div");saved.className="mlb-save-state";saved.textContent="• Saved";top.appendChild(saved);
       const sp=document.createElement("div");sp.className="mlb-topspacer";top.appendChild(sp);
@@ -394,7 +423,7 @@
           if(i){const a=document.createElement("div");a.className="mlb-arrow";a.textContent="→";flow.appendChild(a);}
           const info=n.type==="custom"?{accent:"purple",description:"Nested reusable layer",icon:"LAY",api:[]}:cat(catalog,n.type);
           const card=document.createElement("div");card.className="mlb-node"+(selected===n.id?" selected":"");card.dataset.nodeId=n.id;card.dataset.accent=info.accent||"purple";
-          card.innerHTML='<span class="index">'+(i+1)+'</span>'+portButtons(n,"in")+'<div class="node-head"><div class="node-name"></div><div class="node-icon"></div></div><div class="node-desc"></div><div class="mlb-node-fields"></div><div class="node-meta"></div>'+portButtons(n,"out");
+          card.innerHTML='<span class="index">'+(i+1)+'</span>'+portButtons(n,"res_in")+portButtons(n,"in")+'<div class="node-head"><div class="node-name"></div><div class="node-icon"></div></div><div class="node-desc"></div><div class="mlb-node-fields"></div><div class="node-meta"></div>'+portButtons(n,"out")+portButtons(n,"res_out");
           card.querySelector(".node-name").textContent=n.name;card.querySelector(".node-icon").textContent=info.icon||"ML";card.querySelector(".node-desc").textContent=info.description||"MLBricks layer";
           card.querySelector(".mlb-node-fields").innerHTML=n.type==="custom"
             ?('<div class="mlb-mini-field"><span>Architecture</span><strong>Open</strong></div>'+
@@ -415,8 +444,8 @@
       wrap.appendChild(flow);canvas.appendChild(wrap);
       const hint=document.createElement("div");hint.className="mlb-hint";
       hint.textContent=pendingPort
-        ?"Choose destination input port • Hold Shift to create residual pipeline"
-        :"Auto-connect builds the layer flow. For custom wiring click an output port, then an input port. Double-click nested layers to edit.";
+        ?(pendingPort.side==="res_out" ? "Choose a top residual input to create a skip connection." : "Choose a destination input port.")
+        :"Auto-connect builds the normal layer flow. For custom wiring use side ports. Use the bottom purple port and top purple port for residual/skip connections.";
       canvas.appendChild(hint);
       main.appendChild(canvas);
       requestAnimationFrame(()=>drawEdges(wrap,flow));
@@ -426,7 +455,7 @@
       const p1=document.createElement("div");p1.className="mlb-bottom-card";p1.innerHTML='<div class="mlb-bottom-title">PRESETS</div><div class="mlb-preset-card"><strong>★ TinyStories 30M (6L)</strong>Context 512 · Batch 16<br>~30M parameters</div>';p1.querySelector(".mlb-preset-card").addEventListener("click",loadTinyStories);
       const p2=document.createElement("div");p2.className="mlb-bottom-card";p2.innerHTML='<div class="mlb-bottom-title">GRAPH INFO</div><div class="mlb-stat-row"><span>Layers</span><strong>'+current(state).nodes.length+'</strong></div><div class="mlb-stat-row"><span>Connections</span><strong>'+(current(state).edges||[]).length+'</strong></div><div class="mlb-stat-row"><span>Context</span><strong>'+(state.project?.context_length||"—")+'</strong></div><div class="mlb-stat-row"><span>Batch Size</span><strong>'+(state.project?.batch_size||"—")+'</strong></div><div class="mlb-stat-row"><span>Status</span><strong class="mlb-good">✓ Valid</strong></div>';
       const p3=document.createElement("div");p3.className="mlb-bottom-card";p3.innerHTML='<div class="mlb-bottom-title">COMPUTE ESTIMATE</div><div class="mlb-stat-row"><span>Target Params</span><strong>'+(state.project?.estimated_parameters||"—")+'</strong></div><div class="mlb-stat-row"><span>Dataset</span><strong>'+(state.project?.dataset||"—")+'</strong></div><div class="mlb-stat-row"><span>Precision</span><strong>float16</strong></div><div class="mlb-stat-row"><span>Backend</span><strong>MLBricks</strong></div>';
-      const p4=document.createElement("div");p4.className="mlb-bottom-card";p4.innerHTML='<div class="mlb-bottom-title">SHORTCUTS</div><div class="mlb-stat-row"><span>Connect</span><strong>Out port → In port</strong></div><div class="mlb-stat-row"><span>Residual</span><strong>Shift + click input</strong></div><div class="mlb-stat-row"><span>Custom Ports</span><strong>Editable in inspector</strong></div><div class="mlb-stat-row"><span>Open Layer</span><strong>Double Click</strong></div>';
+      const p4=document.createElement("div");p4.className="mlb-bottom-card";p4.innerHTML='<div class="mlb-bottom-title">SHORTCUTS</div><div class="mlb-stat-row"><span>Connect</span><strong>Side out → side in</strong></div><div class="mlb-stat-row"><span>Residual</span><strong>Bottom port → top port</strong></div><div class="mlb-stat-row"><span>Delete Edge</span><strong>Inspector buttons</strong></div><div class="mlb-stat-row"><span>Open Layer</span><strong>Double Click</strong></div>';
       panels.append(p1,p2,p3,p4);main.appendChild(panels);
 
       // Inspector
@@ -465,7 +494,7 @@
           const s=document.createElement("div");s.className="mlb-summary";
           [["Internal Components",def?.nodes?.length||0],["Connections",def?.edges?.length||0],["Revision","v"+(def?.revision||1)]].forEach(([a,b])=>{const r=document.createElement("div");r.className="mlb-summary-row";r.innerHTML="<span>"+a+"</span><strong>"+b+"</strong>";s.appendChild(r);});
           body.appendChild(s);
-          const st=document.createElement("div");st.className="mlb-section-title";st.textContent="CUSTOM PORTS";body.appendChild(st);
+          const st=document.createElement("div");st.className="mlb-section-title";st.textContent="CUSTOM LAYER PORTS";body.appendChild(st);
           [{key:"input_count",label:"Input Connections"},{key:"output_count",label:"Output Connections"}].forEach(f=>{
             const wrap=document.createElement("div");wrap.className="mlb-field";
             const label=document.createElement("label");label.textContent=f.label;
@@ -484,10 +513,29 @@
           const ct=document.createElement("div");ct.className="mlb-section-title";ct.textContent="MLBRICKS PYTHON";body.appendChild(ct);
           const code=document.createElement("pre");code.className="mlb-code-preview";code.textContent=constructorPreview(n);body.appendChild(code);
         }
+        const edgeSectionTitle=document.createElement("div");edgeSectionTitle.className="mlb-section-title";edgeSectionTitle.textContent="CONNECTIONS";body.appendChild(edgeSectionTitle);
+        const relEdges=(current(state).edges||[]).filter(e=>e.source===n.id||e.target===n.id);
+        if(relEdges.length===0){
+          const emptyEdge=document.createElement("div");emptyEdge.className="mlb-api-path";emptyEdge.textContent="No connections for this node.";body.appendChild(emptyEdge);
+        } else {
+          relEdges.forEach(ed=>{
+            const row=document.createElement("div");row.className="mlb-connection-row";
+            const src=current(state).nodes.find(x=>x.id===ed.source), tgt=current(state).nodes.find(x=>x.id===ed.target);
+            const left=(src?.name||"Node")+" → "+(tgt?.name||"Node")+" · "+(ed.kind==="residual"?"Residual":"Main");
+            const txt=document.createElement("div");txt.className="mlb-connection-text";txt.textContent=left;
+            const delBtn=btn("Remove","mlb-conn-remove");
+            delBtn.addEventListener("click",()=>{
+              current(state).edges=current(state).edges.filter(x=>x.id!==ed.id);
+              setStatus("Connection removed.");
+              draw();
+            });
+            row.append(txt,delBtn);body.appendChild(row);
+          });
+        }
         const actions=document.createElement("div");actions.className="mlb-action-grid";
         if(n.definition_id){const open=btn("Open Architecture");open.addEventListener("click",()=>openInside(n));actions.appendChild(open);}
         const dup=btn("Duplicate");dup.addEventListener("click",duplicateSelected);actions.appendChild(dup);
-        const disc=btn("Disconnect");disc.addEventListener("click",()=>{current(state).edges=current(state).edges.filter(e=>e.source!==n.id&&e.target!==n.id);draw();});actions.appendChild(disc);
+        const disc=btn("Remove All Links");disc.addEventListener("click",()=>{current(state).edges=current(state).edges.filter(e=>e.source!==n.id&&e.target!==n.id);setStatus("All connections removed.");draw();});actions.appendChild(disc);
         const del=btn("Delete");del.addEventListener("click",()=>deleteNode(n.id));actions.appendChild(del);body.appendChild(actions);
         if(current(state).kind==="custom_edit"){
           const parentCfg=document.createElement("div");
