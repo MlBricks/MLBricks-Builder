@@ -22,3 +22,7 @@ Version 0.1.2 deliberately removes `anywidget`. The Builder uses Jupyter's stand
 MLBricks itself remains a separate dependency and is installed from:
 
 `https://github.com/MlBricks/MLBricks.git`
+
+## v0.1.3 UI
+
+Compact narrow layer cards, full left component palette, right-side API inspector, layer/model tabs, and a layout matching the MLBricks Builder mockup more closely.
