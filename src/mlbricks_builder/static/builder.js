@@ -1,5 +1,6 @@
 (function(){
-  if(window.MLBricksBuilder) return;
+  // Always overwrite any renderer left by an older notebook output.
+  // Kaggle keeps browser globals even when Python modules are reinstalled.
 
   function cp(v){return JSON.parse(JSON.stringify(v));}
   function uid(p){return p+"_"+Math.random().toString(36).slice(2,10);}
@@ -58,6 +59,12 @@
         args.push(f.key+"="+pythonValue(v));
       });
       const varname=(node.name||"layer").toLowerCase().replace(/[^a-z0-9]+/g,"_").replace(/^_+|_+$/g,"")||"layer";
+      if(api.config_api){
+        const cfgName=api.config_api.public_name;
+        return "from mlbricks import "+api.public_name+", "+cfgName+"\n\n"+
+          "config = "+cfgName+"("+args.join(", ")+")\n"+
+          varname+" = "+api.public_name+"(config)";
+      }
       return "from mlbricks import "+api.public_name+"\n\n"+varname+" = "+api.public_name+"("+args.join(", ")+")";
     }
 
@@ -193,7 +200,7 @@
 
       // Top bar
       const top=document.createElement("div");top.className="mlb-topbar";
-      const logo=document.createElement("div");logo.className="mlb-logo";logo.innerHTML='<span class="mlb-logo-mark">◇</span>MLBricks Builder <span class="mlb-beta">BETA</span>';top.appendChild(logo);
+      const logo=document.createElement("div");logo.className="mlb-logo";logo.innerHTML='<span class="mlb-logo-mark">◇</span>MLBricks Builder <span class="mlb-beta">v0.3.1</span>';top.appendChild(logo);
       const title=document.createElement("div");title.className="mlb-project-title";title.textContent=state.project?.name||"Untitled";top.appendChild(title);
       const saved=document.createElement("div");saved.className="mlb-save-state";saved.textContent="• Saved";top.appendChild(saved);
       const sp=document.createElement("div");sp.className="mlb-topspacer";top.appendChild(sp);
@@ -311,7 +318,17 @@
       }else{
         const api=apiInfo(n);const info=n.type==="custom"?{api:[]}:cat(catalog,n.type);
         const sw=document.createElement("div");sw.className="mlb-selected";sw.innerHTML="<strong>"+n.name+"</strong><span class='mlb-pill'>"+(api.public_name||"Custom Layer")+"</span>";body.appendChild(sw);
-        const path=document.createElement("div");path.className="mlb-api-path";path.textContent=n.type==="custom"?"custom://"+n.definition_id:(api.signature||api.import_path||"MLBricks API");body.appendChild(path);
+        const path=document.createElement("div");path.className="mlb-api-path";
+        path.textContent=n.type==="custom"?"custom://"+n.definition_id:(api.signature||api.import_path||"MLBricks API");
+        body.appendChild(path);
+        if(n.type!=="custom"){
+          const apiStatus=document.createElement("div");
+          apiStatus.className="mlb-api-status "+(api.available?"ok":"bad");
+          apiStatus.textContent=api.available
+            ? "✓ Real MLBricks API loaded: "+(api.import_path||api.public_name)
+            : "✕ MLBricks API unavailable: "+(api.error||"unknown error");
+          body.appendChild(apiStatus);
+        }
         if(n.type==="custom"){
           const def=state.custom_components[n.definition_id];const s=document.createElement("div");s.className="mlb-summary";[["Internal Components",def?.nodes?.length||0],["Connections",def?.edges?.length||0],["Revision","v"+(def?.revision||1)]].forEach(([a,b])=>{const r=document.createElement("div");r.className="mlb-summary-row";r.innerHTML="<span>"+a+"</span><strong>"+b+"</strong>";s.appendChild(r);});body.appendChild(s);
         }else{

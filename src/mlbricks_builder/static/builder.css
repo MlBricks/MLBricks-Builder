@@ -159,3 +159,7 @@
 .mlb-statusbar{height:32px;display:flex;align-items:center;gap:16px;padding:0 12px;background:#0b1118;
   border-top:1px solid var(--border);font-size:8px;color:#8190a0}
 .mlb-statusbar .right{margin-left:auto}.mlb-ready{color:#4fc482}
+
+.mlb-api-status{font-size:8px;border-radius:6px;padding:7px 8px;margin:-3px 0 10px;border:1px solid #334252;background:#111922}
+.mlb-api-status.ok{color:#61d397;border-color:#285c45;background:#10231b}
+.mlb-api-status.bad{color:#f08b8b;border-color:#693939;background:#281515}

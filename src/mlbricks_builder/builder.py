@@ -55,6 +55,18 @@ class Builder:
             return self.mlbricks_api
         return self.mlbricks_api.get(component_type)
 
+    def diagnostics(self):
+        info = get_mlbricks_info()
+        available = [k for k, v in self.mlbricks_api.items() if v.get("available")]
+        unavailable = {k: v.get("error") for k, v in self.mlbricks_api.items() if not v.get("available")}
+        return {
+            "builder_version": "0.3.1",
+            "frontend_version": "0.3.1",
+            "mlbricks": info,
+            "api_components_available": available,
+            "api_components_unavailable": unavailable,
+        }
+
     def mlbricks_info(self):
         return get_mlbricks_info()
 
@@ -68,8 +80,12 @@ class Builder:
         }).replace("</", "<\\/")
         return f"""
 <style>{css}</style>
-<div id="{html.escape(self._instance_id)}" class="mlb-root"></div>
+<div id="{html.escape(self._instance_id)}" class="mlb-root" data-mlbricks-builder-version="0.3.1"></div>
 <script>
+/* IMPORTANT: Kaggle/Jupyter keeps browser globals alive even after Python
+   package upgrades or kernel restarts. Remove any old renderer before
+   evaluating this output so a v0.1/v0.2 renderer can never hijack v0.3.1. */
+try {{ delete window.MLBricksBuilder; }} catch (e) {{ window.MLBricksBuilder = undefined; }}
 {js}
 window.MLBricksBuilder.mount(
   document.getElementById({json.dumps(self._instance_id)}),

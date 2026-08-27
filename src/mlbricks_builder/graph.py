@@ -322,17 +322,44 @@ def tinystories_30m_project():
 
     # Shared nested layer definition.
     layer_def_id = _id("custom")
+    # These keys are the real MLBricks 1.0.0 constructor arguments.
     esa = _node("esa", "ESA", {
-        "dim": 384, "state_dim": 192, "heads": 6, "chunk_size": 16,
-        "kernel": "auto", "dtype": "float16", "device": "auto"
+        "embd": 384,
+        "head": 6,
+        "batch": 16,
+        "block": 512,
+        "backend": "auto",
+        "precision": "fp16",
+        "compass": "auto",
+        "dropout": 0.1,
+        "gate_min": 0.8,
+        "gate_max": 0.995,
+        "eps": 1e-5,
+        "device": "auto",
+        "auto_compile": False,
+        "compile_mode": "default",
+        "auto_move_input": True,
+        "strict_checks": False,
     })
-    norm = _node("rmsnorm", "RMSNorm", {"dim": 384, "eps": 0.00001})
+    norm = _node("rmsnorm", "RMSNorm", {
+        "normalized_shape": 384,
+        "eps": 1e-6,
+        "elementwise_affine": True,
+        "device": None,
+        "dtype": None,
+    })
     ffn = _node("ffn", "FFN Brick", {
-        "dim": 384, "ffn_dim": 1536, "activation": "silu",
-        "dropout": 0.1, "bias": "true"
+        "hidden_size": 384,
+        "intermediate_size": 1536,
+        "activation": "gelu",
+        "dropout": 0.1,
+        "bias": True,
+        "gated": False,
+        "device": None,
+        "dtype": None,
     })
     residual = _node("residual", "Residual Add", {
-        "enabled": "true", "scale": 1.0, "pre_norm": "RMSNorm"
+        "dropout": 0.0,
     })
 
     project["custom_components"][layer_def_id] = {
@@ -348,16 +375,17 @@ def tinystories_30m_project():
             _edge(esa["id"], residual["id"], kind="residual"),
         ],
         "exposed_api": [
-            {"source_node": esa["id"], "key": "dim", "label": "Hidden Dim"},
-            {"source_node": esa["id"], "key": "heads", "label": "ESA Heads"},
-            {"source_node": ffn["id"], "key": "ffn_dim", "label": "FFN Hidden Dim"},
+            {"source_node": esa["id"], "key": "embd", "label": "Embedding Dim"},
+            {"source_node": esa["id"], "key": "head", "label": "ESA Heads"},
+            {"source_node": ffn["id"], "key": "intermediate_size", "label": "FFN Hidden Dim"},
         ],
     }
 
     nodes = []
     text = _node("text_input", "Text Input", {"prompt": "Once upon a time"})
     emb = _node("embedding", "Embedding", {
-        "dim": 384, "vocab_size": 32000, "dtype": "float16", "device": "auto"
+        "vocab_size": 32000,
+        "embedding_dim": 384,
     })
     nodes.extend([text, emb])
 
@@ -365,12 +393,17 @@ def tinystories_30m_project():
         nodes.append(_node(
             "custom",
             f"Layer {i}",
-            {"dim": 384, "heads": 6, "ffn_dim": 1536},
+            {"embd": 384, "head": 6, "intermediate_size": 1536},
             definition_id=layer_def_id,
         ))
 
     head = _node("lm_head", "LM Head", {
-        "dim": 384, "vocab_size": 32000, "bias": "false"
+        "hidden_size": 384,
+        "vocab_size": 32000,
+        "bias": False,
+        "tie_to": None,
+        "device": None,
+        "dtype": None,
     })
     out = _node("text_output", "Text Output", {
         "max_new_tokens": 64, "temperature": 0.8, "top_p": 0.95

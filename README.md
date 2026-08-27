@@ -71,3 +71,33 @@ Use `builder.component_api("esa")` to inspect the metadata in Python.
 ## v0.3.0
 
 Full dark ComfyUI-style MLBricks Builder frontend with layer-by-layer layout, curved manual connections, residual edges, minimap, dark inspector, real installed MLBricks API forms, nested custom components, and TinyStories 30M preset.
+
+
+## v0.3.1 — Kaggle stale-renderer + real API fix
+
+This release fixes a notebook-specific bug in v0.3.0. Kaggle keeps JavaScript
+globals alive in the browser page. Older Builder outputs had registered
+`window.MLBricksBuilder`, and v0.3.0 incorrectly returned early when it found
+that global. The result was new CSS applied to an old renderer.
+
+v0.3.1 always replaces the old renderer before mounting, and shows `v0.3.1`
+visibly in the Builder header.
+
+It also aligns the TinyStories starter with the real MLBricks 1.0.0 constructor
+arguments from the uploaded library:
+
+- `ESA(embd=384, head=6, batch=16, block=512, ...)`
+- `Embedding(vocab_size=32000, embedding_dim=384)`
+- `RMSNorm(normalized_shape=384, ...)`
+- `FFN(hidden_size=384, intermediate_size=1536, ...)`
+- `Residual(dropout=0.0)`
+- `LMHead(hidden_size=384, vocab_size=32000, ...)`
+
+Run:
+
+```python
+builder = Builder(preset="tinystories")
+builder.diagnostics()
+```
+
+to verify which real MLBricks APIs were discovered.
