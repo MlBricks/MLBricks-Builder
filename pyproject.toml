@@ -4,47 +4,20 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mlbricks-builder"
-version = "0.1.1"
-description = "Visual layer-by-layer model builder for MLBricks in Jupyter, Kaggle and Colab."
+version = "0.1.2"
+description = "Hierarchical visual node builder for MLBricks models in Jupyter, Kaggle and Colab."
 readme = "README.md"
 requires-python = ">=3.10"
-
 license = "PolyForm-Noncommercial-1.0.0"
-license-files = [
-  "LICENSE"
-]
+license-files = ["LICENSE"]
 
 authors = [
   { name = "Zameer Hussain" },
   { name = "Akhtar Hussain" }
 ]
 
-keywords = [
-  "MLBricks",
-  "machine learning",
-  "artificial intelligence",
-  "visual model builder",
-  "neural network",
-  "Jupyter",
-  "Kaggle",
-  "model design"
-]
-
-classifiers = [
-  "Development Status :: 3 - Alpha",
-  "Intended Audience :: Education",
-  "Intended Audience :: Developers",
-  "Intended Audience :: Science/Research",
-  "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.10",
-  "Programming Language :: Python :: 3.11",
-  "Programming Language :: Python :: 3.12",
-  "Topic :: Scientific/Engineering :: Artificial Intelligence"
-]
-
 dependencies = [
   "ipython>=8",
-  "ipywidgets>=8",
   "mlbricks @ git+https://github.com/MlBricks/MLBricks.git"
 ]
 
@@ -60,7 +33,4 @@ where = ["src"]
 include = ["mlbricks_builder*"]
 
 [tool.setuptools.package-data]
-mlbricks_builder = [
-  "static/*.js",
-  "static/*.css"
-]
+mlbricks_builder = ["static/*.js", "static/*.css"]

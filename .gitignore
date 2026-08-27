@@ -4,6 +4,4 @@ __pycache__/
 dist/
 build/
 .venv/
-.env
-.ipynb_checkpoints/
 *.mlbricks
