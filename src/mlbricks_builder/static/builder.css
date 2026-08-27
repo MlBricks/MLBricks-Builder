@@ -1,0 +1,81 @@
+.mlb-root {
+  --mlb-bg: #f7f9fc;
+  --mlb-panel: #ffffff;
+  --mlb-border: #d8dee9;
+  --mlb-text: #1f2937;
+  --mlb-muted: #667085;
+  --mlb-accent: #8a6de9;
+  --mlb-accent-soft: #efeaff;
+  --mlb-green: #64b78d;
+  --mlb-blue: #78a9e5;
+  --mlb-yellow: #e8c867;
+  --mlb-pink: #d893bd;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: var(--mlb-text);
+  background: var(--mlb-bg);
+  border: 1px solid var(--mlb-border);
+  border-radius: 14px;
+  overflow: hidden;
+  min-width: 760px;
+}
+.mlb-toolbar {
+  display:flex; align-items:center; gap:10px; padding:10px 12px;
+  background:var(--mlb-panel); border-bottom:1px solid var(--mlb-border);
+}
+.mlb-brand { font-weight:800; margin-right:auto; letter-spacing:.02em; }
+.mlb-btn {
+  border:1px solid var(--mlb-border); background:var(--mlb-panel); color:var(--mlb-text);
+  border-radius:8px; padding:7px 10px; cursor:pointer; font-size:12px;
+}
+.mlb-btn:hover { border-color:var(--mlb-accent); }
+.mlb-btn.primary { background:var(--mlb-accent); color:white; border-color:var(--mlb-accent); }
+.mlb-layout { display:grid; grid-template-columns:180px minmax(420px,1fr) 220px; min-height:480px; }
+.mlb-sidebar,.mlb-inspector { background:var(--mlb-panel); padding:12px; }
+.mlb-sidebar { border-right:1px solid var(--mlb-border); }
+.mlb-inspector { border-left:1px solid var(--mlb-border); }
+.mlb-title { font-size:12px; font-weight:800; text-transform:uppercase; letter-spacing:.06em; margin-bottom:8px; }
+.mlb-palette { display:grid; gap:6px; }
+.mlb-palette button,.mlb-custom-item {
+  width:100%; text-align:left; padding:8px; border-radius:8px; border:1px solid var(--mlb-border);
+  background:#fff; cursor:pointer; font-size:12px;
+}
+.mlb-custom-item { background:#faf8ff; }
+.mlb-canvas {
+  padding:14px; position:relative;
+  background-image: radial-gradient(#cfd5df 1px, transparent 1px);
+  background-size: 18px 18px;
+  overflow:auto;
+}
+.mlb-breadcrumbs { display:flex; align-items:center; gap:5px; margin-bottom:12px; flex-wrap:wrap; }
+.mlb-crumb { border:0; background:transparent; color:var(--mlb-accent); cursor:pointer; font-size:12px; }
+.mlb-flow {
+  display:flex; align-items:center; gap:8px; min-height:220px; width:max-content; padding:24px;
+}
+.mlb-node {
+  width:150px; min-height:92px; border:2px solid var(--mlb-border); background:#fff;
+  border-radius:12px; padding:10px; cursor:pointer; position:relative;
+}
+.mlb-node.selected { border-color:var(--mlb-accent); box-shadow:0 0 0 3px var(--mlb-accent-soft); }
+.mlb-node .name { font-weight:800; font-size:13px; }
+.mlb-node .meta { font-size:11px; color:var(--mlb-muted); margin-top:7px; }
+.mlb-port {
+  width:10px; height:10px; border-radius:50%; background:var(--mlb-accent);
+  position:absolute; top:50%; transform:translateY(-50%);
+}
+.mlb-port.in { left:-6px; }
+.mlb-port.out { right:-6px; }
+.mlb-arrow { color:#8c96a6; font-weight:900; font-size:18px; }
+.mlb-empty { color:var(--mlb-muted); font-size:13px; padding:40px; }
+.mlb-field { margin-bottom:10px; }
+.mlb-field label { display:block; font-size:11px; color:var(--mlb-muted); margin-bottom:4px; }
+.mlb-field input {
+  width:100%; box-sizing:border-box; border:1px solid var(--mlb-border); border-radius:7px;
+  padding:7px 8px; font-size:12px;
+}
+.mlb-actions { display:grid; gap:6px; margin-top:10px; }
+.mlb-note { font-size:11px; color:var(--mlb-muted); line-height:1.45; }
+.mlb-section { margin-top:16px; padding-top:12px; border-top:1px solid var(--mlb-border); }
+.mlb-status {
+  padding:8px 12px; border-top:1px solid var(--mlb-border); background:var(--mlb-panel);
+  font-size:11px; color:var(--mlb-muted);
+}

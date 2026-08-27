@@ -1,0 +1,29 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mlbricks-builder"
+version = "0.1.0"
+description = "Hierarchical visual node builder for MLBricks models in Jupyter, Kaggle and Colab."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "PolyForm-Noncommercial-1.0.0" }
+authors = [
+  { name = "MLBricks" }
+]
+dependencies = [
+  "anywidget>=0.9.18",
+  "traitlets>=5.14.3",
+  "mlbricks @ git+https://github.com/MlBricks/MLBricks.git"
+]
+
+[project.urls]
+Homepage = "https://github.com/MlBricks/MLBricks-Builder"
+Repository = "https://github.com/MlBricks/MLBricks-Builder"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mlbricks_builder"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/mlbricks_builder/static" = "mlbricks_builder/static"
