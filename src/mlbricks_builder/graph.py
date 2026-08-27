@@ -190,6 +190,10 @@ def primitive_catalog():
                  "options": ["auto", "native", "pytorch"]},
             ],
         },
+        {"type":"layernorm","name":"LayerNorm","icon":"LN","category":"Core Blocks","description":"MLBricks LayerNorm","accent":"orange","api":[]},
+        {"type":"rescontroller","name":"ResController","icon":"RSC","category":"Core Blocks","description":"Adaptive residual controller","accent":"cyan","api":[]},
+        {"type":"micro_ffn","name":"MicroVirtualFFN","icon":"MVF","category":"Core Blocks","description":"Micro virtual FFN","accent":"pink","api":[]},
+        {"type":"virtual_saffn","name":"VirtualStateAwareFFN","icon":"VSF","category":"Core Blocks","description":"Virtual state-aware FFN","accent":"pink","api":[]},
         {
             "type": "lm_head",
             "name": "LM Head",

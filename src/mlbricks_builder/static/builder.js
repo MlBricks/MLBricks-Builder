@@ -12,6 +12,29 @@
   }
   function makeEdge(a,b,kind="main"){return{id:uid("edge"),source:a,target:b,source_port:"out",target_port:"in",kind};}
 
+  function pythonValue(v){
+    if(v===null||v===undefined||v==="") return "None";
+    if(typeof v==="boolean") return v?"True":"False";
+    if(typeof v==="number") return String(v);
+    if(v==="true") return "True";
+    if(v==="false") return "False";
+    return JSON.stringify(v);
+  }
+  function constructorPreview(node,info){
+    const api=info?.real_api;
+    if(!api?.available) return "# MLBricks API unavailable";
+    const args=[];
+    (api.parameters||[]).forEach(f=>{
+      let v=node.params?.[f.key];
+      if(v===undefined||v===null||v==="") v=f.value;
+      if((v===undefined||v===null)&&f.required) return;
+      if(v===undefined||v===null) return;
+      args.push(f.key+"="+pythonValue(v));
+    });
+    const varname=node.name.toLowerCase().replace(/[^a-z0-9]+/g,"_").replace(/^_+|_+$/g,"")||"layer";
+    return "from mlbricks import "+api.public_name+"\\n\\n"+varname+" = "+api.public_name+"("+args.join(", ")+")";
+  }
+
   function mount(root,payload){
     if(!root||root.dataset.mounted==="1") return;
     root.dataset.mounted="1";
@@ -370,7 +393,7 @@
           const info=n.type==="custom"?{name:"Custom Layer",api:[]}:cat(catalog,n.type);
           const selectedWrap=document.createElement("div");selectedWrap.className="mlb-selected";selectedWrap.innerHTML="<strong>Selected Layer</strong><span class='mlb-pill'>"+n.name+"</span>";body.appendChild(selectedWrap);
           const h=document.createElement("div");h.className="mlb-section-title";h.textContent=n.type==="custom"?"CUSTOM LAYER API":n.name+" API";body.appendChild(h);
-          const apiPath=document.createElement("div");apiPath.className="mlb-api-path";apiPath.textContent=n.type==="custom"?"custom://"+n.definition_id:"mlbricks."+n.type+"(...)";body.appendChild(apiPath);
+          const apiPath=document.createElement("div");apiPath.className="mlb-api-path";apiPath.textContent=n.type==="custom"?"custom://"+n.definition_id:(info.real_api?.signature||info.real_api?.import_path||("mlbricks."+n.type+"(...)"));body.appendChild(apiPath);
 
           const nameF=document.createElement("div");nameF.className="mlb-field";const nl=document.createElement("label");nl.textContent="Layer Name";const ni=document.createElement("input");ni.value=n.name;ni.addEventListener("change",()=>{n.name=ni.value||n.name;draw();});nameF.append(nl,ni);body.appendChild(nameF);
 
@@ -380,6 +403,8 @@
             [["Internal Components",def?.nodes?.length||0],["Internal Connections",def?.edges?.length||0],["Revision","v"+(def?.revision||1)]].forEach(([a,b])=>{const r=document.createElement("div");r.className="mlb-summary-row";r.innerHTML="<span>"+a+"</span><strong>"+b+"</strong>";summ.appendChild(r);});body.appendChild(summ);
           }else{
             (info.api||[]).forEach(f=>renderApiField(body,n,f));
+            const codeTitle=document.createElement("div");codeTitle.className="mlb-section-title";codeTitle.textContent="MLBRICKS PYTHON";body.appendChild(codeTitle);
+            const code=document.createElement("pre");code.className="mlb-code-preview";code.textContent=constructorPreview(n,info);body.appendChild(code);
           }
 
           const repeat=document.createElement("div");repeat.className="mlb-field";const rl=document.createElement("label");rl.textContent="Repeat Layer";const ri=document.createElement("input");ri.type="number";ri.min="1";ri.max="5000";ri.value=n.repeat||1;ri.addEventListener("change",()=>{n.repeat=Math.max(1,Number(ri.value)||1);});repeat.append(rl,ri);body.appendChild(repeat);

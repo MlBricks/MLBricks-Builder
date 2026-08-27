@@ -6,6 +6,7 @@ import uuid
 
 from .graph import new_project, primitive_catalog, tinystories_30m_project
 from .runtime import get_mlbricks_info
+from .api_registry import discover_mlbricks_api
 
 _STATIC = Path(__file__).parent / "static"
 
@@ -25,6 +26,14 @@ class Builder:
         else:
             self.state = new_project()
         self.catalog = primitive_catalog()
+        self.mlbricks_api = discover_mlbricks_api()
+        for item in self.catalog:
+            real = self.mlbricks_api.get(item.get("type"))
+            if real:
+                item["real_api"] = real
+                item["api"] = real.get("parameters", item.get("api", []))
+                if real.get("description"):
+                    item["description"] = real["description"]
         self._instance_id = f"mlb_{uuid.uuid4().hex}"
 
     def to_dict(self):
@@ -41,6 +50,11 @@ class Builder:
         self.state = json.loads(Path(path).read_text(encoding="utf-8"))
         return self
 
+    def component_api(self, component_type=None):
+        if component_type is None:
+            return self.mlbricks_api
+        return self.mlbricks_api.get(component_type)
+
     def mlbricks_info(self):
         return get_mlbricks_info()
 
@@ -50,6 +64,7 @@ class Builder:
         payload = json.dumps({
             "state": self.state,
             "catalog": self.catalog,
+            "mlbricks_api": self.mlbricks_api,
         }).replace("</", "<\\/")
         return f"""
 <style>{css}</style>
