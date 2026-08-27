@@ -131,15 +131,40 @@
       setStatus(kind==="residual"?"Skip connection created.":(kind==="aux"?"Extra connection created.":"Main connection created."));
     }
 
-    function autoConnectNew(node){
+    function isMainLaneEdge(e){
+      return e.kind==="main" && (e.source_port||"main_out")==="main_out" && (e.target_port||"main_in")==="main_in";
+    }
+
+    function rebuildMainFlow(){
       const c=current(state);
-      if(!state.auto_connect||c.nodes.length<2)return;
-      connect(c.nodes[c.nodes.length-2].id,node.id,"main","main_out","main_in",false);
+      if(!state.auto_connect)return;
+      // In Auto Connect mode the middle lane represents the ordered model flow.
+      // Rebuild only that lane; Skip and Extra connections remain untouched.
+      c.edges=(c.edges||[]).filter(e=>!isMainLaneEdge(e));
+      for(let i=0;i<c.nodes.length-1;i++){
+        connect(c.nodes[i].id,c.nodes[i+1].id,"main","main_out","main_in",false);
+      }
+    }
+
+    function insertAfterSelection(node){
+      const c=current(state);
+      let insertAt=c.nodes.length;
+      if(selected){
+        const idx=c.nodes.findIndex(x=>x.id===selected);
+        if(idx>=0) insertAt=idx+1;
+      }
+      c.nodes.splice(insertAt,0,node);
+      rebuildMainFlow();
+      selected=node.id;
+      return insertAt;
     }
 
     function addPrimitive(item){
       checkpoint("Add "+item.name);
-      const n=makeNode(item);current(state).nodes.push(n);autoConnectNew(n);selected=n.id;draw();
+      const n=makeNode(item);
+      const pos=insertAfterSelection(n);
+      setStatus(item.name+" inserted at layer "+(pos+1)+".");
+      draw();
     }
 
     function createCustom(){
@@ -173,7 +198,9 @@
         output_count:3,
         position:{x:0,y:0}
       };
-      current(state).nodes.push(n);autoConnectNew(n);selected=n.id;draw();
+      const pos=insertAfterSelection(n);
+      setStatus(def.name+" inserted at layer "+(pos+1)+".");
+      draw();
     }
 
     function openInside(node){
@@ -222,15 +249,45 @@
 
     function deleteNode(id){
       checkpoint("Delete node");
-      const c=current(state);c.nodes=c.nodes.filter(n=>n.id!==id);c.edges=c.edges.filter(e=>e.source!==id&&e.target!==id);
-      if(selected===id)selected=null;draw();
+      const c=current(state);
+      c.nodes=c.nodes.filter(n=>n.id!==id);
+      c.edges=c.edges.filter(e=>e.source!==id&&e.target!==id);
+      rebuildMainFlow();
+      if(selected===id)selected=null;
+      setStatus("Layer deleted.");
+      draw();
     }
 
     function duplicateSelected(){
       const n=selectedNode();if(!n)return;
       checkpoint("Duplicate "+n.name);
       const c=current(state),d=cp(n);d.id=uid("node");d.name=n.name+" Copy";
-      const idx=c.nodes.findIndex(x=>x.id===n.id);c.nodes.splice(idx+1,0,d);selected=d.id;setStatus("Layer duplicated.");draw();
+      const idx=c.nodes.findIndex(x=>x.id===n.id);
+      c.nodes.splice(idx+1,0,d);
+      rebuildMainFlow();
+      selected=d.id;
+      setStatus("Layer duplicated after "+n.name+".");
+      draw();
+    }
+
+    function moveSelected(delta){
+      const n=selectedNode();if(!n)return;
+      const c=current(state);
+      const from=c.nodes.findIndex(x=>x.id===n.id);
+      if(from<0)return;
+      const to=Math.max(0,Math.min(c.nodes.length-1,from+delta));
+      if(to===from){
+        setStatus(delta<0?"Layer is already first.":"Layer is already last.");
+        draw();
+        return;
+      }
+      checkpoint("Move "+n.name+(delta<0?" left":" right"));
+      c.nodes.splice(from,1);
+      c.nodes.splice(to,0,n);
+      rebuildMainFlow();
+      selected=n.id;
+      setStatus(n.name+" moved to layer "+(to+1)+".");
+      draw();
     }
 
     function portClick(nodeId,side,portIndex,ev){
@@ -424,7 +481,7 @@
 
       // Top bar
       const top=document.createElement("div");top.className="mlb-topbar";
-      const logo=document.createElement("div");logo.className="mlb-logo";logo.innerHTML='<span class="mlb-logo-mark">◇</span>MLBricks Builder <span class="mlb-beta">v0.3.10</span>';top.appendChild(logo);
+      const logo=document.createElement("div");logo.className="mlb-logo";logo.innerHTML='<span class="mlb-logo-mark">◇</span>MLBricks Builder <span class="mlb-beta">v0.3.11</span>';top.appendChild(logo);
       const title=document.createElement("div");title.className="mlb-project-title";title.textContent=state.project?.name||"Untitled";top.appendChild(title);
       const saved=document.createElement("div");saved.className="mlb-save-state";saved.textContent="• Saved";top.appendChild(saved);
       const sp=document.createElement("div");sp.className="mlb-topspacer";top.appendChild(sp);
@@ -511,7 +568,7 @@
       const main=document.createElement("main");main.className="mlb-main";
       const toolbar=document.createElement("div");toolbar.className="mlb-toolbar";
       const auto=btn("◎ Auto Layout","mlb-tool");auto.addEventListener("click",()=>{setStatus("Layer-by-layer auto layout applied.");draw();});
-      const add=btn("+ Add Layer","mlb-tool");add.addEventListener("click",()=>{setStatus("Choose a brick from the library.");draw();});
+      const add=btn("+ Add Layer","mlb-tool");add.addEventListener("click",()=>{setStatus(selected?"Choose a brick — it will be inserted after the selected layer.":"Choose a brick — it will be added at the end.");draw();});
       const demo=btn("★ TinyStories 30M","mlb-tool");demo.addEventListener("click",loadTinyStories);
       toolbar.append(auto,add,demo);
       const tsp=document.createElement("div");tsp.className="mlb-toolspacer";toolbar.appendChild(tsp);
@@ -569,7 +626,7 @@
       const hint=document.createElement("div");hint.className="mlb-hint";
       hint.textContent=pendingPort
         ?"Choose the matching lane: Top ↔ Top, Main ↔ Main, Bottom ↔ Bottom."
-        :"Each node has 3 inputs + 3 outputs: top-edge pair, middle side pair, bottom-edge pair. Auto-connect uses the middle Main lane.";
+        :"Select a node before adding a brick to insert after it. Use Move Left / Move Right in Inspector to reorder. Main flow rewires automatically.";
       canvas.appendChild(hint);
       main.appendChild(canvas);
       requestAnimationFrame(()=>{
@@ -668,6 +725,17 @@
             row.append(txt,delBtn);body.appendChild(row);
           });
         }
+        const moveTitle=document.createElement("div");moveTitle.className="mlb-section-title";moveTitle.textContent="LAYER POSITION";body.appendChild(moveTitle);
+        const moveGrid=document.createElement("div");moveGrid.className="mlb-action-grid mlb-move-grid";
+        const moveLeft=btn("← Move Left");
+        const moveRight=btn("Move Right →");
+        const nodeIndex=current(state).nodes.findIndex(x=>x.id===n.id);
+        moveLeft.disabled=nodeIndex<=0;
+        moveRight.disabled=nodeIndex<0||nodeIndex>=current(state).nodes.length-1;
+        moveLeft.addEventListener("click",()=>moveSelected(-1));
+        moveRight.addEventListener("click",()=>moveSelected(1));
+        moveGrid.append(moveLeft,moveRight);body.appendChild(moveGrid);
+
         const actions=document.createElement("div");actions.className="mlb-action-grid";
         if(n.definition_id){const open=btn("Open Architecture");open.addEventListener("click",()=>openInside(n));actions.appendChild(open);}
         const dup=btn("Duplicate");dup.addEventListener("click",duplicateSelected);actions.appendChild(dup);

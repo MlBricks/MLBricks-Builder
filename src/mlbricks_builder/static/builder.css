@@ -48,9 +48,10 @@
 }
 .mlb-palette{display:grid;gap:5px}
 .mlb-palette button,.mlb-custom-card{
-  width:100%;display:flex;align-items:center;gap:8px;text-align:left;padding:6px 7px;
+  width:100%;display:flex;align-items:flex-start;gap:8px;text-align:left;padding:7px 7px;
+  min-height:40px;box-sizing:border-box;
   border-radius:7px;border:1px solid var(--border2);background:#18222c;color:var(--text);
-  cursor:pointer;font-size:10px
+  cursor:pointer;font-size:10px;line-height:1.2
 }
 .mlb-palette button:hover,.mlb-custom-card:hover{background:#1d2935;border-color:#46586a}
 .mlb-pal-icon{width:24px;height:24px;border-radius:7px;display:grid;place-items:center;
@@ -290,3 +291,18 @@
 .mlb-flow-wrap{padding-top:0;padding-bottom:0}
 
 .mlb-history-btn:disabled{opacity:.34;cursor:not-allowed;filter:saturate(.45)}
+
+.mlb-palette button > span:last-child,.mlb-custom-card > span:last-child{
+  display:block;flex:1;min-width:0;text-align:left;padding-top:1px
+}
+.mlb-palette button strong,.mlb-custom-card strong{
+  display:block;text-align:left;line-height:1.15;margin:0 0 3px 0;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis
+}
+.mlb-pal-sub{
+  display:block;text-align:left;color:#8793a3;font-size:8px;line-height:1.25;
+  margin-top:0;white-space:normal;overflow-wrap:anywhere
+}
+.mlb-move-grid button:disabled{
+  opacity:.34;cursor:not-allowed
+}

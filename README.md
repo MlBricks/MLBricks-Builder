@@ -260,3 +260,14 @@ history. History includes node add/delete/duplicate, connections, connection
 removal, API parameter edits, custom bricks, TinyStories preset loading, Clear,
 and Auto Connect changes. Zoom and sidebar UI state are intentionally not model
 history operations.
+
+
+## v0.3.11 — insertion at selection + layer reordering
+
+- Brick Library labels/descriptions are consistently left-aligned and no longer overlap.
+- Adding a built-in or custom brick inserts it **immediately after the selected node**.
+- If no node is selected, the new brick is appended to the end.
+- With Auto Connect enabled, the middle Main lane is rebuilt automatically after insertion,
+  deletion, duplication, or movement while Skip and Extra connections are preserved.
+- The Inspector now provides **Move Left** and **Move Right** controls for the selected layer.
+- Move/add/delete/reorder operations are included in Undo/Redo history.
