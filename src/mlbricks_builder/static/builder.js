@@ -40,7 +40,8 @@
     let runtimePanel=null;
     let execution={status:"idle",overall:0,message:"Ready",nodes:{}};
     let localFiles={roots:[],entries:[],truncated:false};
-    let localForm={path:"",content_type:"auto",tokenizer_name:"gpt2",text_column:"text"};
+    let localImportReport=null;
+    let localForm={path:"/kaggle/working"};
     let serveSecrets={};
     let cloudStatus={};
     let cloudSecrets={
@@ -671,9 +672,19 @@
 
       if(next.runtime_kind==="local"){
         if(next.local_scan)localFiles=cp(next.local_scan);
+        if(next.local_import)localImportReport=cp(next.local_import);
         if(next.state_replace){
           state=cp(next.state_replace);delete state._runtime_command;ensureWorkspaces();
-          selected=null;pendingPort=null;outputDirectorySelection=null;
+          selected=null;pendingPort=null;
+          if(next.local_import){
+            state.active_workspace="model";
+            bottomView="outputs";
+            bottomExpanded=true;
+            const imported=next.local_import.imported||[];
+            outputDirectorySelection=imported.length?imported[imported.length-1].id:null;
+          }else{
+            outputDirectorySelection=null;
+          }
         }
         if(next.message)setStatus(next.message);
         if(next.status==="done"||next.status==="error")setTimeout(draw,80);
@@ -2211,7 +2222,7 @@
     function renderModelOutputDirectory(container){
       const entries=modelDirectoryEntries();
       const head=document.createElement("div");head.className="mlb-output-head";
-      head.innerHTML="<div><strong>MODEL OUTPUTS</strong><span>"+entries.length+" built model"+(entries.length===1?"":"s")+" · click one to train or generate</span></div>";
+      head.innerHTML="<div><strong>MODEL REPOSITORY</strong><span>"+entries.length+" model"+(entries.length===1?"":"s")+" · built, trained, loaded and imported models</span></div>";
       container.appendChild(head);
 
       if(!entries.length){
@@ -2334,7 +2345,7 @@
       if(!model)return;
       const config={
         format:"mlbricks-model-config",
-        builder_version:"0.7.0",
+        builder_version:"0.7.1",
         project:cp(state.project||{}),
         model:cp(model),
         selected_dataset:selectedModelDataset(),
@@ -2348,93 +2359,79 @@
       setStatus("Model config downloaded.");
     }
 
-    function localKindClass(kind){
-      if(kind==="model_checkpoint")return "model";
-      if(kind==="dataset_dir"||kind==="data_file")return "data";
-      if(kind==="bundle")return "bundle";
-      return "project";
-    }
-
-    function localTypeForKind(kind){
-      if(kind==="model_checkpoint")return "model";
-      if(kind==="dataset_dir"||kind==="data_file")return "dataset";
-      if(kind==="project_json"||kind==="project_bin")return "project";
-      return "auto";
-    }
-
     function renderLocalView(container){
       container.className="mlb-local-view";
       const head=document.createElement("div");head.className="mlb-local-head";
       const copyHead=document.createElement("div");
-      copyHead.innerHTML="<strong>LOCAL / KAGGLE FILES</strong><span>Load directly from /kaggle/working, /kaggle/input, Colab /content, or an absolute path</span>";
-      const badge=document.createElement("span");badge.className="mlb-local-badge";badge.textContent="LOCAL";
-      const refresh=btn("↻ Scan Files","mlb-local-refresh");
-      refresh.addEventListener("click",()=>requestLocalCommand("local_scan",{}));
-      head.append(copyHead,badge,refresh);container.appendChild(head);
+      copyHead.innerHTML="<strong>LOCAL / KAGGLE MODEL IMPORT</strong><span>Enter one directory. Builder scans all subdirectories and imports compatible models automatically.</span>";
+      const badge=document.createElement("span");badge.className="mlb-local-badge";badge.textContent="AUTO";
+      head.append(copyHead,badge);container.appendChild(head);
 
-      if(localFiles.roots?.length){
-        const roots=document.createElement("div");roots.className="mlb-local-roots";
-        localFiles.roots.forEach(rootPath=>{const chip=document.createElement("span");chip.textContent=rootPath;chip.title=rootPath;roots.appendChild(chip);});
-        container.appendChild(roots);
-      }
-
-      const direct=document.createElement("div");direct.className="mlb-local-direct";
-      const pathField=document.createElement("div");pathField.className="mlb-local-field";
-      const pl=document.createElement("label");pl.textContent="Path";pathField.appendChild(pl);
-      const pathInput=document.createElement("input");pathInput.value=localForm.path||"";
-      pathInput.placeholder="/kaggle/working/prepared_dataset or /kaggle/working/.../last.pt";
-      pathInput.addEventListener("input",()=>localForm.path=pathInput.value);pathField.appendChild(pathInput);
-
-      const typeField=document.createElement("div");typeField.className="mlb-local-field small";
-      const tl=document.createElement("label");tl.textContent="Load As";typeField.appendChild(tl);
-      const type=document.createElement("select");
-      [["auto","Auto Detect"],["dataset","Dataset"],["model","Model"],["project","Project"]].forEach(([v,label])=>{const o=document.createElement("option");o.value=v;o.textContent=label;if(v===localForm.content_type)o.selected=true;type.appendChild(o);});
-      type.addEventListener("change",()=>{localForm.content_type=type.value;draw();});typeField.appendChild(type);
-
-      const load=btn("Load Path","mlb-local-load");
-      load.addEventListener("click",()=>{
-        if(!String(localForm.path||"").trim()){setStatus("Enter a Kaggle/local path first.");return;}
-        requestLocalCommand("local_load",{path:localForm.path.trim(),content_type:localForm.content_type,tokenizer_name:localForm.tokenizer_name||"gpt2",text_column:localForm.text_column||"text"});
+      const box=document.createElement("div");box.className="mlb-local-auto-box";
+      const field=document.createElement("div");field.className="mlb-local-field";
+      const label=document.createElement("label");label.textContent="Base Path";field.appendChild(label);
+      const input=document.createElement("input");input.value=localForm.path||"/kaggle/working";input.placeholder="/kaggle/working";
+      input.addEventListener("input",()=>localForm.path=input.value);field.appendChild(input);
+      const button=btn("Scan & Import Models","mlb-local-load");
+      button.addEventListener("click",()=>{
+        const path=String(localForm.path||"").trim();
+        if(!path){setStatus("Enter a Kaggle/local directory path.");return;}
+        requestLocalCommand("local_import_models",{path,max_depth:12,max_entries:1000});
       });
-      direct.append(pathField,typeField,load);container.appendChild(direct);
+      box.append(field,button);container.appendChild(box);
 
-      if(localForm.content_type==="dataset"){
-        const opts=document.createElement("div");opts.className="mlb-local-dataset-options";
-        const tok=document.createElement("div");tok.className="mlb-local-field";
-        const tkl=document.createElement("label");tkl.innerHTML="Tokenizer Name <span>for tokenized save_to_disk data</span>";tok.appendChild(tkl);
-        const ti=document.createElement("input");ti.value=localForm.tokenizer_name||"gpt2";ti.placeholder="gpt2";ti.addEventListener("input",()=>localForm.tokenizer_name=ti.value);tok.appendChild(ti);
-        const text=document.createElement("div");text.className="mlb-local-field";
-        const txl=document.createElement("label");txl.innerHTML="Text Column <span>for raw dataset files</span>";text.appendChild(txl);
-        const tx=document.createElement("input");tx.value=localForm.text_column||"text";tx.placeholder="text";tx.addEventListener("input",()=>localForm.text_column=tx.value);text.appendChild(tx);
-        opts.append(tok,text);container.appendChild(opts);
-      }
-
-      const title=document.createElement("div");title.className="mlb-local-list-title";
-      title.innerHTML="<strong>DISCOVERED CONTENT</strong><span>"+(localFiles.entries?.length||0)+" loadable item"+((localFiles.entries?.length||0)===1?"":"s")+(localFiles.truncated?" · list limited":"")+"</span>";
-      container.appendChild(title);
-
-      if(!localFiles.entries?.length){
-        const empty=document.createElement("div");empty.className="mlb-output-empty";
-        empty.innerHTML="<strong>No scan results yet.</strong><span>Click Scan Files. You can also paste an absolute /kaggle/working path above.</span>";
-        container.appendChild(empty);return;
-      }
-
-      const list=document.createElement("div");list.className="mlb-local-list";
-      localFiles.entries.forEach(item=>{
-        const row=document.createElement("div");row.className="mlb-local-row";
-        const icon=document.createElement("span");icon.className="mlb-local-type "+localKindClass(item.kind);
-        icon.textContent=item.kind==="model_checkpoint"?"MODEL":item.kind==="dataset_dir"||item.kind==="data_file"?"DATA":item.kind==="bundle"?"BUNDLE":"PROJECT";
-        const main=document.createElement("div");main.className="mlb-local-name";main.innerHTML="<strong>"+item.name+"</strong><span>"+item.path+"</span>";
-        const meta=document.createElement("div");meta.className="mlb-local-meta";meta.innerHTML="<strong>"+item.label+"</strong><span>"+item.size_label+"</span>";
-        const button=btn("Load","mlb-local-row-load");
-        button.addEventListener("click",()=>{localForm.path=item.path;localForm.content_type=localTypeForKind(item.kind);requestLocalCommand("local_load",{path:item.path,content_type:localForm.content_type,tokenizer_name:localForm.tokenizer_name||"gpt2",text_column:localForm.text_column||"text"});});
-        row.append(icon,main,meta,button);list.appendChild(row);
+      const examples=document.createElement("div");examples.className="mlb-local-path-examples";
+      ["/kaggle/working","/kaggle/input","/content/models"].forEach(value=>{
+        const chip=document.createElement("button");chip.textContent=value;
+        chip.addEventListener("click",()=>{localForm.path=value;draw();});
+        examples.appendChild(chip);
       });
-      container.appendChild(list);
+      container.appendChild(examples);
+
+      const flow=document.createElement("div");flow.className="mlb-local-flow";
+      flow.innerHTML="<span>1</span><strong>Path</strong><i>→</i><span>2</span><strong>Recursive Scan</strong><i>→</i><span>3</span><strong>Detect Models</strong><i>→</i><span>4</span><strong>Model Repository</strong>";
+      container.appendChild(flow);
+
+      if(localImportReport){
+        const report=document.createElement("div");report.className="mlb-local-report";
+        const rh=document.createElement("div");rh.className="mlb-local-report-head";
+        rh.innerHTML="<strong>LAST IMPORT</strong><span>"+(localImportReport.root||"")+"</span>";
+        report.appendChild(rh);
+
+        const stats=document.createElement("div");stats.className="mlb-local-report-stats";
+        [["Found",localImportReport.found||0],["Imported",localImportReport.imported_count||0],["Skipped",localImportReport.skipped_count||0],["Errors",localImportReport.error_count||0]].forEach(([name,value])=>{
+          const item=document.createElement("div");item.innerHTML="<span>"+name+"</span><strong>"+value+"</strong>";stats.appendChild(item);
+        });
+        report.appendChild(stats);
+
+        const imported=localImportReport.imported||[];
+        if(imported.length){
+          const list=document.createElement("div");list.className="mlb-local-imported-list";
+          imported.forEach(model=>{
+            const row=document.createElement("div");
+            row.innerHTML="<div><strong>"+(model.name||"Imported Model")+"</strong><span>"+(model.local_path||model.checkpoint_path||"")+"</span></div><b>IMPORTED</b>";
+            list.appendChild(row);
+          });
+          report.appendChild(list);
+        }
+
+        if((localImportReport.errors||[]).length){
+          const details=document.createElement("details");details.className="mlb-local-errors";
+          const summary=document.createElement("summary");summary.textContent=localImportReport.errors.length+" incompatible / older checkpoint"+(localImportReport.errors.length===1?"":"s");
+          details.appendChild(summary);
+          localImportReport.errors.forEach(item=>{
+            const row=document.createElement("div");row.innerHTML="<strong>"+item.path+"</strong><span>"+item.error+"</span>";details.appendChild(row);
+          });
+          report.appendChild(details);
+        }
+        container.appendChild(report);
+      }
+
       const note=document.createElement("div");note.className="mlb-local-note";
-      note.innerHTML="<strong>Supported:</strong> Hugging Face <code>save_to_disk()</code> dataset folders, raw TXT/CSV/JSON/JSONL/Parquet files, MLBricks <code>last.pt</code>/checkpoint files, Builder JSON/BIN projects, and <code>.mlbricks.zip</code> bundles.";
+      note.innerHTML="<strong>Path only.</strong> Builder recursively detects <code>last.pt</code>, <code>.pt</code>, <code>.pth</code>, <code>.ckpt</code> and MLBricks model bundles. Duplicate paths are ignored. Imported models are added automatically to <strong>Model Repository</strong>.";
       container.appendChild(note);
     }
+
 
     function cloudArtifactOptions(type){
       if(type==="dataset"){
@@ -3573,8 +3570,8 @@
       rememberWorkspaceView();
       return {
         format:"mlbricks-builder-design",
-        format_version:"0.7.0",
-        builder_version:"0.7.0",
+        format_version:"0.7.1",
+        builder_version:"0.7.1",
         saved_at:new Date().toISOString(),
         state:sanitizedProjectState()
       };
@@ -3928,8 +3925,8 @@
 
       const detailsSelect=document.createElement("select");detailsSelect.className="mlb-details-select";
       const options=state.active_workspace==="data"
-        ?[["details","Pipeline Details"],["outputs","Output Directory"],["files","Files"],["local","Local / Kaggle"],["cloud","Cloud & Repositories"]]
-        :[["details","Model Details"],["outputs","Output Directory"],["files","Files"],["local","Local / Kaggle"],["cloud","Cloud & Repositories"]];
+        ?[["details","Pipeline Details"],["outputs","Output Directory"],["files","Files"],["local","Local / Kaggle Models"],["cloud","Cloud & Repositories"]]
+        :[["details","Model Details"],["outputs","Output Directory"],["files","Files"],["local","Local / Kaggle Models"],["cloud","Cloud & Repositories"]];
       options.forEach(([value,label])=>{
         const o=document.createElement("option");o.value=value;o.textContent=label;
         if(bottomView===value)o.selected=true;

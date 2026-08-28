@@ -768,7 +768,7 @@ class Builder:
             root.mkdir(parents=True, exist_ok=True)
             manifest = {
                 "format": "mlbricks-cloud-bundle-v1",
-                "builder_version": "0.7.0",
+                "builder_version": "0.7.1",
                 "content_type": content_type,
             }
 
@@ -1055,15 +1055,124 @@ class Builder:
             restored = self._restore_cloud_bundle(path_obj); restored["path"] = str(path_obj); return restored
         raise RuntimeError(f"Could not determine how to load {path_obj}. Detected: {info.get('label')}. Choose Dataset, Model, or Project explicitly if needed.")
 
+    def _existing_local_model_paths(self):
+        paths = set()
+        for entry in self.state.get("model_outputs") or []:
+            for key in ("checkpoint_path", "path", "local_path"):
+                value = entry.get(key)
+                if not value:
+                    continue
+                try:
+                    paths.add(str(Path(value).expanduser().resolve()))
+                except Exception:
+                    paths.add(str(value))
+        return paths
+
+    def import_models_from_local_path(
+        self,
+        base_path,
+        *,
+        max_depth=12,
+        max_entries=1000,
+        progress_callback=None,
+    ):
+        from .local_runtime import scan_model_candidates
+
+        scan = scan_model_candidates(
+            base_path,
+            max_entries=int(max_entries or 1000),
+            max_depth=int(max_depth or 12),
+        )
+        candidates = scan.get("entries") or []
+        existing = self._existing_local_model_paths()
+        imported, skipped, errors = [], [], []
+        total = max(len(candidates), 1)
+
+        for index, item in enumerate(candidates, start=1):
+            path = str(Path(item["path"]).expanduser().resolve())
+
+            if progress_callback:
+                progress_callback({
+                    "status": "running",
+                    "runtime_kind": "local",
+                    "phase": "import_models",
+                    "overall": min(90, int((index - 1) / total * 90)),
+                    "message": f'Scanning {index}/{len(candidates)} · {Path(path).name}',
+                    "current_path": path,
+                })
+
+            if path in existing:
+                skipped.append({"path": path, "reason": "Already imported"})
+                continue
+
+            try:
+                if item.get("kind") == "model_checkpoint":
+                    result = self.load_local_runtime_path(path, content_type="model")
+                else:
+                    result = self.load_local_runtime_path(path, content_type="auto")
+                    if result.get("content_type") != "model":
+                        skipped.append({
+                            "path": path,
+                            "reason": f'Bundle contains {result.get("content_type")}, not model',
+                        })
+                        continue
+
+                model = result.get("model") or {}
+                model["local_path"] = path
+                model["source_root"] = scan.get("root")
+                model["repository_source"] = "Local / Kaggle"
+                imported.append(copy.deepcopy(model))
+                existing.add(path)
+            except Exception as exc:
+                errors.append({
+                    "path": path,
+                    "error": f"{type(exc).__name__}: {exc}",
+                })
+
+        return {
+            "root": scan.get("root"),
+            "found": len(candidates),
+            "imported": imported,
+            "imported_count": len(imported),
+            "skipped": skipped,
+            "skipped_count": len(skipped),
+            "errors": errors,
+            "error_count": len(errors),
+            "truncated": bool(scan.get("truncated")),
+        }
+
     def _execute_local_command(self, command, progress_callback=None):
         local = command.get("local") or {}; action = str(command.get("action") or "")
         def emit(payload):
             if progress_callback: progress_callback(payload)
+
         if action == "local_scan":
             scan = self.scan_local_runtime_files(local.get("roots"))
             emit({"status":"done","runtime_kind":"local","phase":"scan","overall":100,"message":f"Found {len(scan.get('entries') or [])} loadable local items.","local_scan":scan})
             return scan
-        if action != "local_load": raise ValueError(f"Unknown local runtime command: {action!r}")
+
+        if action == "local_import_models":
+            emit({"status":"running","runtime_kind":"local","phase":"import_models","overall":2,"message":"Scanning directory and subdirectories for models…"})
+            result = self.import_models_from_local_path(
+                local.get("path"),
+                max_depth=local.get("max_depth") or 12,
+                max_entries=local.get("max_entries") or 1000,
+                progress_callback=emit,
+            )
+            message = f'Imported {result["imported_count"]} model{"s" if result["imported_count"] != 1 else ""} from {result["root"]}.'
+            if result["skipped_count"]:
+                message += f' {result["skipped_count"]} duplicate/non-model item(s) skipped.'
+            if result["error_count"]:
+                message += f' {result["error_count"]} incompatible/older checkpoint(s) reported.'
+            emit({
+                "status":"done","runtime_kind":"local","phase":"import_models","overall":100,
+                "message":message,"local_import":result,"state_replace":self.to_dict()
+            })
+            return result
+
+        if action != "local_load":
+            raise ValueError(f"Unknown local runtime command: {action!r}")
+
         emit({"status":"running","runtime_kind":"local","phase":"load","overall":10,"message":"Loading from Kaggle / local filesystem…"})
         result = self.load_local_runtime_path(local.get("path"), content_type=local.get("content_type") or "auto", tokenizer_name=local.get("tokenizer_name") or "gpt2", text_column=local.get("text_column") or "text")
         emit({"status":"done","runtime_kind":"local","phase":"load","overall":100,"message":f"Loaded {result.get('name') or 'local content'}.","local_result":result,"state_replace":self.to_dict()})
@@ -1462,8 +1571,8 @@ class Builder:
         available = [k for k, v in self.mlbricks_api.items() if v.get("available")]
         unavailable = {k: v.get("error") for k, v in self.mlbricks_api.items() if not v.get("available")}
         return {
-            "builder_version": "0.7.0",
-            "frontend_version": "0.7.0",
+            "builder_version": "0.7.1",
+            "frontend_version": "0.7.1",
             "mlbricks": info,
             "api_components_available": available,
             "api_components_unavailable": unavailable,
@@ -1484,7 +1593,7 @@ class Builder:
         }).replace("</", "<\\/")
         return f"""
 <style>{css}</style>
-<div id="{html.escape(self._instance_id)}" class="mlb-root" data-mlbricks-builder-version="0.7.0"></div>
+<div id="{html.escape(self._instance_id)}" class="mlb-root" data-mlbricks-builder-version="0.7.1"></div>
 <script>
 try {{ delete window.MLBricksBuilder; }} catch (e) {{ window.MLBricksBuilder = undefined; }}
 {js}

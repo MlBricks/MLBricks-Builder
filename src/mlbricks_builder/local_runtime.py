@@ -134,3 +134,44 @@ def scan_local_files(roots: list[str] | None = None, *, max_entries: int = 300, 
     priority = {'model_checkpoint': 0, 'dataset_dir': 1, 'bundle': 2, 'project_json': 3, 'project_bin': 4, 'data_file': 5}
     entries.sort(key=lambda x: (0 if x['root'] == '/kaggle/working' else 1, priority.get(x['kind'], 99), x['path'].lower()))
     return {'roots': [str(x.resolve()) for x in root_paths], 'entries': entries, 'truncated': len(entries) >= max_entries}
+
+
+def scan_model_candidates(
+    base_path: str | Path,
+    *,
+    max_entries: int = 1000,
+    max_depth: int = 12,
+) -> dict[str, Any]:
+    """Recursively find model checkpoints/bundles beneath one base path."""
+    base = Path(base_path).expanduser()
+    if not base.exists():
+        raise FileNotFoundError(f"Local / Kaggle path was not found: {base}")
+    base = base.resolve()
+
+    if base.is_file():
+        info = detect_local_kind(base)
+        entries = []
+        if info["kind"] in {"model_checkpoint", "bundle"}:
+            size = base.stat().st_size
+            entries.append({
+                "path": str(base),
+                "name": base.name,
+                "relative": base.name,
+                "root": str(base.parent),
+                "kind": info["kind"],
+                "label": info["label"],
+                "size": size,
+                "size_label": human_size(size),
+                "is_dir": False,
+            })
+        return {"root": str(base.parent), "entries": entries, "truncated": False}
+
+    scan = scan_local_files([str(base)], max_entries=max_entries, max_depth=max_depth)
+    return {
+        "root": str(base),
+        "entries": [
+            item for item in (scan.get("entries") or [])
+            if item.get("kind") in {"model_checkpoint", "bundle"}
+        ],
+        "truncated": bool(scan.get("truncated")),
+    }

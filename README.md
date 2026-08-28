@@ -1189,3 +1189,25 @@ or:
 ```bash
 pip install "mlbricks-builder[serve]"
 ```
+
+
+## v0.7.1 — path-only recursive model import
+
+**Local / Kaggle Models** now needs only one base path.
+
+Examples:
+
+```text
+/kaggle/working
+/kaggle/input
+/kaggle/input/my-training-run
+/content/models
+```
+
+Click **Scan & Import Models**. Builder recursively scans all subdirectories,
+detects MLBricks model checkpoints/bundles, restores every compatible model,
+skips duplicate paths and continues past incompatible/older files.
+
+After import, Builder switches automatically to **Model Repository** so the
+imported models are immediately available for Generate Tokens, Serve Model/API,
+or further training when compatible data is selected.
