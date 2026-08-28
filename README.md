@@ -1347,3 +1347,19 @@ ngrok error and restart to obtain the Public HTTPS URL.
 - Local model/data, cloud and runtime actions use a dedicated standard-ipywidgets command channel instead of embedding commands in the complete project JSON.
 - Local data import reports a single actionable dependency error if `datasets` is not installed.
 - The visible version badge now follows the actual frontend version instead of the stale hard-coded `v0.6.7`.
+
+
+## v0.7.7 — uniform Brick Library cards
+
+The left Brick Library now uses one universal card size for every component.
+
+- fixed 58px component-card height
+- fixed icon geometry
+- component title limited to one line with ellipsis
+- component description limited to a maximum of two lines
+- long words/technical API descriptions wrap safely
+- overflowing text is clipped inside the card
+- built-in and custom component cards use the same dimensions
+
+This prevents descriptions such as Embedding/ESA/VESA/FFN/Residual text from
+leaking below the card boundary and keeps the complete library visually aligned.

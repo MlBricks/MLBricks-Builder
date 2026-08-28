@@ -1142,3 +1142,107 @@
 .mlb-serve-tunnel-error small{
   margin-top:4px;font-size:5.8px;color:#977278;line-height:1.3
 }
+
+
+/* ------------------------------------------------------------------
+   v0.7.7 — Uniform component library cards
+   Every palette/custom component has the same dimensions.
+   Titles are one line; descriptions are hard-clamped to two lines.
+   ------------------------------------------------------------------ */
+
+.mlb-palette button,
+.mlb-custom-card{
+  width:100%;
+  height:58px;
+  min-height:58px;
+  max-height:58px;
+  box-sizing:border-box;
+
+  display:flex;
+  align-items:flex-start;
+  gap:8px;
+
+  padding:7px 7px;
+  overflow:hidden;
+}
+
+/* Fixed icon size prevents cards with long text from changing geometry. */
+.mlb-palette .mlb-pal-icon,
+.mlb-custom-card .mlb-pal-icon{
+  width:24px;
+  height:24px;
+  min-width:24px;
+  min-height:24px;
+  max-width:24px;
+  max-height:24px;
+  flex:0 0 24px;
+}
+
+/* Text column must be shrinkable inside a flex card. */
+.mlb-palette button > span:last-child,
+.mlb-custom-card > span:last-child{
+  flex:1 1 auto;
+  min-width:0;
+  max-width:100%;
+  height:42px;
+  max-height:42px;
+  padding-top:1px;
+  overflow:hidden;
+  box-sizing:border-box;
+}
+
+/* Component name: always exactly one visual line. */
+.mlb-palette button strong,
+.mlb-custom-card strong{
+  display:block;
+  width:100%;
+  max-width:100%;
+  min-width:0;
+
+  margin:0 0 3px 0;
+  line-height:1.15;
+
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+
+/* Description: maximum two lines, never leaks outside the card. */
+.mlb-palette .mlb-pal-sub,
+.mlb-custom-card .mlb-pal-sub{
+  display:-webkit-box;
+  width:100%;
+  max-width:100%;
+  min-width:0;
+
+  margin:0;
+  padding:0;
+
+  font-size:8px;
+  line-height:1.25;
+  text-align:left;
+
+  white-space:normal;
+  overflow:hidden;
+  text-overflow:ellipsis;
+
+  -webkit-box-orient:vertical;
+  -webkit-line-clamp:2;
+  line-clamp:2;
+
+  max-height:2.5em;
+  overflow-wrap:anywhere;
+  word-break:break-word;
+}
+
+/* Any nested content must remain clipped to the card boundary. */
+.mlb-palette button *,
+.mlb-custom-card *{
+  box-sizing:border-box;
+}
+
+/* Keep library spacing uniform as well. */
+.mlb-palette{
+  display:grid;
+  gap:6px;
+}
