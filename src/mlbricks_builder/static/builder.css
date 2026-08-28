@@ -306,3 +306,67 @@
 .mlb-move-grid button:disabled{
   opacity:.34;cursor:not-allowed
 }
+
+.mlb-api-status.utility{
+  color:#9dd8e7;
+  border-color:#2f5964;
+  background:#102127;
+}
+
+.mlb-ins-group{
+  width:100%;display:flex;justify-content:space-between;align-items:center;
+  border:1px solid #31404f;background:#141e28;color:#d1dae5;border-radius:7px;
+  padding:7px 8px;margin:8px 0 5px;font-size:8.5px;font-weight:800;
+  text-align:left;cursor:pointer
+}
+.mlb-ins-group:hover{background:#1a2733}
+.mlb-ins-group-body{padding:2px 1px 4px}
+.mlb-field textarea{
+  width:100%;box-sizing:border-box;resize:vertical;min-height:72px;
+  border:1px solid #334252;background:#111922;color:#e0e6ed;border-radius:6px;
+  padding:7px 8px;font-size:9px;font-family:inherit;outline:none
+}
+
+.mlb-workspace-box{
+  margin:0 0 9px;
+  padding:8px;
+  border:1px solid #2d3b48;
+  border-radius:7px;
+  background:#111a23;
+}
+.mlb-workspace-box label{
+  display:block;
+  margin:0 0 5px;
+  color:#8290a1;
+  font-size:8px;
+  font-weight:800;
+  letter-spacing:.05em;
+}
+.mlb-workspace-select{
+  width:100%;
+  height:32px;
+  box-sizing:border-box;
+  border:1px solid #3d4e60;
+  border-radius:6px;
+  background:#18232e;
+  color:#e5ebf2;
+  padding:0 8px;
+  font-size:10px;
+  font-weight:700;
+  outline:none;
+}
+.mlb-workspace-select:focus{border-color:#8063ee}
+.mlb-workspace-badge{
+  display:flex;
+  align-items:center;
+  height:24px;
+  padding:0 8px;
+  border:1px solid #3b4b5c;
+  border-radius:6px;
+  background:#121c26;
+  color:#c9d3df;
+  font-size:8px;
+  font-weight:800;
+  text-transform:uppercase;
+  letter-spacing:.035em;
+}

@@ -2610,10 +2610,10 @@
     },
     "text_input": {
       "available": true,
-      "runtime_available": true,
-      "source": "MLBricks Builder utility",
+      "runtime_available": null,
+      "source": "MLBricks Builder workflow node",
       "public_name": "Text Input",
-      "import_path": "mlbricks_builder",
+      "import_path": null,
       "signature": "Text Input",
       "description": "Builder utility node.",
       "parameters": [
@@ -2624,14 +2624,17 @@
           "value": "Once upon a time",
           "required": false
         }
-      ]
+      ],
+      "builder_utility": true,
+      "builder_python_api": false,
+      "python_preview": false
     },
     "image_input": {
       "available": true,
-      "runtime_available": true,
-      "source": "MLBricks Builder utility",
+      "runtime_available": null,
+      "source": "MLBricks Builder workflow node",
       "public_name": "Image Input",
-      "import_path": "mlbricks_builder",
+      "import_path": null,
       "signature": "Image Input",
       "description": "Builder utility node.",
       "parameters": [
@@ -2649,14 +2652,17 @@
           "value": 3,
           "required": false
         }
-      ]
+      ],
+      "builder_utility": true,
+      "builder_python_api": false,
+      "python_preview": false
     },
     "audio_input": {
       "available": true,
-      "runtime_available": true,
-      "source": "MLBricks Builder utility",
+      "runtime_available": null,
+      "source": "MLBricks Builder workflow node",
       "public_name": "Audio Input",
-      "import_path": "mlbricks_builder",
+      "import_path": null,
       "signature": "Audio Input",
       "description": "Builder utility node.",
       "parameters": [
@@ -2667,14 +2673,17 @@
           "value": 16000,
           "required": false
         }
-      ]
+      ],
+      "builder_utility": true,
+      "builder_python_api": false,
+      "python_preview": false
     },
     "dropout": {
       "available": true,
-      "runtime_available": true,
-      "source": "MLBricks Builder utility",
+      "runtime_available": null,
+      "source": "MLBricks Builder workflow node",
       "public_name": "Dropout",
-      "import_path": "mlbricks_builder",
+      "import_path": null,
       "signature": "Dropout",
       "description": "Builder utility node.",
       "parameters": [
@@ -2685,14 +2694,17 @@
           "value": 0.1,
           "required": false
         }
-      ]
+      ],
+      "builder_utility": true,
+      "builder_python_api": false,
+      "python_preview": false
     },
     "classifier": {
       "available": true,
-      "runtime_available": true,
-      "source": "MLBricks Builder utility",
+      "runtime_available": null,
+      "source": "MLBricks Builder workflow node",
       "public_name": "Classifier Head",
-      "import_path": "mlbricks_builder",
+      "import_path": null,
       "signature": "Classifier Head",
       "description": "Builder utility node.",
       "parameters": [
@@ -2710,14 +2722,17 @@
           "value": 10,
           "required": false
         }
-      ]
+      ],
+      "builder_utility": true,
+      "builder_python_api": false,
+      "python_preview": false
     },
     "text_output": {
       "available": true,
-      "runtime_available": true,
-      "source": "MLBricks Builder utility",
+      "runtime_available": null,
+      "source": "MLBricks Builder workflow node",
       "public_name": "Text Output",
-      "import_path": "mlbricks_builder",
+      "import_path": null,
       "signature": "Text Output",
       "description": "Builder utility node.",
       "parameters": [
@@ -2742,17 +2757,23 @@
           "value": 0.95,
           "required": false
         }
-      ]
+      ],
+      "builder_utility": true,
+      "builder_python_api": false,
+      "python_preview": false
     },
     "logits_output": {
       "available": true,
-      "runtime_available": true,
-      "source": "MLBricks Builder utility",
+      "runtime_available": null,
+      "source": "MLBricks Builder workflow node",
       "public_name": "Logits Output",
-      "import_path": "mlbricks_builder",
+      "import_path": null,
       "signature": "Logits Output",
       "description": "Builder utility node.",
-      "parameters": []
+      "parameters": [],
+      "builder_utility": true,
+      "builder_python_api": false,
+      "python_preview": false
     }
   }
 }

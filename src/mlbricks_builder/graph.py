@@ -12,17 +12,20 @@ def primitive_catalog():
     return [
         {
             "type": "text_input",
+            "builder_utility": True,
+            "builder_python_api": False,
             "name": "Text Input",
             "icon": "TXT",
             "category": "Inputs",
-            "description": "Enter text / prompt",
+            "description": "Prompt or text entering the model",
             "accent": "green",
             "api": [
-                {"key": "prompt", "label": "Prompt", "type": "text", "value": "Once upon a time"},
+                {"key": "prompt", "label": "Prompt / Text", "type": "textarea", "value": "Once upon a time"},
             ],
         },
         {
             "type": "image_input",
+            "builder_utility": True,
             "name": "Image Input",
             "icon": "IMG",
             "category": "Inputs",
@@ -35,6 +38,7 @@ def primitive_catalog():
         },
         {
             "type": "audio_input",
+            "builder_utility": True,
             "name": "Audio Input",
             "icon": "AUD",
             "category": "Inputs",
@@ -42,6 +46,208 @@ def primitive_catalog():
             "accent": "green",
             "api": [
                 {"key": "sample_rate", "label": "Sample Rate", "type": "number", "value": 16000},
+            ],
+        },
+
+        {
+            "type": "hf_dataset",
+            "builder_utility": True,
+            "builder_python_api": True,
+            "name": "Hugging Face Dataset",
+            "icon": "HF",
+            "category": "Data Source",
+            "description": "Load a dataset from Hugging Face Hub",
+            "accent": "cyan",
+            "api": [
+                {"key": "dataset_id", "label": "Dataset ID", "type": "text", "value": "roneneldan/TinyStories"},
+                {"key": "config", "label": "Config", "type": "text", "value": ""},
+                {"key": "split", "label": "Split", "type": "text", "value": "train"},
+                {"key": "text_column", "label": "Text Column", "type": "text", "value": "text"},
+                {"key": "streaming", "label": "Streaming", "type": "select", "value": "false", "options": ["false", "true"]},
+                {"key": "max_rows", "label": "Max Rows (0 = All)", "type": "number", "value": 0}
+            ],
+        },
+        {
+            "type": "kaggle_dataset",
+            "builder_utility": True,
+            "builder_python_api": True,
+            "name": "Kaggle Dataset",
+            "icon": "KG",
+            "category": "Data Source",
+            "description": "Download a Kaggle dataset with kagglehub",
+            "accent": "blue",
+            "api": [
+                {"key": "dataset_handle", "label": "Dataset Handle", "type": "text", "value": "owner/dataset-name"},
+                {"key": "file_pattern", "label": "File Pattern", "type": "text", "value": "*.csv"},
+                {"key": "format", "label": "Format", "type": "select", "value": "auto", "options": ["auto", "txt", "csv", "json", "jsonl", "parquet"]},
+                {"key": "text_column", "label": "Text Column", "type": "text", "value": "text"},
+                {"key": "max_rows", "label": "Max Rows (0 = All)", "type": "number", "value": 0}
+            ],
+        },
+        {
+            "type": "url_dataset",
+            "builder_utility": True,
+            "builder_python_api": True,
+            "name": "URL Dataset",
+            "icon": "URL",
+            "category": "Data Source",
+            "description": "Load text data from any HTTP(S) file link",
+            "accent": "green",
+            "api": [
+                {"key": "url", "label": "Dataset URL", "type": "text", "value": "https://example.com/data.txt"},
+                {"key": "format", "label": "Format", "type": "select", "value": "auto", "options": ["auto", "txt", "csv", "json", "jsonl", "parquet"]},
+                {"key": "text_column", "label": "Text Column", "type": "text", "value": "text"},
+                {"key": "max_rows", "label": "Max Rows (0 = All)", "type": "number", "value": 0}
+            ],
+        },
+        {
+            "type": "local_dataset",
+            "builder_utility": True,
+            "builder_python_api": True,
+            "name": "Local Dataset",
+            "icon": "FILE",
+            "category": "Data Source",
+            "description": "Load a file already available in the notebook",
+            "accent": "green",
+            "api": [
+                {"key": "path", "label": "Path", "type": "text", "value": "/kaggle/input/..."},
+                {"key": "format", "label": "Format", "type": "select", "value": "auto", "options": ["auto", "txt", "csv", "json", "jsonl", "parquet"]},
+                {"key": "text_column", "label": "Text Column", "type": "text", "value": "text"},
+                {"key": "max_rows", "label": "Max Rows (0 = All)", "type": "number", "value": 0}
+            ],
+        },
+        {
+            "type": "text_process",
+            "builder_utility": True,
+            "builder_python_api": True,
+            "name": "Text Processing",
+            "icon": "TXT+",
+            "category": "Text",
+            "description": "Clean and normalize dataset text",
+            "accent": "orange",
+            "api": [
+                {"key": "text_column", "label": "Text Column", "type": "text", "value": "text"},
+                {"key": "lowercase", "label": "Lowercase", "type": "select", "value": "false", "options": ["false", "true"]},
+                {"key": "strip", "label": "Strip Spaces", "type": "select", "value": "true", "options": ["false", "true"]},
+                {"key": "normalize_whitespace", "label": "Normalize Whitespace", "type": "select", "value": "true", "options": ["false", "true"]},
+                {"key": "unicode_nfkc", "label": "Unicode NFKC", "type": "select", "value": "true", "options": ["false", "true"]},
+                {"key": "remove_empty", "label": "Remove Empty", "type": "select", "value": "true", "options": ["false", "true"]},
+                {"key": "min_chars", "label": "Min Characters", "type": "number", "value": 1},
+                {"key": "max_chars", "label": "Max Characters (0 = All)", "type": "number", "value": 0}
+            ],
+        },
+        {
+            "type": "train_test_split",
+            "builder_utility": True,
+            "builder_python_api": True,
+            "name": "Train / Val / Test Split",
+            "icon": "SPLIT",
+            "category": "Splitting",
+            "description": "Divide data for training, validation and testing",
+            "accent": "purple",
+            "api": [
+                {"key": "train_size", "label": "Train %", "type": "number", "value": 90},
+                {"key": "validation_size", "label": "Validation %", "type": "number", "value": 5},
+                {"key": "test_size", "label": "Test %", "type": "number", "value": 5},
+                {"key": "seed", "label": "Seed", "type": "number", "value": 42},
+                {"key": "shuffle", "label": "Shuffle", "type": "select", "value": "true", "options": ["true", "false"]}
+            ],
+        },
+        {
+            "type": "tokenize_text",
+            "builder_utility": True,
+            "builder_python_api": True,
+            "name": "Tokenize Text",
+            "icon": "TOK",
+            "category": "Text",
+            "description": "Tokenize text before model training",
+            "accent": "blue",
+            "api": [
+                {"key": "tokenizer_name", "label": "Tokenizer", "type": "text", "value": "gpt2"},
+                {"key": "text_column", "label": "Text Column", "type": "text", "value": "text"},
+                {"key": "context_length", "label": "Context Length", "type": "number", "value": 512},
+                {"key": "truncation", "label": "Truncation", "type": "select", "value": "true", "options": ["false", "true"]},
+                {"key": "padding", "label": "Padding", "type": "select", "value": "false", "options": ["false", "true", "max_length"]},
+                {"key": "add_special_tokens", "label": "Add Special Tokens", "type": "select", "value": "true", "options": ["false", "true"]}
+            ],
+        },
+        {
+            "type": "manual_dataset",
+            "builder_utility": True,
+            "builder_python_api": True,
+            "name": "Manual Text Data",
+            "icon": "TXT",
+            "category": "Data Source",
+            "description": "Paste a small text dataset directly",
+            "accent": "green",
+            "api": [
+                {"key": "text", "label": "Text Data", "type": "textarea", "value": "Once upon a time"},
+                {"key": "text_column", "label": "Column Name", "type": "text", "value": "text"},
+                {"key": "one_line_per_sample", "label": "One Line = One Sample", "type": "select", "value": "true", "options": ["true", "false"]}
+            ],
+        },
+        {
+            "type": "image_process",
+            "builder_utility": True,
+            "builder_python_api": True,
+            "name": "Image Processing",
+            "icon": "IMG+",
+            "category": "Image",
+            "description": "Resize, crop and prepare image examples",
+            "accent": "orange",
+            "api": [
+                {"key": "image_column", "label": "Image Column", "type": "text", "value": "image"},
+                {"key": "width", "label": "Width", "type": "number", "value": 224},
+                {"key": "height", "label": "Height", "type": "number", "value": 224},
+                {"key": "mode", "label": "Color Mode", "type": "select", "value": "RGB", "options": ["RGB", "L"]},
+                {"key": "center_crop", "label": "Center Crop", "type": "select", "value": "false", "options": ["false", "true"]}
+            ],
+        },
+        {
+            "type": "audio_process",
+            "builder_utility": True,
+            "builder_python_api": True,
+            "name": "Audio Processing",
+            "icon": "AUD+",
+            "category": "Audio",
+            "description": "Resample, normalize and trim audio examples",
+            "accent": "orange",
+            "api": [
+                {"key": "audio_column", "label": "Audio Column", "type": "text", "value": "audio"},
+                {"key": "sample_rate", "label": "Sample Rate", "type": "number", "value": 16000},
+                {"key": "normalize", "label": "Normalize", "type": "select", "value": "true", "options": ["true", "false"]},
+                {"key": "trim_silence", "label": "Trim Silence", "type": "select", "value": "false", "options": ["false", "true"]},
+                {"key": "silence_threshold", "label": "Silence Threshold", "type": "number", "value": 0.01}
+            ],
+        },
+        {
+            "type": "batch_data",
+            "builder_utility": True,
+            "builder_python_api": True,
+            "name": "Batch / DataLoader",
+            "icon": "BATCH",
+            "category": "Dataset",
+            "description": "Create training batches from prepared data",
+            "accent": "blue",
+            "api": [
+                {"key": "batch_size", "label": "Batch Size", "type": "number", "value": 16},
+                {"key": "shuffle", "label": "Shuffle", "type": "select", "value": "true", "options": ["true", "false"]},
+                {"key": "num_workers", "label": "Workers", "type": "number", "value": 2},
+                {"key": "drop_last", "label": "Drop Last", "type": "select", "value": "false", "options": ["false", "true"]}
+            ],
+        },
+        {
+            "type": "prepared_dataset",
+            "builder_utility": True,
+            "builder_python_api": True,
+            "name": "Prepared Dataset",
+            "icon": "DATA",
+            "category": "Output",
+            "description": "Final processed dataset ready for training",
+            "accent": "green",
+            "api": [
+                {"key": "save_to_disk", "label": "Save To Disk", "type": "select", "value": "false", "options": ["false", "true"]},
+                {"key": "path", "label": "Save Path", "type": "text", "value": "/kaggle/working/prepared_dataset"}
             ],
         },
         {
@@ -155,6 +361,7 @@ def primitive_catalog():
         },
         {
             "type": "dropout",
+            "builder_utility": True,
             "name": "Dropout",
             "icon": "DRP",
             "category": "Core Blocks",
@@ -219,6 +426,7 @@ def primitive_catalog():
         },
         {
             "type": "classifier",
+            "builder_utility": True,
             "name": "Classifier Head",
             "icon": "CLS",
             "category": "Heads",
@@ -231,6 +439,7 @@ def primitive_catalog():
         },
         {
             "type": "text_output",
+            "builder_utility": True,
             "name": "Text Output",
             "icon": "OUT",
             "category": "Outputs",
@@ -244,6 +453,7 @@ def primitive_catalog():
         },
         {
             "type": "logits_output",
+            "builder_utility": True,
             "name": "Logits Output",
             "icon": "LOG",
             "category": "Outputs",
@@ -279,10 +489,11 @@ def _edge(source, target, source_port="out", target_port="in", kind="main"):
 
 def new_project(name: str = "Untitled Model"):
     root_id = _id("component")
+    data_root_id = _id("component")
     now = datetime.now(timezone.utc).isoformat()
     return {
         "format": "mlbricks-builder",
-        "format_version": "0.2",
+        "format_version": "0.5",
         "project": {
             "name": name,
             "created_at": now,
@@ -301,8 +512,31 @@ def new_project(name: str = "Untitled Model"):
                 "revision": 1,
                 "nodes": [],
                 "edges": [],
-            }
+            },
+            data_root_id: {
+                "id": data_root_id,
+                "name": "Data Processing",
+                "kind": "data",
+                "revision": 1,
+                "nodes": [],
+                "edges": [],
+            },
         },
+        "workspaces": {
+            "model": {
+                "name": "Model Builder",
+                "root_component_id": root_id,
+                "view_component_id": root_id,
+                "breadcrumbs": [{"id": root_id, "name": name}],
+            },
+            "data": {
+                "name": "Data Processing",
+                "root_component_id": data_root_id,
+                "view_component_id": data_root_id,
+                "breadcrumbs": [{"id": data_root_id, "name": "Data Processing"}],
+            },
+        },
+        "active_workspace": "model",
         "custom_components": {},
         "view_component_id": root_id,
         "breadcrumbs": [{"id": root_id, "name": name}],

@@ -35,7 +35,8 @@
     const catalog=cp(payload.catalog);
     const mlapi=cp(payload.mlbricks_api||{});
     let selected=null,pendingPort=null,filter="All",search="",inspectorTab="settings",zoom=1,status="Ready";
-    let canvasScrollLeft=0,canvasScrollTop=0;
+    const workspaceScroll={model:{left:0,top:0},data:{left:0,top:0}};
+    let switchingWorkspace=false;
     const undoStack=[],redoStack=[];
     const historyLimit=60;
 
@@ -65,12 +66,90 @@
     }
 
     // Compact notebook defaults: keep the most-used sections open and the rest collapsed.
-    const collapsedCategories=new Set(["Advanced","Position","Heads","Outputs"]);
+    const collapsedCategories=new Set(["Advanced","Position","Heads","Outputs","Image","Audio"]);
+    const collapsedInspectorGroups=new Set();
     let myBricksCollapsed=false;
     let bottomExpanded=false;
 
     Object.values(state.components||{}).forEach(c=>{if(!c.edges)c.edges=[];});
     if(state.auto_connect===undefined) state.auto_connect=true;
+
+    function ensureWorkspaces(){
+      if(!state.workspaces){
+        const modelRoot=state.root_component_id;
+        const dataRoot=uid("component");
+        state.components[dataRoot]={
+          id:dataRoot,name:"Data Processing",kind:"data",revision:1,nodes:[],edges:[]
+        };
+        state.workspaces={
+          model:{
+            name:"Model Builder",
+            root_component_id:modelRoot,
+            view_component_id:state.view_component_id||modelRoot,
+            breadcrumbs:cp(state.breadcrumbs||[{id:modelRoot,name:state.project?.name||"Model"}])
+          },
+          data:{
+            name:"Data Processing",
+            root_component_id:dataRoot,
+            view_component_id:dataRoot,
+            breadcrumbs:[{id:dataRoot,name:"Data Processing"}]
+          }
+        };
+        state.active_workspace="model";
+      }
+      if(!state.active_workspace || !state.workspaces[state.active_workspace]){
+        state.active_workspace="model";
+      }
+      const ws=state.workspaces[state.active_workspace];
+      if(!ws.view_component_id || !state.components[ws.view_component_id]){
+        ws.view_component_id=ws.root_component_id;
+      }
+      if(!Array.isArray(ws.breadcrumbs)||!ws.breadcrumbs.length){
+        ws.breadcrumbs=[{id:ws.root_component_id,name:ws.name}];
+      }
+      state.view_component_id=ws.view_component_id;
+      state.breadcrumbs=cp(ws.breadcrumbs);
+    }
+
+    function rememberWorkspaceView(){
+      const ws=state.workspaces?.[state.active_workspace];
+      if(!ws)return;
+      ws.view_component_id=state.view_component_id;
+      ws.breadcrumbs=cp(state.breadcrumbs||[]);
+    }
+
+    function workspaceName(){
+      return state.active_workspace==="data" ? "Data Processing" : "Model Builder";
+    }
+
+    function switchWorkspace(next){
+      if(next===state.active_workspace)return;
+      const oldKey=state.active_workspace||"model";
+      const oldCanvas=root.querySelector(".mlb-canvas");
+      if(oldCanvas){
+        workspaceScroll[oldKey]={left:oldCanvas.scrollLeft,top:oldCanvas.scrollTop};
+      }
+      rememberWorkspaceView();
+      state.active_workspace=next;
+      const ws=state.workspaces[next];
+      state.view_component_id=ws.view_component_id||ws.root_component_id;
+      state.breadcrumbs=cp(ws.breadcrumbs||[{id:ws.root_component_id,name:ws.name}]);
+      selected=null;pendingPort=null;search="";
+      switchingWorkspace=true;
+      setStatus(workspaceName()+" opened.");
+      draw();
+    }
+
+    const dataNodeTypes=new Set([
+      "manual_dataset","hf_dataset","kaggle_dataset","url_dataset","local_dataset",
+      "text_process","train_test_split","tokenize_text","image_process","audio_process",
+      "batch_data","prepared_dataset"
+    ]);
+    function itemWorkspace(item){
+      return dataNodeTypes.has(item.type) ? "data" : "model";
+    }
+
+    ensureWorkspaces();
 
     function btn(text,cls){const b=document.createElement("button");b.type="button";b.className=cls||"";b.textContent=text;return b;}
     function portLabel(side,index){
@@ -83,7 +162,20 @@
 
     function apiInfo(node){
       if(node.type==="custom") return {public_name:"Custom Layer",parameters:[],available:true};
-      return mlapi[node.type] || cat(catalog,node.type).real_api || {};
+      const item=cat(catalog,node.type);
+      if(item.builder_utility){
+        return {
+          available:true,
+          runtime_available:null,
+          builder_utility:true,
+          builder_python_api:!!item.builder_python_api,
+          public_name:item.name,
+          parameters:item.api||[],
+          description:item.description||"",
+          source:"MLBricks Builder"
+        };
+      }
+      return mlapi[node.type] || item.real_api || {};
     }
 
     function normalizedBrickName(name){
@@ -121,12 +213,113 @@
       if(typeof v==="number") return String(v);
       if(v==="true") return "True";
       if(v==="false") return "False";
+      if(v==="None"||v==="none") return "None";
+      if(typeof v==="string" && v.startsWith("torch.")) return v;
       return JSON.stringify(v);
+    }
+
+    function builderDataPreview(node){
+      const p=node.params||{};
+      const arg=(k,def)=>{
+        let v=p[k];
+        if(v===undefined||v===null||v==="")v=def;
+        return pythonValue(v);
+      };
+      const varname=(node.name||"data").toLowerCase().replace(/[^a-z0-9]+/g,"_").replace(/^_+|_+$/g,"")||"data";
+
+      if(node.type==="manual_dataset"){
+        return "from mlbricks_builder.data import load_manual_text_dataset\n\n"+
+          varname+" = load_manual_text_dataset(\n"+
+          "    "+arg("text","Once upon a time")+", text_column="+arg("text_column","text")+",\n"+
+          "    one_line_per_sample="+arg("one_line_per_sample","true")+",\n)";
+      }
+      if(node.type==="hf_dataset"){
+        return "from mlbricks_builder.data import load_huggingface_dataset\n\n"+
+          varname+" = load_huggingface_dataset(\n"+
+          "    "+arg("dataset_id","roneneldan/TinyStories")+",\n"+
+          "    config="+arg("config","")+", split="+arg("split","train")+",\n"+
+          "    text_column="+arg("text_column","text")+", streaming="+arg("streaming","false")+",\n"+
+          "    max_rows="+(Number(p.max_rows||0)>0?pythonValue(Number(p.max_rows)):"None")+",\n)";
+      }
+      if(node.type==="kaggle_dataset"){
+        return "from mlbricks_builder.data import load_kaggle_dataset\n\n"+
+          varname+" = load_kaggle_dataset(\n"+
+          "    "+arg("dataset_handle","owner/dataset-name")+",\n"+
+          "    file_pattern="+arg("file_pattern","*.csv")+", format="+arg("format","auto")+",\n"+
+          "    text_column="+arg("text_column","text")+",\n"+
+          "    max_rows="+(Number(p.max_rows||0)>0?pythonValue(Number(p.max_rows)):"None")+",\n)";
+      }
+      if(node.type==="url_dataset"){
+        return "from mlbricks_builder.data import load_url_dataset\n\n"+
+          varname+" = load_url_dataset(\n"+
+          "    "+arg("url","https://example.com/data.txt")+",\n"+
+          "    format="+arg("format","auto")+", text_column="+arg("text_column","text")+",\n"+
+          "    max_rows="+(Number(p.max_rows||0)>0?pythonValue(Number(p.max_rows)):"None")+",\n)";
+      }
+      if(node.type==="local_dataset"){
+        return "from mlbricks_builder.data import load_local_dataset\n\n"+
+          varname+" = load_local_dataset(\n"+
+          "    "+arg("path","/kaggle/input/...")+",\n"+
+          "    format="+arg("format","auto")+", text_column="+arg("text_column","text")+",\n"+
+          "    max_rows="+(Number(p.max_rows||0)>0?pythonValue(Number(p.max_rows)):"None")+",\n)";
+      }
+      if(node.type==="text_process"){
+        return "from mlbricks_builder.data import process_text_dataset\n\n"+
+          "processed = process_text_dataset(\n"+
+          "    dataset,\n"+
+          "    text_column="+arg("text_column","text")+", lowercase="+arg("lowercase","false")+",\n"+
+          "    strip="+arg("strip","true")+", normalize_whitespace="+arg("normalize_whitespace","true")+",\n"+
+          "    unicode_nfkc="+arg("unicode_nfkc","true")+", remove_empty="+arg("remove_empty","true")+",\n"+
+          "    min_chars="+arg("min_chars",1)+", max_chars="+(Number(p.max_chars||0)>0?pythonValue(Number(p.max_chars)):"None")+",\n)";
+      }
+      if(node.type==="train_test_split"){
+        const tr=Math.max(0,Number(p.train_size??90))/100;
+        const va=Math.max(0,Number(p.validation_size??5))/100;
+        const te=Math.max(0,Number(p.test_size??5))/100;
+        return "from mlbricks_builder.data import train_validation_test_split\n\n"+
+          "splits = train_validation_test_split(\n"+
+          "    dataset, train_size="+pythonValue(tr)+", validation_size="+pythonValue(va)+", test_size="+pythonValue(te)+",\n"+
+          "    seed="+arg("seed",42)+", shuffle="+arg("shuffle","true")+",\n)";
+      }
+      if(node.type==="tokenize_text"){
+        return "from mlbricks_builder.data import tokenize_text_dataset\n\n"+
+          "tokenized = tokenize_text_dataset(\n"+
+          "    dataset, tokenizer_name="+arg("tokenizer_name","gpt2")+",\n"+
+          "    text_column="+arg("text_column","text")+", context_length="+arg("context_length",512)+",\n"+
+          "    truncation="+arg("truncation","true")+", padding="+arg("padding","false")+",\n"+
+          "    add_special_tokens="+arg("add_special_tokens","true")+",\n)";
+      }
+      if(node.type==="image_process"){
+        return "from mlbricks_builder.data import process_image_dataset\n\n"+
+          "processed = process_image_dataset(\n"+
+          "    dataset, image_column="+arg("image_column","image")+", width="+arg("width",224)+", height="+arg("height",224)+",\n"+
+          "    mode="+arg("mode","RGB")+", center_crop="+arg("center_crop","false")+",\n)";
+      }
+      if(node.type==="audio_process"){
+        return "from mlbricks_builder.data import process_audio_dataset\n\n"+
+          "processed = process_audio_dataset(\n"+
+          "    dataset, audio_column="+arg("audio_column","audio")+", sample_rate="+arg("sample_rate",16000)+",\n"+
+          "    normalize="+arg("normalize","true")+", trim_silence="+arg("trim_silence","false")+",\n"+
+          "    silence_threshold="+arg("silence_threshold",0.01)+",\n)";
+      }
+      if(node.type==="batch_data"){
+        return "from mlbricks_builder.data import make_torch_dataloader\n\n"+
+          "loader = make_torch_dataloader(\n"+
+          "    dataset, batch_size="+arg("batch_size",16)+", shuffle="+arg("shuffle","true")+",\n"+
+          "    num_workers="+arg("num_workers",2)+", drop_last="+arg("drop_last","false")+",\n)";
+      }
+      if(node.type==="prepared_dataset"){
+        return "from mlbricks_builder.data import prepared_dataset_output\n\n"+
+          "prepared = prepared_dataset_output(\n"+
+          "    dataset, save_to_disk="+arg("save_to_disk","false")+", path="+arg("path","/kaggle/working/prepared_dataset")+",\n)";
+      }
+      return "";
     }
 
     function constructorPreview(node){
       const api=apiInfo(node);
       if(node.type==="custom") return "# Nested custom MLBricks layer";
+      if(api?.builder_utility) return api.builder_python_api ? builderDataPreview(node) : "";
       if(!api?.available) return "# MLBricks API unavailable";
       const args=[];
       (api.parameters||[]).forEach(f=>{
@@ -383,22 +576,95 @@
       const wrap=document.createElement("div");wrap.className="mlb-field";
       const label=document.createElement("label");label.textContent=f.label+(f.required?" *":"");
       let input;
+
       if(f.type==="select"){
         input=document.createElement("select");
-        (f.options||[]).forEach(v=>{const o=document.createElement("option");o.value=v;o.textContent=v;if(String(node.params?.[f.key]??f.value)===String(v))o.selected=true;input.appendChild(o);});
+        (f.options||[]).forEach(v=>{
+          const o=document.createElement("option");
+          o.value=v;o.textContent=v;
+          if(String(node.params?.[f.key]??f.value)===String(v))o.selected=true;
+          input.appendChild(o);
+        });
+      }else if(f.type==="textarea"){
+        input=document.createElement("textarea");
+        input.rows=4;
+        input.value=node.params?.[f.key]??f.value??"";
       }else if(f.type==="bool"){
-        input=document.createElement("select");["true","false"].forEach(v=>{const o=document.createElement("option");o.value=v;o.textContent=v;if(String(node.params?.[f.key]??f.value)===v)o.selected=true;input.appendChild(o);});
+        input=document.createElement("select");
+        ["true","false"].forEach(v=>{
+          const o=document.createElement("option");
+          o.value=v;o.textContent=v;
+          if(String(node.params?.[f.key]??f.value)===v)o.selected=true;
+          input.appendChild(o);
+        });
       }else{
-        input=document.createElement("input");input.type=f.type==="number"?"number":"text";input.step="any";input.value=node.params?.[f.key]??f.value??"";
+        input=document.createElement("input");
+        input.type=f.type==="number"?"number":"text";
+        input.step="any";
+        input.value=node.params?.[f.key]??f.value??"";
       }
+
       input.addEventListener("change",()=>{
         checkpoint("Edit "+node.name+"."+f.key);
         node.params=node.params||{};
         node.params[f.key]=f.type==="number"?Number(input.value):input.value;
-        setStatus(node.name+" API updated.");
+        setStatus(node.name+" settings updated.");
         draw();
       });
-      wrap.append(label,input);body.appendChild(wrap);
+
+      wrap.append(label,input);
+      body.appendChild(wrap);
+    }
+
+    function fieldCurrentValue(node,key){
+      if(node.params && node.params[key]!==undefined)return node.params[key];
+      const field=(cat(catalog,node.type).api||[]).find(x=>x.key===key);
+      return field ? field.value : "";
+    }
+
+    function fieldVisible(node,f){
+      if(f.show_when){
+        return Object.entries(f.show_when).every(([k,v])=>String(fieldCurrentValue(node,k))===String(v));
+      }
+      if(f.show_when_any){
+        return Object.entries(f.show_when_any).every(([k,values])=>{
+          const current=String(fieldCurrentValue(node,k));
+          return (values||[]).map(String).includes(current);
+        });
+      }
+      return true;
+    }
+
+    function renderGroupedFields(body,node,fields){
+      const groupOrder=[];
+      (fields||[]).forEach(f=>{
+        const group=f.group||"Settings";
+        if(!groupOrder.includes(group))groupOrder.push(group);
+      });
+
+      groupOrder.forEach(group=>{
+        const visible=(fields||[]).filter(f=>(f.group||"Settings")===group && fieldVisible(node,f));
+        if(!visible.length)return;
+
+        const collapsed=collapsedInspectorGroups.has(group);
+        const header=document.createElement("button");
+        header.type="button";
+        header.className="mlb-ins-group";
+        header.innerHTML="<span>"+group+"</span><span>"+(collapsed?"▸":"▾")+"</span>";
+        header.addEventListener("click",()=>{
+          if(collapsedInspectorGroups.has(group))collapsedInspectorGroups.delete(group);
+          else collapsedInspectorGroups.add(group);
+          draw();
+        });
+        body.appendChild(header);
+
+        if(!collapsed){
+          const section=document.createElement("div");
+          section.className="mlb-ins-group-body";
+          visible.forEach(f=>renderField(section,node,f));
+          body.appendChild(section);
+        }
+      });
     }
 
 
@@ -493,12 +759,53 @@
       });
     }
 
+    function loadTextDataStarter(){
+      checkpoint("Load Text Data Starter");
+      rememberWorkspaceView();
+      state.active_workspace="data";
+      const ws=state.workspaces.data;
+      state.view_component_id=ws.root_component_id;
+      state.breadcrumbs=[{id:ws.root_component_id,name:"Data Processing"}];
+      ws.view_component_id=ws.root_component_id;
+      ws.breadcrumbs=cp(state.breadcrumbs);
+
+      const nodes=[
+        makeNode(cat(catalog,"hf_dataset")),
+        makeNode(cat(catalog,"text_process")),
+        makeNode(cat(catalog,"train_test_split")),
+        makeNode(cat(catalog,"tokenize_text")),
+        makeNode(cat(catalog,"prepared_dataset"))
+      ];
+      nodes[0].params.dataset_id="roneneldan/TinyStories";
+      nodes[0].params.split="train";
+      nodes[2].params.train_size=90;
+      nodes[2].params.validation_size=5;
+      nodes[2].params.test_size=5;
+      const edges=[];
+      for(let i=0;i<nodes.length-1;i++){
+        const e=edge(nodes[i].id,nodes[i+1].id,"main");
+        e.source_port="main_out";e.target_port="main_in";edges.push(e);
+      }
+      state.components[ws.root_component_id]={
+        id:ws.root_component_id,name:"Data Processing",kind:"data",revision:1,nodes,edges
+      };
+      selected=null;pendingPort=null;
+      setStatus("Text data starter loaded.");
+      switchingWorkspace=true;
+      draw();
+    }
+
     function loadTinyStories(){
       checkpoint("Load TinyStories 30M");
-      const rootId=state.root_component_id;
+      rememberWorkspaceView();
+      state.active_workspace="model";
+      const rootId=state.workspaces.model.root_component_id;
+      state.root_component_id=rootId;
       state.view_component_id=rootId;
       state.project={...(state.project||{}),name:"TinyStories 30M",context_length:512,batch_size:16,dataset:"TinyStories",estimated_parameters:"~30M"};
       state.breadcrumbs=[{id:rootId,name:"TinyStories 30M"}];
+      state.workspaces.model.view_component_id=rootId;
+      state.workspaces.model.breadcrumbs=cp(state.breadcrumbs);
       const defId=uid("custom");
       const esa=makeNode(cat(catalog,"esa")),norm=makeNode(cat(catalog,"rmsnorm")),ffn=makeNode(cat(catalog,"ffn")),res=makeNode(cat(catalog,"residual"));
       state.custom_components[defId]={
@@ -526,17 +833,88 @@
       selected=null;pendingPort=null;setStatus("TinyStories starter loaded.");draw();
     }
 
+    function safeFilename(name){
+      const base=String(name||"mlbricks-design").trim().replace(/[^a-zA-Z0-9._-]+/g,"-").replace(/^-+|-+$/g,"");
+      return base||"mlbricks-design";
+    }
+
+    function saveDesign(){
+      const payload={
+        format:"mlbricks-builder-design",
+        format_version:"0.5",
+        builder_version:"0.5.0",
+        saved_at:new Date().toISOString(),
+        state:cp(state)
+      };
+      const blob=new Blob([JSON.stringify(payload,null,2)],{type:"application/json"});
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement("a");
+      a.href=url;
+      a.download=safeFilename(state.project?.name)+".mlbricks.json";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(()=>URL.revokeObjectURL(url),1000);
+      setStatus("Design saved.");
+      draw();
+    }
+
+    function loadDesign(){
+      const input=document.createElement("input");
+      input.type="file";
+      input.accept=".json,.mlbricks,application/json";
+      input.style.display="none";
+      input.addEventListener("change",()=>{
+        const file=input.files?.[0];
+        if(!file){input.remove();return;}
+        const reader=new FileReader();
+        reader.onload=()=>{
+          try{
+            const parsed=JSON.parse(String(reader.result||""));
+            const incoming=parsed.state||parsed;
+            if(!incoming || !incoming.components || !incoming.root_component_id){
+              throw new Error("This file is not an MLBricks Builder design.");
+            }
+            checkpoint("Load design");
+            state=cp(incoming);
+            Object.values(state.components||{}).forEach(c=>{if(!c.edges)c.edges=[];});
+            ensureWorkspaces();
+            if(!state.view_component_id || !state.components[state.view_component_id]){
+              state.view_component_id=state.root_component_id;
+            }
+            if(!Array.isArray(state.breadcrumbs)||!state.breadcrumbs.length){
+              state.breadcrumbs=[{id:state.root_component_id,name:state.project?.name||"Model"}];
+            }
+            selected=null;pendingPort=null;
+            setStatus("Design loaded: "+file.name);
+            draw();
+          }catch(err){
+            alert("Could not load design: "+err.message);
+            setStatus("Design load failed.");
+            draw();
+          }finally{
+            input.remove();
+          }
+        };
+        reader.readAsText(file);
+      });
+      document.body.appendChild(input);
+      input.click();
+    }
+
     function draw(){
+      const wsKey=state.active_workspace||"model";
       const oldCanvas=root.querySelector(".mlb-canvas");
-      if(oldCanvas){
-        canvasScrollLeft=oldCanvas.scrollLeft;
-        canvasScrollTop=oldCanvas.scrollTop;
+      if(oldCanvas && !switchingWorkspace){
+        workspaceScroll[wsKey]={left:oldCanvas.scrollLeft,top:oldCanvas.scrollTop};
       }
+      switchingWorkspace=false;
+      rememberWorkspaceView();
       root.innerHTML="";
 
       // Top bar
       const top=document.createElement("div");top.className="mlb-topbar";
-      const logo=document.createElement("div");logo.className="mlb-logo";logo.innerHTML='<span class="mlb-logo-mark">◇</span>MLBricks Builder <span class="mlb-beta">v0.3.12</span>';top.appendChild(logo);
+      const logo=document.createElement("div");logo.className="mlb-logo";logo.innerHTML='<span class="mlb-logo-mark">◇</span>MLBricks Builder <span class="mlb-beta">v0.5.0</span>';top.appendChild(logo);
       const title=document.createElement("div");title.className="mlb-project-title";title.textContent=state.project?.name||"Untitled";top.appendChild(title);
       const saved=document.createElement("div");saved.className="mlb-save-state";saved.textContent="• Saved";top.appendChild(saved);
       const sp=document.createElement("div");sp.className="mlb-topspacer";top.appendChild(sp);
@@ -548,30 +926,35 @@
         const c=current(state);if(!c.nodes.length&&!c.edges.length)return;
         checkpoint("Clear graph");c.nodes=[];c.edges=[];selected=null;pendingPort=null;setStatus("Graph cleared.");draw();
       });
-      acts.append(run,btn("□ Stop","mlb-stop"),undoBtn,redoBtn,clearBtn,btn("▣ Save","mlb-dark-btn"),btn("⇧ Load","mlb-dark-btn"),btn("⇩ Export","mlb-dark-btn"),btn("⌯ Share","mlb-dark-btn"),btn("?","mlb-dark-btn"),btn("⚙","mlb-dark-btn"));top.appendChild(acts);
+      const saveBtn=btn("▣ Save","mlb-dark-btn");saveBtn.title="Save full model + data pipeline design";saveBtn.addEventListener("click",saveDesign);
+      const loadBtn=btn("⇧ Load","mlb-dark-btn");loadBtn.title="Load a saved MLBricks Builder design";loadBtn.addEventListener("click",loadDesign);
+      acts.append(run,btn("□ Stop","mlb-stop"),undoBtn,redoBtn,clearBtn,saveBtn,loadBtn,btn("⇩ Export","mlb-dark-btn"),btn("⌯ Share","mlb-dark-btn"),btn("?","mlb-dark-btn"),btn("⚙","mlb-dark-btn"));top.appendChild(acts);
       root.appendChild(top);
 
       const shell=document.createElement("div");shell.className="mlb-shell";
 
       // Sidebar
       const side=document.createElement("aside");side.className="mlb-sidebar";
-      const head=document.createElement("div");head.className="mlb-sidehead";head.innerHTML="<span>BRICK LIBRARY</span><span>×</span>";side.appendChild(head);
+      const head=document.createElement("div");head.className="mlb-sidehead";head.innerHTML="<span>"+(state.active_workspace==="data"?"DATA LIBRARY":"BRICK LIBRARY")+"</span><span>×</span>";side.appendChild(head);
       const sr=document.createElement("div");sr.className="mlb-search-row";
-      const searchInput=document.createElement("input");searchInput.className="mlb-search";searchInput.placeholder="Search bricks...";searchInput.value=search;searchInput.addEventListener("input",()=>{search=searchInput.value;draw();});
+      const searchInput=document.createElement("input");searchInput.className="mlb-search";searchInput.placeholder=state.active_workspace==="data"?"Search data steps...":"Search bricks...";searchInput.value=search;searchInput.addEventListener("input",()=>{search=searchInput.value;draw();});
       sr.append(searchInput,btn("☷","mlb-filter-btn"));side.appendChild(sr);
-      const chips=document.createElement("div");chips.className="mlb-chips";
-      ["All","Inputs","Core Blocks","Norm","Heads","Outputs"].forEach(x=>{const b=btn(x.replace(" Blocks",""),"mlb-chip"+(filter===x?" active":""));b.addEventListener("click",()=>{
-          filter=x;
-          if(x!=="All"&&x!=="Norm") collapsedCategories.delete(x);
-          draw();
-        });chips.appendChild(b);});side.appendChild(chips);
+      const workspaceBox=document.createElement("div");workspaceBox.className="mlb-workspace-box";
+      const workspaceLabel=document.createElement("label");workspaceLabel.textContent="BUILD WORKSPACE";
+      const workspaceSelect=document.createElement("select");workspaceSelect.className="mlb-workspace-select";
+      [["model","Model Builder"],["data","Data Processing"]].forEach(([value,label])=>{
+        const o=document.createElement("option");o.value=value;o.textContent=label;
+        if(state.active_workspace===value)o.selected=true;
+        workspaceSelect.appendChild(o);
+      });
+      workspaceSelect.addEventListener("change",()=>switchWorkspace(workspaceSelect.value));
+      workspaceBox.append(workspaceLabel,workspaceSelect);
+      side.insertBefore(workspaceBox,sr);
 
       const visible=catalog.filter(item=>{
+        if(itemWorkspace(item)!==state.active_workspace)return false;
         const q=(item.name+" "+item.description+" "+item.category).toLowerCase();
-        if(search&&!q.includes(search.toLowerCase()))return false;
-        if(filter==="All")return true;
-        if(filter==="Norm")return ["rmsnorm","layernorm"].includes(item.type);
-        return item.category===filter;
+        return !search || q.includes(search.toLowerCase());
       });
 
       [...new Set(visible.map(x=>x.category))].forEach(category=>{
@@ -602,37 +985,61 @@
         side.appendChild(pal);
       });
 
-      const mh=document.createElement("button");
-      mh.type="button";
-      mh.className="mlb-category";
-      mh.setAttribute("aria-expanded",String(!myBricksCollapsed));
-      mh.innerHTML="<span>MY BRICKS</span><span class='mlb-category-caret'>"+(myBricksCollapsed?"▸":"▾")+"</span>";
-      mh.addEventListener("click",()=>{myBricksCollapsed=!myBricksCollapsed;draw();});
-      side.appendChild(mh);
+      if(state.active_workspace==="model"){
+        const mh=document.createElement("button");
+        mh.type="button";
+        mh.className="mlb-category";
+        mh.setAttribute("aria-expanded",String(!myBricksCollapsed));
+        mh.innerHTML="<span>MY BRICKS</span><span class='mlb-category-caret'>"+(myBricksCollapsed?"▸":"▾")+"</span>";
+        mh.addEventListener("click",()=>{myBricksCollapsed=!myBricksCollapsed;draw();});
+        side.appendChild(mh);
 
-      if(!myBricksCollapsed){
-        Object.values(state.custom_components||{}).forEach(def=>{
-          const b=document.createElement("button");b.className="mlb-custom-card";b.type="button";
-          const emptyLabel=(def.nodes||[]).length===0?" · Empty":" · "+(def.nodes||[]).length+" blocks";
-        b.innerHTML='<span class="mlb-pal-icon">MY</span><span><strong>'+def.name+'</strong><span class="mlb-pal-sub">Custom · v'+def.revision+emptyLabel+"</span></span>";
-          b.addEventListener("click",()=>addCustom(def));side.appendChild(b);
-        });
-        const create=btn("+ Create Custom Brick","mlb-create");create.addEventListener("click",createCustom);side.appendChild(create);
+        if(!myBricksCollapsed){
+          Object.values(state.custom_components||{}).forEach(def=>{
+            const b=document.createElement("button");b.className="mlb-custom-card";b.type="button";
+            const emptyLabel=(def.nodes||[]).length===0?" · Empty":" · "+(def.nodes||[]).length+" blocks";
+          b.innerHTML='<span class="mlb-pal-icon">MY</span><span><strong>'+def.name+'</strong><span class="mlb-pal-sub">Custom · v'+def.revision+emptyLabel+"</span></span>";
+            b.addEventListener("click",()=>addCustom(def));side.appendChild(b);
+          });
+          const create=btn("+ Create Custom Brick","mlb-create");create.addEventListener("click",createCustom);side.appendChild(create);
+        }
       }
 
       // Main
       const main=document.createElement("main");main.className="mlb-main";
       const toolbar=document.createElement("div");toolbar.className="mlb-toolbar";
-      const auto=btn("◎ Auto Layout","mlb-tool");auto.addEventListener("click",()=>{setStatus("Layer-by-layer auto layout applied.");draw();});
-      const add=btn("+ Add Layer","mlb-tool");add.addEventListener("click",()=>{setStatus(selected?"Choose a brick — it will be inserted after the selected layer.":"Choose a brick — it will be added at the end.");draw();});
-      const demo=btn("★ TinyStories 30M","mlb-tool");demo.addEventListener("click",loadTinyStories);
-      toolbar.append(auto,add,demo);
+      const workspaceBadge=document.createElement("div");workspaceBadge.className="mlb-workspace-badge";
+      workspaceBadge.textContent=workspaceName();
+      toolbar.appendChild(workspaceBadge);
+
+      const auto=btn("◎ Auto Layout","mlb-tool");
+      auto.addEventListener("click",()=>{setStatus(workspaceName()+" auto layout applied.");draw();});
+      const add=btn(state.active_workspace==="data"?"+ Add Step":"+ Add Layer","mlb-tool");
+      add.addEventListener("click",()=>{
+        setStatus(selected
+          ?("Choose a "+(state.active_workspace==="data"?"data step":"brick")+" — it will be inserted after the selected "+(state.active_workspace==="data"?"step.":"layer."))
+          :("Choose a "+(state.active_workspace==="data"?"data step":"brick")+" from the library."));
+        draw();
+      });
+      toolbar.append(auto,add);
+
+      if(state.active_workspace==="model"){
+        const demo=btn("★ TinyStories 30M","mlb-tool");demo.addEventListener("click",loadTinyStories);toolbar.appendChild(demo);
+      }else{
+        const demo=btn("★ Text Data Starter","mlb-tool");demo.addEventListener("click",loadTextDataStarter);toolbar.appendChild(demo);
+      }
+
       const tsp=document.createElement("div");tsp.className="mlb-toolspacer";toolbar.appendChild(tsp);
-      const toggle=document.createElement("label");toggle.className="mlb-toggle";const cb=document.createElement("input");cb.type="checkbox";cb.checked=!!state.auto_connect;cb.addEventListener("change",()=>{checkpoint("Change Auto Connect");state.auto_connect=cb.checked;draw();});toggle.append(document.createTextNode("Auto Connect"),cb);toolbar.appendChild(toggle);
+      const toggle=document.createElement("label");toggle.className="mlb-toggle";
+      const cb=document.createElement("input");cb.type="checkbox";cb.checked=!!state.auto_connect;
+      cb.addEventListener("change",()=>{checkpoint("Change Auto Connect");state.auto_connect=cb.checked;draw();});
+      toggle.append(document.createTextNode("Auto Connect"),cb);toolbar.appendChild(toggle);
+
       const z=document.createElement("div");z.className="mlb-zoom";
       const zm=btn("−");zm.addEventListener("click",()=>{zoom=Math.max(.65,zoom-.1);draw();});
       const zs=document.createElement("span");zs.textContent=Math.round(zoom*100)+"%";
-      const zp=btn("+");zp.addEventListener("click",()=>{zoom=Math.min(1.5,zoom+.1);draw();});z.append(zm,zs,zp);toolbar.appendChild(z);
+      const zp=btn("+");zp.addEventListener("click",()=>{zoom=Math.min(1.5,zoom+.1);draw();});
+      z.append(zm,zs,zp);toolbar.appendChild(z);
       main.appendChild(toolbar);
 
       const canvas=document.createElement("div");canvas.className="mlb-canvas";
@@ -642,7 +1049,7 @@
       ctop.appendChild(crumbs);canvas.appendChild(ctop);
 
       const mini=document.createElement("div");mini.className="mlb-minimap";
-      const miniTitle=document.createElement("div");miniTitle.className="mlb-minimap-title";miniTitle.textContent="BLUEPRINT";
+      const miniTitle=document.createElement("div");miniTitle.className="mlb-minimap-title";miniTitle.textContent=state.active_workspace==="data"?"DATA BLUEPRINT":"MODEL BLUEPRINT";
       const mg=document.createElement("div");mg.className="mlb-minimap-grid";
       current(state).nodes.forEach(()=>{const m=document.createElement("div");m.className="mlb-mini-node";mg.appendChild(m);});
       mini.append(miniTitle,mg);
@@ -658,6 +1065,8 @@
         const e=document.createElement("div");e.className="mlb-empty";
         if(comp.kind==="custom_edit"){
           e.innerHTML="<strong>Empty custom brick.</strong><br><br>Add internal bricks from the left. Nothing from the parent model is copied into this shell.";
+        }else if(state.active_workspace==="data"){
+          e.innerHTML="<strong>Build your data pipeline step by step.</strong><br><br>Start with Hugging Face, Kaggle, URL, Local or Manual Data.";
         }else{
           e.innerHTML="<strong>Build your model layer by layer.</strong><br><br>Add a brick from the left or load TinyStories 30M.";
         }
@@ -688,7 +1097,9 @@
       const hint=document.createElement("div");hint.className="mlb-hint";
       hint.textContent=pendingPort
         ?"Choose the matching lane: Top ↔ Top, Main ↔ Main, Bottom ↔ Bottom."
-        :"Select a node before adding a brick to insert after it. Use Move Left / Move Right in Inspector to reorder. Main flow rewires automatically.";
+        :(state.active_workspace==="data"
+          ?"Build left to right: Data Source → Processing → Split/Batch → Prepared Dataset. Select a step before adding to insert after it."
+          :"Select a node before adding a brick to insert after it. Use Move Left / Move Right in Inspector to reorder. Main flow rewires automatically.");
       canvas.appendChild(hint);
       main.appendChild(canvas);
       requestAnimationFrame(()=>{
@@ -700,22 +1111,37 @@
         wrap.style.width=Math.ceil(baseW*zoom)+"px";
         wrap.style.height=Math.ceil(baseH*zoom)+"px";
         drawEdges(wrap,flow);
-        canvas.scrollLeft=canvasScrollLeft;
-        canvas.scrollTop=canvasScrollTop;
+        const pos=workspaceScroll[state.active_workspace]||{left:0,top:0};
+        canvas.scrollLeft=pos.left||0;
+        canvas.scrollTop=pos.top||0;
       });
 
       // Bottom details are collapsed by default so Kaggle gives the graph maximum space.
       const details=document.createElement("div");details.className="mlb-details";
       const detailsBar=document.createElement("button");detailsBar.type="button";detailsBar.className="mlb-details-bar";
-      detailsBar.innerHTML="<span>Model Details</span><span>"+(bottomExpanded?"▾ Hide":"▴ Show")+"</span>";
+      detailsBar.innerHTML="<span>"+(state.active_workspace==="data"?"Data Pipeline Details":"Model Details")+"</span><span>"+(bottomExpanded?"▾ Hide":"▴ Show")+"</span>";
       detailsBar.addEventListener("click",()=>{bottomExpanded=!bottomExpanded;draw();});
       details.appendChild(detailsBar);
 
       const panels=document.createElement("div");panels.className="mlb-bottom-panels"+(bottomExpanded?" expanded":" collapsed");
-      const p1=document.createElement("div");p1.className="mlb-bottom-card";p1.innerHTML='<div class="mlb-bottom-title">PRESETS</div><div class="mlb-preset-card"><strong>★ TinyStories 30M (6L)</strong>Context 512 · Batch 16<br>~30M parameters</div>';p1.querySelector(".mlb-preset-card").addEventListener("click",loadTinyStories);
-      const p2=document.createElement("div");p2.className="mlb-bottom-card";p2.innerHTML='<div class="mlb-bottom-title">GRAPH INFO</div><div class="mlb-stat-row"><span>Layers</span><strong>'+current(state).nodes.length+'</strong></div><div class="mlb-stat-row"><span>Connections</span><strong>'+(current(state).edges||[]).length+'</strong></div><div class="mlb-stat-row"><span>Context</span><strong>'+(state.project?.context_length||"—")+'</strong></div><div class="mlb-stat-row"><span>Batch Size</span><strong>'+(state.project?.batch_size||"—")+'</strong></div><div class="mlb-stat-row"><span>Status</span><strong class="mlb-good">✓ Valid</strong></div>';
-      const p3=document.createElement("div");p3.className="mlb-bottom-card";p3.innerHTML='<div class="mlb-bottom-title">COMPUTE ESTIMATE</div><div class="mlb-stat-row"><span>Target Params</span><strong>'+(state.project?.estimated_parameters||"—")+'</strong></div><div class="mlb-stat-row"><span>Dataset</span><strong>'+(state.project?.dataset||"—")+'</strong></div><div class="mlb-stat-row"><span>Precision</span><strong>float16</strong></div><div class="mlb-stat-row"><span>Backend</span><strong>MLBricks</strong></div>';
-      const p4=document.createElement("div");p4.className="mlb-bottom-card";p4.innerHTML='<div class="mlb-bottom-title">CONNECTION LANES</div><div class="mlb-stat-row"><span>Skip</span><strong>Top Out → Top In</strong></div><div class="mlb-stat-row"><span>Main</span><strong>Middle Out → Middle In</strong></div><div class="mlb-stat-row"><span>Extra</span><strong>Bottom Out → Bottom In</strong></div><div class="mlb-stat-row"><span>Remove</span><strong>Inspector → Remove</strong></div>';
+      const p1=document.createElement("div");p1.className="mlb-bottom-card";
+      const p2=document.createElement("div");p2.className="mlb-bottom-card";
+      const p3=document.createElement("div");p3.className="mlb-bottom-card";
+      const p4=document.createElement("div");p4.className="mlb-bottom-card";
+
+      if(state.active_workspace==="data"){
+        p1.innerHTML='<div class="mlb-bottom-title">STARTER</div><div class="mlb-preset-card"><strong>★ Text Data Pipeline</strong>Hugging Face → Clean → Split → Tokenize → Output</div>';
+        p1.querySelector(".mlb-preset-card").addEventListener("click",loadTextDataStarter);
+        p2.innerHTML='<div class="mlb-bottom-title">PIPELINE INFO</div><div class="mlb-stat-row"><span>Steps</span><strong>'+current(state).nodes.length+'</strong></div><div class="mlb-stat-row"><span>Connections</span><strong>'+(current(state).edges||[]).length+'</strong></div><div class="mlb-stat-row"><span>Workspace</span><strong>Data</strong></div><div class="mlb-stat-row"><span>Status</span><strong class="mlb-good">✓ Designed</strong></div>';
+        p3.innerHTML='<div class="mlb-bottom-title">PROCESSING</div><div class="mlb-stat-row"><span>Text</span><strong>Clean / Tokenize</strong></div><div class="mlb-stat-row"><span>Image</span><strong>Resize / Crop</strong></div><div class="mlb-stat-row"><span>Audio</span><strong>Resample / Normalize</strong></div><div class="mlb-stat-row"><span>Split</span><strong>Train / Val / Test</strong></div>';
+        p4.innerHTML='<div class="mlb-bottom-title">FLOW</div><div class="mlb-stat-row"><span>Main</span><strong>Processing order</strong></div><div class="mlb-stat-row"><span>Skip</span><strong>Optional branch</strong></div><div class="mlb-stat-row"><span>Extra</span><strong>Aux data</strong></div>';
+      }else{
+        p1.innerHTML='<div class="mlb-bottom-title">PRESETS</div><div class="mlb-preset-card"><strong>★ TinyStories 30M (6L)</strong>Context 512 · Batch 16<br>~30M parameters</div>';
+        p1.querySelector(".mlb-preset-card").addEventListener("click",loadTinyStories);
+        p2.innerHTML='<div class="mlb-bottom-title">GRAPH INFO</div><div class="mlb-stat-row"><span>Layers</span><strong>'+current(state).nodes.length+'</strong></div><div class="mlb-stat-row"><span>Connections</span><strong>'+(current(state).edges||[]).length+'</strong></div><div class="mlb-stat-row"><span>Context</span><strong>'+(state.project?.context_length||"—")+'</strong></div><div class="mlb-stat-row"><span>Batch Size</span><strong>'+(state.project?.batch_size||"—")+'</strong></div><div class="mlb-stat-row"><span>Status</span><strong class="mlb-good">✓ Valid</strong></div>';
+        p3.innerHTML='<div class="mlb-bottom-title">COMPUTE ESTIMATE</div><div class="mlb-stat-row"><span>Target Params</span><strong>'+(state.project?.estimated_parameters||"—")+'</strong></div><div class="mlb-stat-row"><span>Dataset</span><strong>'+(state.project?.dataset||"—")+'</strong></div><div class="mlb-stat-row"><span>Precision</span><strong>float16</strong></div><div class="mlb-stat-row"><span>Backend</span><strong>MLBricks</strong></div>';
+        p4.innerHTML='<div class="mlb-bottom-title">CONNECTION LANES</div><div class="mlb-stat-row"><span>Skip</span><strong>Top Out → Top In</strong></div><div class="mlb-stat-row"><span>Main</span><strong>Middle Out → Middle In</strong></div><div class="mlb-stat-row"><span>Extra</span><strong>Bottom Out → Bottom In</strong></div><div class="mlb-stat-row"><span>Remove</span><strong>Inspector → Remove</strong></div>';
+      }
       panels.append(p1,p2,p3,p4);
       details.appendChild(panels);
       main.appendChild(details);
@@ -728,7 +1154,7 @@
       const n=selectedNode();
 
       if(!n){
-        body.innerHTML='<div class="mlb-section-title">SELECT A NODE</div><div class="mlb-api-path">Click any component to open its real installed MLBricks API here.</div>';
+        body.innerHTML='<div class="mlb-section-title">SELECT A NODE</div><div class="mlb-api-path">'+(state.active_workspace==="data"?"Choose a data step to edit its processing API.":"Choose a model component to edit its MLBricks API.")+'</div>';
       }else if(inspectorTab==="info"){
         const api=apiInfo(n);body.innerHTML='<div class="mlb-selected"><strong>'+n.name+'</strong><span class="mlb-pill">'+(api.public_name||"Custom")+'</span></div>';
         const s=document.createElement("div");s.className="mlb-summary";[["Type",n.type],["Definition",n.definition_id?"Custom":"Built-in"],["Repeat",n.repeat||1],["API",api.import_path||"custom"],["Status","Valid"]].forEach(([a,b])=>{const r=document.createElement("div");r.className="mlb-summary-row";r.innerHTML="<span>"+a+"</span><strong>"+b+"</strong>";s.appendChild(r);});body.appendChild(s);
@@ -736,12 +1162,22 @@
         const api=apiInfo(n);const info=n.type==="custom"?{api:[]}:cat(catalog,n.type);
         const sw=document.createElement("div");sw.className="mlb-selected";sw.innerHTML="<strong>"+n.name+"</strong><span class='mlb-pill'>"+(api.public_name||"Custom Layer")+"</span>";body.appendChild(sw);
         const path=document.createElement("div");path.className="mlb-api-path";
-        path.textContent=n.type==="custom"?"custom://"+n.definition_id:(api.signature||api.import_path||"MLBricks API");
+        path.textContent=n.type==="custom"
+          ?"custom://"+n.definition_id
+          :(api.builder_utility
+              ?(api.builder_python_api?"Builder data/text operation":"Builder workflow settings")
+              :(api.signature||api.import_path||"MLBricks API"));
         body.appendChild(path);
         if(n.type!=="custom"){
           const apiStatus=document.createElement("div");
           apiStatus.className="mlb-api-status "+(api.available?"ok":"bad");
-          if(api.available && api.runtime_available===true){
+          if(api.builder_utility && api.builder_python_api){
+            apiStatus.className="mlb-api-status utility";
+            apiStatus.textContent="Builder data operation — executable with mlbricks_builder.data";
+          }else if(api.builder_utility){
+            apiStatus.className="mlb-api-status utility";
+            apiStatus.textContent="Builder workflow node — no mlbricks Python API";
+          }else if(api.available && api.runtime_available===true){
             apiStatus.textContent="✓ Real MLBricks API: "+(api.import_path||api.public_name);
           }else if(api.available){
             apiStatus.textContent="✓ API loaded from MLBricks source: "+(api.public_name||n.type);
@@ -761,10 +1197,17 @@
           fixed.textContent="Fixed clean interface: Top Skip, Middle Main, Bottom Extra — on both left and right sides.";
           body.appendChild(fixed);
         }else{
-          const st=document.createElement("div");st.className="mlb-section-title";st.textContent="PARAMETERS";body.appendChild(st);
-          (api.parameters||info.api||[]).forEach(f=>renderField(body,n,f));
-          const ct=document.createElement("div");ct.className="mlb-section-title";ct.textContent="MLBRICKS PYTHON";body.appendChild(ct);
-          const code=document.createElement("pre");code.className="mlb-code-preview";code.textContent=constructorPreview(n);body.appendChild(code);
+          const st=document.createElement("div");st.className="mlb-section-title";st.textContent=state.active_workspace==="data"?"DATA SETTINGS":"PARAMETERS";body.appendChild(st);
+          const fields=(api.parameters||info.api||[]);
+          if(fields.some(f=>f.group)) renderGroupedFields(body,n,fields);
+          else fields.forEach(f=>renderField(body,n,f));
+          const preview=constructorPreview(n);
+          if(preview){
+            const ct=document.createElement("div");ct.className="mlb-section-title";
+            ct.textContent=api.builder_python_api?"DATA PYTHON":"MLBRICKS PYTHON";
+            body.appendChild(ct);
+            const code=document.createElement("pre");code.className="mlb-code-preview";code.textContent=preview;body.appendChild(code);
+          }
         }
         const edgeSectionTitle=document.createElement("div");edgeSectionTitle.className="mlb-section-title";edgeSectionTitle.textContent="CONNECTIONS";body.appendChild(edgeSectionTitle);
         const relEdges=(current(state).edges||[]).filter(e=>e.source===n.id||e.target===n.id);
@@ -787,10 +1230,10 @@
             row.append(txt,delBtn);body.appendChild(row);
           });
         }
-        const moveTitle=document.createElement("div");moveTitle.className="mlb-section-title";moveTitle.textContent="LAYER POSITION";body.appendChild(moveTitle);
+        const moveTitle=document.createElement("div");moveTitle.className="mlb-section-title";moveTitle.textContent=state.active_workspace==="data"?"STEP POSITION":"LAYER POSITION";body.appendChild(moveTitle);
         const moveGrid=document.createElement("div");moveGrid.className="mlb-action-grid mlb-move-grid";
-        const moveLeft=btn("← Move Left");
-        const moveRight=btn("Move Right →");
+        const moveLeft=btn(state.active_workspace==="data"?"← Move Earlier":"← Move Left");
+        const moveRight=btn(state.active_workspace==="data"?"Move Later →":"Move Right →");
         const nodeIndex=current(state).nodes.findIndex(x=>x.id===n.id);
         moveLeft.disabled=nodeIndex<=0;
         moveRight.disabled=nodeIndex<0||nodeIndex>=current(state).nodes.length-1;
@@ -820,7 +1263,9 @@
 
       shell.append(side,main,ins);root.appendChild(shell);
 
-      const stat=document.createElement("div");stat.className="mlb-statusbar";stat.innerHTML='<span>Mode: Builder⌄</span><span>Backend: MLBricks Runtime</span><span>GPU: Auto</span><span class="right mlb-ready">● '+status+"</span>";root.appendChild(stat);
+      const stat=document.createElement("div");stat.className="mlb-statusbar";
+      stat.innerHTML='<span>Workspace: '+workspaceName()+'</span><span>Backend: '+(state.active_workspace==="data"?"Builder Data API":"MLBricks Runtime")+'</span><span>GPU: Auto</span><span class="right mlb-ready">● '+status+"</span>";
+      root.appendChild(stat);
     }
 
     draw();

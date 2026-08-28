@@ -286,3 +286,163 @@ Custom-brick creation is now isolated from the current model canvas.
   For example, `SAM`, `sam`, and ` Sam ` are treated as the same name.
 - The same unique-name rule applies to **Save As New**.
 - Empty shells are visibly marked as `Empty` in **My Bricks**.
+
+
+## v0.4.0 — Data + Text Processing pipeline
+
+MLBricks Builder can now design the dataset path together with the model.
+
+### Data sources
+
+- **Hugging Face Dataset**
+- **Kaggle Dataset**
+- **URL Dataset**
+- **Local Dataset**
+
+### Text processing
+
+- **Text Processing** — Unicode normalization, whitespace cleanup, lowercase,
+  empty filtering, minimum/maximum text length
+- **Train / Test Split** — configurable train/test ratio, seed and shuffle
+- **Tokenize Text** — Hugging Face tokenizer, context length, truncation,
+  padding and special-token controls
+
+Example visual pipeline:
+
+`Hugging Face Dataset → Text Processing → Train/Test Split → Tokenize Text → Embedding → Model`
+
+The Inspector shows runnable **DATA PYTHON** for data/text nodes using
+`mlbricks_builder.data`. These are Builder APIs, not fake `mlbricks` imports.
+
+### Save / Load Design
+
+The top **Save** button now downloads the complete design as
+`<project>.mlbricks.json`, including:
+
+- data pipeline
+- preprocessing settings
+- train/test split configuration
+- model nodes and connections
+- custom bricks
+- project settings
+
+The **Load** button restores the same design from JSON.
+
+### Optional data dependencies
+
+Keep the normal Builder installation light. Install data features with:
+
+```bash
+pip install "mlbricks-builder[data]"
+```
+
+or, when installing Builder from GitHub in Kaggle, install:
+
+```bash
+pip install datasets kagglehub transformers pandas pyarrow
+```
+
+Authentication tokens/credentials are deliberately **not** stored in design
+files. Hugging Face and Kaggle use their normal notebook/environment login.
+
+
+## v0.4.1 — Text Input as the kid-friendly text workspace
+
+For beginners, all common text preparation now lives inside **Text Input**.
+
+Click Text Input to get four simple collapsible sections:
+
+1. **Text Source** — Manual, Hugging Face, Kaggle, URL, or Local File
+2. **Clean Text** — cleanup/normalization/filtering
+3. **Train / Test** — split percentages, seed, shuffle
+4. **Tokenization** — tokenizer, context, truncation, padding
+
+The UI is conditional: selecting Hugging Face shows Hugging Face fields;
+selecting Kaggle shows Kaggle fields; turning a processing step off hides its
+advanced controls.
+
+Standalone Data/Text Processing bricks remain available for advanced workflows,
+but those categories start collapsed. The beginner path is one Text Input node.
+
+The Text Input configuration is saved in the normal `.mlbricks.json` design.
+Its runnable code uses the real Builder helper
+`mlbricks_builder.data.prepare_text_input(...)`; it never generates a fake
+`from mlbricks import Text Input`.
+
+
+## v0.5.0 — separate Model Builder and Data Processing workspaces
+
+The category-chip row has been replaced by a simple **Build Workspace** selector:
+
+- **Model Builder**
+- **Data Processing**
+
+Each workspace has its own independent graph and both graphs are saved in the
+same `.mlbricks.json` project.
+
+### Model Builder
+
+Shows model-building components only:
+
+- Inputs
+- Core Blocks
+- normalization
+- advanced blocks
+- position
+- heads
+- outputs
+- My Bricks / custom components
+
+`Text Input` is simple again: it represents prompt/text entering the model.
+Dataset downloading, train/test splitting and tokenization are no longer hidden
+inside Text Input.
+
+### Data Processing
+
+Shows data operations only:
+
+- **Data Source**
+  - Manual Text Data
+  - Hugging Face Dataset
+  - Kaggle Dataset
+  - URL Dataset
+  - Local Dataset
+- **Splitting**
+  - Train / Validation / Test Split
+- **Text**
+  - Text Processing
+  - Tokenize Text
+- **Image**
+  - Image Processing
+- **Audio**
+  - Audio Processing
+- **Dataset**
+  - Batch / DataLoader
+- **Output**
+  - Prepared Dataset
+
+The right Inspector shows **Builder Data API** code for these processing nodes.
+The helper functions are implemented in `mlbricks_builder.data`; they are not
+fake `mlbricks` imports.
+
+### Saved project structure
+
+Conceptually:
+
+```text
+MLBricks Project
+├── Model Builder graph
+├── Data Processing graph
+├── Custom Bricks
+└── Project Settings
+```
+
+Switching workspaces preserves each canvas, nested model view, and scroll
+position. Legacy pre-v0.5 designs are migrated in the browser by creating a new
+empty Data Processing workspace while preserving the existing model graph.
+
+### Beginner data starter
+
+In Data Processing mode, **Text Data Starter** builds:
+
+`Hugging Face → Clean Text → Train/Val/Test → Tokenize → Prepared Dataset`
