@@ -5,6 +5,7 @@ from pathlib import Path
 import uuid
 import threading
 import time
+import platform
 from datetime import datetime, timezone
 from collections.abc import Mapping
 
@@ -49,6 +50,75 @@ class Builder:
         # metadata lives in state["prepared_datasets"] and is saved with the design.
         self.prepared_datasets = {}
         self.state.setdefault("prepared_datasets", [])
+        self.runtime_capabilities = self._detect_runtime_capabilities()
+
+    def _detect_runtime_capabilities(self):
+        """Detect devices/runtime choices available in this Python session."""
+        devices = [
+            {
+                "id": "auto",
+                "label": "Auto (recommended)",
+                "kind": "auto",
+                "available": True,
+            },
+            {
+                "id": "cpu",
+                "label": f"CPU — {platform.processor() or platform.machine() or 'System CPU'}",
+                "kind": "cpu",
+                "available": True,
+            },
+        ]
+        torch_version = None
+        cuda_version = None
+        try:
+            import torch
+            torch_version = getattr(torch, "__version__", None)
+            cuda_version = getattr(getattr(torch, "version", None), "cuda", None)
+            if torch.cuda.is_available():
+                for index in range(torch.cuda.device_count()):
+                    props = torch.cuda.get_device_properties(index)
+                    total_gb = round(float(props.total_memory) / (1024 ** 3), 1)
+                    devices.append({
+                        "id": f"cuda:{index}",
+                        "label": f"GPU {index} — {props.name} ({total_gb} GB)",
+                        "kind": "cuda",
+                        "index": index,
+                        "name": props.name,
+                        "memory_gb": total_gb,
+                        "compute_capability": f"{props.major}.{props.minor}",
+                        "available": True,
+                    })
+            try:
+                if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                    devices.append({
+                        "id": "mps", "label": "Apple MPS GPU", "kind": "mps", "available": True
+                    })
+            except Exception:
+                pass
+            try:
+                xpu = getattr(torch, "xpu", None)
+                if xpu is not None and xpu.is_available():
+                    count = xpu.device_count()
+                    for index in range(count):
+                        name = xpu.get_device_name(index) if hasattr(xpu, "get_device_name") else f"XPU {index}"
+                        devices.append({
+                            "id": f"xpu:{index}", "label": f"XPU {index} — {name}",
+                            "kind": "xpu", "index": index, "name": name, "available": True
+                        })
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+        return {
+            "devices": devices,
+            "backends": ["auto", "native", "pytorch"],
+            "execution_modes": ["eager", "compiled"],
+            "compile_modes": ["default", "reduce-overhead", "max-autotune"],
+            "precisions": ["auto", "fp32", "fp16", "bf16"],
+            "torch_version": torch_version,
+            "cuda_version": cuda_version,
+        }
 
     def to_dict(self):
         return json.loads(json.dumps(self.state))
@@ -388,8 +458,8 @@ class Builder:
         available = [k for k, v in self.mlbricks_api.items() if v.get("available")]
         unavailable = {k: v.get("error") for k, v in self.mlbricks_api.items() if not v.get("available")}
         return {
-            "builder_version": "0.6.0",
-            "frontend_version": "0.6.0",
+            "builder_version": "0.6.1",
+            "frontend_version": "0.6.1",
             "mlbricks": info,
             "api_components_available": available,
             "api_components_unavailable": unavailable,
@@ -406,10 +476,11 @@ class Builder:
             "catalog": self.catalog,
             "mlbricks_api": self.mlbricks_api,
             "bridge": bridge,
+            "runtime_capabilities": self.runtime_capabilities,
         }).replace("</", "<\\/")
         return f"""
 <style>{css}</style>
-<div id="{html.escape(self._instance_id)}" class="mlb-root" data-mlbricks-builder-version="0.6.0"></div>
+<div id="{html.escape(self._instance_id)}" class="mlb-root" data-mlbricks-builder-version="0.6.1"></div>
 <script>
 try {{ delete window.MLBricksBuilder; }} catch (e) {{ window.MLBricksBuilder = undefined; }}
 {js}

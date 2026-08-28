@@ -794,3 +794,56 @@ Build is currently an architecture validation/snapshot step. This version does
 not pretend to execute model training or token generation without a model
 runtime/compiler. Train records readiness after compatibility passes; the
 training executor is the next runtime layer to connect.
+
+
+## v0.6.1 — Training / Generation setup workspace + available devices
+
+Clicking **Train** or **Generate / Configure Generation** on a built model now
+replaces the center graph area with a guided runtime configuration workspace.
+The model graph is preserved and **Back to Model Graph** returns to it.
+
+### Training setup
+
+- budget by **steps**, **tokens**, or **epochs**
+- training steps / token budget / epochs
+- batch size and gradient accumulation
+- optimizer, learning rate, weight decay, warmup
+- validation split
+- validate every N steps
+- validation steps
+- **generate a sample during validation**
+- validation prompt + generated-token count
+- checkpoint cadence
+- seed
+- output directory
+- device / backend / execution / compile mode / precision
+
+### Generation setup
+
+- prompt
+- new-token count
+- temperature
+- top-k / top-p
+- seed
+- device / backend / execution / compile mode / precision
+
+### Available devices
+
+Builder now detects the devices visible to the Python kernel and shows them as
+selectable cards and in the Device dropdown. CPU is always shown. CUDA GPUs are
+listed individually with GPU name, VRAM and compute capability when available;
+MPS/XPU are also detected when PyTorch exposes them.
+
+Runtime choices include:
+
+- Device: Auto / CPU / each available GPU
+- Backend: Auto / Native / PyTorch
+- Execution: Eager / Compiled
+- Compile mode: Default / Reduce Overhead / Max Autotune
+- Precision: Auto / FP32 / FP16 / BF16
+
+The runtime configuration is saved on the built-model entry. This version makes
+the Train/Generate buttons functional as configuration workflows, but does **not**
+fake actual model training or generation: the MLBricks graph compiler/model
+executor still needs to be connected before Start Training or Generate can run
+real model computation.

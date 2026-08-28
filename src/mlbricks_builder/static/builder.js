@@ -36,6 +36,8 @@
     const mlapi=cp(payload.mlbricks_api||{});
     let selected=null,pendingPort=null,filter="All",search="",inspectorTab="settings",zoom=1,status="Ready";
     const bridge=payload.bridge||null;
+    const runtimeCaps=cp(payload.runtime_capabilities||{devices:[{id:"auto",label:"Auto"},{id:"cpu",label:"CPU"}]});
+    let runtimePanel=null;
     let execution={status:"idle",overall:0,message:"Ready",nodes:{}};
     let lastProgressRaw="";
     let bridgePollTimer=null;
@@ -144,6 +146,7 @@
         workspaceScroll[oldKey]={left:oldCanvas.scrollLeft,top:oldCanvas.scrollTop};
       }
       rememberWorkspaceView();
+      runtimePanel=null;
       state.active_workspace=next;
       const ws=state.workspaces[next];
       state.view_component_id=ws.view_component_id||ws.root_component_id;
@@ -1012,24 +1015,262 @@
       draw();
     }
 
-    function requestBuiltModelTraining(entry,compat){
-      if(!entry||!compat?.ok)return;
-      entry.training_status="ready";
-      setStatus(
-        "Compatibility passed. Training is ready, but the model training executor is not connected yet."
-      );
+    function defaultTrainingConfig(entry,dataset){
+      const validationSplit=dataset?.splits?.validation ? "validation" : (dataset?.splits?.test ? "test" : "train");
+      return {
+        budget_type:"steps",
+        max_steps:1000,
+        max_tokens:1000000,
+        epochs:1,
+        batch_size:Number(entry?.batch_size||state.project?.batch_size||16),
+        gradient_accumulation:1,
+        optimizer:"adamw",
+        learning_rate:0.0003,
+        weight_decay:0.1,
+        warmup_steps:100,
+        validation_split:validationSplit,
+        validate_every:100,
+        validation_steps:20,
+        generate_on_validation:true,
+        validation_prompt:"Once upon a time",
+        validation_generate_tokens:64,
+        checkpoint_every:500,
+        seed:42,
+        device:"auto",
+        backend:"auto",
+        execution_mode:"eager",
+        compile_mode:"reduce-overhead",
+        precision:"auto",
+        output_dir:"/kaggle/working/mlbricks_training",
+      };
+    }
+
+    function defaultGenerationConfig(entry){
+      return {
+        prompt:"Once upon a time",
+        max_new_tokens:128,
+        temperature:0.8,
+        top_k:50,
+        top_p:0.95,
+        seed:42,
+        device:"auto",
+        backend:"auto",
+        execution_mode:"eager",
+        compile_mode:"reduce-overhead",
+        precision:"auto",
+      };
+    }
+
+    function ensureRuntimeConfigs(entry){
+      const dataset=preparedDatasetById(entry?.selected_dataset_id)||null;
+      entry.training_config={...defaultTrainingConfig(entry,dataset),...(entry.training_config||{})};
+      entry.generation_config={...defaultGenerationConfig(entry),...(entry.generation_config||{})};
+    }
+
+    function openRuntimePanel(mode,entry){
+      if(!entry)return;
+      ensureRuntimeConfigs(entry);
+      runtimePanel={mode,modelId:entry.id};
+      selected=null;
+      outputDirectorySelection=entry.id;
+      setStatus(mode==="train"?"Training setup opened.":"Generation setup opened.");
       draw();
     }
 
-    function requestTokenGeneration(entry){
-      if(!entry?.weights_ready){
-        setStatus("Generate Tokens requires trained or loaded model weights.");
-        draw();
-        return;
-      }
-      setStatus("Generation runtime is not connected yet.");
-      draw();
+    function requestBuiltModelTraining(entry,compat){
+      if(!entry||!compat?.ok)return;
+      entry.training_status="configured";
+      openRuntimePanel("train",entry);
     }
+
+    function requestTokenGeneration(entry){
+      if(!entry)return;
+      openRuntimePanel("generate",entry);
+    }
+
+    function runtimeDeviceOptions(){
+      const devices=runtimeCaps.devices||[];
+      return devices.length?devices:[{id:"auto",label:"Auto"},{id:"cpu",label:"CPU"}];
+    }
+
+    function selectedRuntimeDevice(config){
+      return runtimeDeviceOptions().find(d=>d.id===config.device)||runtimeDeviceOptions()[0];
+    }
+
+    function runtimeField(label,type,value,onChange,options){
+      const wrap=document.createElement("div");wrap.className="mlb-runtime-field";
+      const l=document.createElement("label");l.textContent=label;wrap.appendChild(l);
+      let input;
+      if(type==="select"){
+        input=document.createElement("select");
+        (options||[]).forEach(opt=>{
+          const item=typeof opt==="string"?{value:opt,label:opt}:opt;
+          const o=document.createElement("option");o.value=item.value;o.textContent=item.label;
+          if(String(item.value)===String(value))o.selected=true;input.appendChild(o);
+        });
+      }else if(type==="textarea"){
+        input=document.createElement("textarea");input.rows=4;input.value=value??"";
+      }else if(type==="checkbox"){
+        input=document.createElement("input");input.type="checkbox";input.checked=!!value;
+      }else{
+        input=document.createElement("input");input.type=type||"text";input.value=value??"";
+        if(type==="number")input.step="any";
+      }
+      const commit=()=>onChange(type==="checkbox"?input.checked:(type==="number"?Number(input.value):input.value));
+      input.addEventListener("change",commit);
+      wrap.appendChild(input);return wrap;
+    }
+
+    function runtimeSection(title){
+      const s=document.createElement("section");s.className="mlb-runtime-section";
+      const h=document.createElement("h3");h.textContent=title;s.appendChild(h);return s;
+    }
+
+    function deviceCards(config){
+      const box=document.createElement("div");box.className="mlb-device-grid";
+      runtimeDeviceOptions().forEach(device=>{
+        const card=document.createElement("button");card.type="button";
+        card.className="mlb-device-card"+(config.device===device.id?" selected":"");
+        const icon=device.kind==="cpu"?"CPU":device.kind==="cuda"?"GPU":device.kind==="xpu"?"XPU":device.kind==="mps"?"GPU":"AUTO";
+        card.innerHTML="<strong>"+icon+"</strong><span>"+device.label+"</span>"+
+          (device.compute_capability?"<small>Compute "+device.compute_capability+"</small>":"");
+        card.addEventListener("click",()=>{config.device=device.id;draw();});box.appendChild(card);
+      });
+      return box;
+    }
+
+    function runtimeCompatibilitySummary(entry){
+      const dataset=preparedDatasetById(entry.selected_dataset_id)||null;
+      return modelDatasetCompatibility(entry,dataset);
+    }
+
+    function trainingConfigValid(entry,config){
+      const compat=runtimeCompatibilitySummary(entry);
+      const errors=[];
+      if(!compat.ok)errors.push("Training data is not compatible.");
+      if(config.budget_type==="steps"&&Number(config.max_steps)<=0)errors.push("Training steps must be greater than 0.");
+      if(config.budget_type==="tokens"&&Number(config.max_tokens)<=0)errors.push("Token budget must be greater than 0.");
+      if(config.budget_type==="epochs"&&Number(config.epochs)<=0)errors.push("Epochs must be greater than 0.");
+      if(Number(config.batch_size)<=0)errors.push("Batch size must be greater than 0.");
+      if(Number(config.learning_rate)<=0)errors.push("Learning rate must be greater than 0.");
+      return {ok:errors.length===0,errors,compat};
+    }
+
+    function renderRuntimeWorkspace(canvas,entry,mode){
+      const outer=document.createElement("div");outer.className="mlb-runtime-workspace";
+      const top=document.createElement("div");top.className="mlb-runtime-head";
+      const back=btn("← Back to Model Graph","mlb-runtime-back");back.addEventListener("click",()=>{runtimePanel=null;setStatus("Model graph opened.");draw();});
+      const title=document.createElement("div");title.innerHTML="<strong>"+(mode==="train"?"TRAIN MODEL":"GENERATE TOKENS")+"</strong><span>"+entry.name+"</span>";
+      top.append(back,title);outer.appendChild(top);
+
+      const layout=document.createElement("div");layout.className="mlb-runtime-layout";
+      const main=document.createElement("div");main.className="mlb-runtime-main";
+      const side=document.createElement("aside");side.className="mlb-runtime-side";
+      layout.append(main,side);outer.appendChild(layout);
+
+      const config=mode==="train"?entry.training_config:entry.generation_config;
+      const update=(key,value)=>{config[key]=value;setStatus((mode==="train"?"Training":"Generation")+" setting updated: "+key);draw();};
+
+      const dev=runtimeSection("Available Devices");dev.appendChild(deviceCards(config));main.appendChild(dev);
+
+      if(mode==="train"){
+        const dataset=preparedDatasetById(entry.selected_dataset_id)||null;
+        const budget=runtimeSection("Training Budget");
+        const budgetGrid=document.createElement("div");budgetGrid.className="mlb-runtime-grid";
+        budgetGrid.append(
+          runtimeField("Budget By","select",config.budget_type,v=>update("budget_type",v),["steps","tokens","epochs"]),
+          runtimeField("Training Steps","number",config.max_steps,v=>update("max_steps",v)),
+          runtimeField("Token Budget","number",config.max_tokens,v=>update("max_tokens",v)),
+          runtimeField("Epochs","number",config.epochs,v=>update("epochs",v)),
+          runtimeField("Batch Size","number",config.batch_size,v=>update("batch_size",v)),
+          runtimeField("Gradient Accumulation","number",config.gradient_accumulation,v=>update("gradient_accumulation",v))
+        );budget.appendChild(budgetGrid);main.appendChild(budget);
+
+        const opt=runtimeSection("Optimizer");const optGrid=document.createElement("div");optGrid.className="mlb-runtime-grid";
+        optGrid.append(
+          runtimeField("Optimizer","select",config.optimizer,v=>update("optimizer",v),["adamw","adam","sgd"]),
+          runtimeField("Learning Rate","number",config.learning_rate,v=>update("learning_rate",v)),
+          runtimeField("Weight Decay","number",config.weight_decay,v=>update("weight_decay",v)),
+          runtimeField("Warmup Steps","number",config.warmup_steps,v=>update("warmup_steps",v)),
+          runtimeField("Seed","number",config.seed,v=>update("seed",v))
+        );opt.appendChild(optGrid);main.appendChild(opt);
+
+        const val=runtimeSection("Validation + Sample Generation");const valGrid=document.createElement("div");valGrid.className="mlb-runtime-grid";
+        const splitOpts=dataset?Object.keys(dataset.splits||{}).map(x=>({value:x,label:datasetSplitLabel(x,dataset)})):[{value:"validation",label:"Validation"}];
+        valGrid.append(
+          runtimeField("Validation Split","select",config.validation_split,v=>update("validation_split",v),splitOpts),
+          runtimeField("Validate Every N Steps","number",config.validate_every,v=>update("validate_every",v)),
+          runtimeField("Validation Steps","number",config.validation_steps,v=>update("validation_steps",v)),
+          runtimeField("Generate Sample at Validation","checkbox",config.generate_on_validation,v=>update("generate_on_validation",v)),
+          runtimeField("Validation Sample Tokens","number",config.validation_generate_tokens,v=>update("validation_generate_tokens",v)),
+          runtimeField("Checkpoint Every N Steps","number",config.checkpoint_every,v=>update("checkpoint_every",v))
+        );val.appendChild(valGrid);
+        if(config.generate_on_validation)val.appendChild(runtimeField("Validation Prompt","textarea",config.validation_prompt,v=>update("validation_prompt",v)));
+        main.appendChild(val);
+      }else{
+        const gen=runtimeSection("Prompt + Sampling");
+        gen.appendChild(runtimeField("Prompt","textarea",config.prompt,v=>update("prompt",v)));
+        const genGrid=document.createElement("div");genGrid.className="mlb-runtime-grid";
+        genGrid.append(
+          runtimeField("New Token Count","number",config.max_new_tokens,v=>update("max_new_tokens",v)),
+          runtimeField("Temperature","number",config.temperature,v=>update("temperature",v)),
+          runtimeField("Top K","number",config.top_k,v=>update("top_k",v)),
+          runtimeField("Top P","number",config.top_p,v=>update("top_p",v)),
+          runtimeField("Seed","number",config.seed,v=>update("seed",v))
+        );gen.appendChild(genGrid);main.appendChild(gen);
+      }
+
+      const runtime=runtimeSection("Runtime");const runtimeGrid=document.createElement("div");runtimeGrid.className="mlb-runtime-grid";
+      const deviceOpts=runtimeDeviceOptions().map(d=>({value:d.id,label:d.label}));
+      runtimeGrid.append(
+        runtimeField("Device","select",config.device,v=>update("device",v),deviceOpts),
+        runtimeField("Backend","select",config.backend,v=>update("backend",v),runtimeCaps.backends||["auto","native","pytorch"]),
+        runtimeField("Execution","select",config.execution_mode,v=>update("execution_mode",v),runtimeCaps.execution_modes||["eager","compiled"]),
+        runtimeField("Compile Mode","select",config.compile_mode,v=>update("compile_mode",v),runtimeCaps.compile_modes||["default","reduce-overhead","max-autotune"]),
+        runtimeField("Precision","select",config.precision,v=>update("precision",v),runtimeCaps.precisions||["auto","fp32","fp16","bf16"])
+      );runtime.appendChild(runtimeGrid);main.appendChild(runtime);
+
+      if(mode==="train"){
+        const out=runtimeSection("Output");const grid=document.createElement("div");grid.className="mlb-runtime-grid";
+        grid.append(runtimeField("Output Directory","text",config.output_dir,v=>update("output_dir",v)));out.appendChild(grid);main.appendChild(out);
+      }
+
+      const device=selectedRuntimeDevice(config);
+      const summary=document.createElement("div");summary.className="mlb-runtime-summary";
+      summary.innerHTML="<h3>Runtime Summary</h3>"+
+        "<div><span>Device</span><strong>"+device.label+"</strong></div>"+
+        "<div><span>Backend</span><strong>"+config.backend+"</strong></div>"+
+        "<div><span>Execution</span><strong>"+config.execution_mode+"</strong></div>"+
+        "<div><span>Compile</span><strong>"+(config.execution_mode==="compiled"?config.compile_mode:"Not used")+"</strong></div>"+
+        "<div><span>Precision</span><strong>"+config.precision+"</strong></div>";
+      side.appendChild(summary);
+
+      if(mode==="train"){
+        const valid=trainingConfigValid(entry,config);
+        side.appendChild(compatibilityCard(valid.compat));
+        if(!valid.ok){const errors=document.createElement("div");errors.className="mlb-runtime-errors";errors.innerHTML=valid.errors.map(x=>"<div>✕ "+x+"</div>").join("");side.appendChild(errors);}
+        const start=btn("Start Training","mlb-runtime-start");start.disabled=!valid.ok;
+        start.addEventListener("click",()=>{
+          entry.training_status="configured";
+          setStatus("Training configuration saved. The model compiler/training executor is the next runtime component to connect.");
+          draw();
+        });side.appendChild(start);
+      }else{
+        const weights=document.createElement("div");weights.className="mlb-weight-status "+(entry.weights_ready?"ready":"missing");
+        weights.textContent=entry.weights_ready?"✓ Model weights available":"✕ No trained/loaded weights yet";side.appendChild(weights);
+        const start=btn("Generate Tokens","mlb-runtime-start");start.disabled=!entry.weights_ready;
+        start.addEventListener("click",()=>{
+          if(!entry.weights_ready)return;
+          setStatus("Generation configuration saved. Generation executor is not connected yet.");draw();
+        });side.appendChild(start);
+      }
+
+      const note=document.createElement("div");note.className="mlb-runtime-executor-note";
+      note.textContent="This screen now captures the full runtime configuration. Actual model training/generation still requires the MLBricks graph compiler + model executor; this version does not fake those operations.";side.appendChild(note);
+
+      canvas.appendChild(outer);
+    }
+
 
     function compatibilityCard(compat){
       const box=document.createElement("div");
@@ -1115,11 +1356,10 @@
       }
 
       if(req.modality==="text"){
-        const generate=btn("Generate Tokens","mlb-generate-btn");
-        generate.disabled=!entry.weights_ready;
+        const generate=btn(entry.weights_ready?"Generate Tokens":"Configure Generation","mlb-generate-btn");
         generate.title=entry.weights_ready
-          ?"Generate tokens with this model"
-          :"Train or load model weights before token generation";
+          ?"Open generation settings"
+          :"Configure generation now; actual token generation needs trained/loaded weights";
         generate.addEventListener("click",()=>requestTokenGeneration(entry));
         actions.appendChild(generate);
       }
@@ -1127,8 +1367,8 @@
 
       const note=document.createElement("div");note.className="mlb-runtime-note";
       note.textContent=entry.weights_ready
-        ?"Weights are available."
-        :"Build validates/packages the architecture. Training/generation execution will require the model runtime/compiler.";
+        ?"Weights are available. Train/Generation open the runtime workspace in the center."
+        :"Train opens full runtime settings. Generation can be configured now, but token generation needs trained/loaded weights.";
       body.appendChild(note);
     }
 
@@ -1196,6 +1436,7 @@
         card.appendChild(foot);
 
         card.addEventListener("click",()=>{
+          runtimePanel=null;
           outputDirectorySelection=entry.id;
           selected=null;inspectorTab="settings";
           setStatus(entry.name+" model details opened.");
@@ -1285,7 +1526,7 @@
       if(!model)return;
       const config={
         format:"mlbricks-model-config",
-        builder_version:"0.6.0",
+        builder_version:"0.6.1",
         project:cp(state.project||{}),
         model:cp(model),
         selected_dataset:selectedModelDataset(),
@@ -2158,8 +2399,8 @@
       rememberWorkspaceView();
       return {
         format:"mlbricks-builder-design",
-        format_version:"0.6.0",
-        builder_version:"0.6.0",
+        format_version:"0.6.1",
+        builder_version:"0.6.1",
         saved_at:new Date().toISOString(),
         state:cp(state)
       };
@@ -2237,7 +2478,7 @@
 
       // Top bar
       const top=document.createElement("div");top.className="mlb-topbar";
-      const logo=document.createElement("div");logo.className="mlb-logo";logo.innerHTML='<span class="mlb-logo-mark">◇</span>MLBricks Builder <span class="mlb-beta">v0.6.0</span>';top.appendChild(logo);
+      const logo=document.createElement("div");logo.className="mlb-logo";logo.innerHTML='<span class="mlb-logo-mark">◇</span>MLBricks Builder <span class="mlb-beta">v0.6.1</span>';top.appendChild(logo);
       const title=document.createElement("div");title.className="mlb-project-title";title.textContent=state.project?.name||"Untitled";top.appendChild(title);
       const saved=document.createElement("div");saved.className="mlb-save-state";saved.textContent="• Saved";top.appendChild(saved);
       const sp=document.createElement("div");sp.className="mlb-topspacer";top.appendChild(sp);
@@ -2339,55 +2580,71 @@
       const main=document.createElement("main");main.className="mlb-main";
       const toolbar=document.createElement("div");toolbar.className="mlb-toolbar";
       const workspaceBadge=document.createElement("div");workspaceBadge.className="mlb-workspace-badge";
-      workspaceBadge.textContent=workspaceName();
+      workspaceBadge.textContent=runtimePanel
+        ?(runtimePanel.mode==="train"?"TRAINING SETUP":"GENERATION SETUP")
+        :workspaceName();
       toolbar.appendChild(workspaceBadge);
 
-      const auto=btn("◎ Auto Layout","mlb-tool");
-      auto.addEventListener("click",()=>{setStatus(workspaceName()+" auto layout applied.");draw();});
-      const add=btn(state.active_workspace==="data"?"+ Add Step":"+ Add Layer","mlb-tool");
-      add.addEventListener("click",()=>{
-        setStatus(selected
-          ?("Choose a "+(state.active_workspace==="data"?"data step":"brick")+" — it will be inserted after the selected "+(state.active_workspace==="data"?"step.":"layer."))
-          :("Choose a "+(state.active_workspace==="data"?"data step":"brick")+" from the library."));
-        draw();
-      });
-      toolbar.append(auto,add);
-
-      if(state.active_workspace==="model"){
-        const demo=btn("★ TinyStories 30M","mlb-tool");demo.addEventListener("click",loadTinyStories);toolbar.appendChild(demo);
+      if(runtimePanel && state.active_workspace==="model"){
+        const entry=builtModelById(runtimePanel.modelId);
+        const back=btn("← Model Graph","mlb-tool");back.addEventListener("click",()=>{runtimePanel=null;draw();});toolbar.appendChild(back);
+        if(entry){const name=document.createElement("div");name.className="mlb-runtime-toolbar-name";name.textContent=entry.name;toolbar.appendChild(name);}
+        const tsp=document.createElement("div");tsp.className="mlb-toolspacer";toolbar.appendChild(tsp);
+        const device=entry?selectedRuntimeDevice(runtimePanel.mode==="train"?entry.training_config:entry.generation_config):null;
+        if(device){const d=document.createElement("div");d.className="mlb-toolbar-device";d.textContent=device.label;toolbar.appendChild(d);}
       }else{
-        const demo=btn("★ Default Data Pipeline","mlb-tool");demo.addEventListener("click",loadTextDataStarter);toolbar.appendChild(demo);
-      }
+        const auto=btn("◎ Auto Layout","mlb-tool");
+        auto.addEventListener("click",()=>{setStatus(workspaceName()+" auto layout applied.");draw();});
+        const add=btn(state.active_workspace==="data"?"+ Add Step":"+ Add Layer","mlb-tool");
+        add.addEventListener("click",()=>{
+          setStatus(selected
+            ?("Choose a "+(state.active_workspace==="data"?"data step":"brick")+" — it will be inserted after the selected "+(state.active_workspace==="data"?"step.":"layer."))
+            :("Choose a "+(state.active_workspace==="data"?"data step":"brick")+" from the library."));
+          draw();
+        });
+        toolbar.append(auto,add);
 
-      if(state.active_workspace==="data"){
-        const kernel=document.createElement("div");kernel.className="mlb-kernel-badge";
-        toolbar.appendChild(kernel);
-        const live=document.createElement("div");live.className="mlb-run-live "+(execution.status||"idle");
-        live.innerHTML="<strong>"+Math.max(0,Math.min(100,Number(execution.overall||0)))+"%</strong><span>"+(execution.message||"Ready")+"</span>";
-        toolbar.appendChild(live);
-        const latest=latestPreparedDataset();
-        if(latest){
-          const ready=document.createElement("div");ready.className="mlb-data-ready-chip";
-          ready.innerHTML="<strong>"+latest.name+"</strong><span>"+compactDatasetSummary(latest)+"</span>";
-          ready.title="Latest prepared dataset available to Model Builder Text Input";
-          toolbar.appendChild(ready);
+        if(state.active_workspace==="model"){
+          const demo=btn("★ TinyStories 30M","mlb-tool");demo.addEventListener("click",loadTinyStories);toolbar.appendChild(demo);
+        }else{
+          const demo=btn("★ Default Data Pipeline","mlb-tool");demo.addEventListener("click",loadTextDataStarter);toolbar.appendChild(demo);
         }
-        requestAnimationFrame(updateKernelBadge);
-      }
-      const tsp=document.createElement("div");tsp.className="mlb-toolspacer";toolbar.appendChild(tsp);
-      const toggle=document.createElement("label");toggle.className="mlb-toggle";
-      const cb=document.createElement("input");cb.type="checkbox";cb.checked=!!state.auto_connect;
-      cb.addEventListener("change",()=>{checkpoint("Change Auto Connect");state.auto_connect=cb.checked;draw();});
-      toggle.append(document.createTextNode("Auto Connect"),cb);toolbar.appendChild(toggle);
 
-      const z=document.createElement("div");z.className="mlb-zoom";
-      const zm=btn("−");zm.addEventListener("click",()=>{zoom=Math.max(.65,zoom-.1);draw();});
-      const zs=document.createElement("span");zs.textContent=Math.round(zoom*100)+"%";
-      const zp=btn("+");zp.addEventListener("click",()=>{zoom=Math.min(1.5,zoom+.1);draw();});
-      z.append(zm,zs,zp);toolbar.appendChild(z);
+        if(state.active_workspace==="data"){
+          const kernel=document.createElement("div");kernel.className="mlb-kernel-badge";
+          toolbar.appendChild(kernel);
+          const live=document.createElement("div");live.className="mlb-run-live "+(execution.status||"idle");
+          live.innerHTML="<strong>"+Math.max(0,Math.min(100,Number(execution.overall||0)))+"%</strong><span>"+(execution.message||"Ready")+"</span>";
+          toolbar.appendChild(live);
+          const latest=latestPreparedDataset();
+          if(latest){
+            const ready=document.createElement("div");ready.className="mlb-data-ready-chip";
+            ready.innerHTML="<strong>"+latest.name+"</strong><span>"+compactDatasetSummary(latest)+"</span>";
+            ready.title="Latest prepared dataset available to Model Builder Text Input";
+            toolbar.appendChild(ready);
+          }
+          requestAnimationFrame(updateKernelBadge);
+        }
+        const tsp=document.createElement("div");tsp.className="mlb-toolspacer";toolbar.appendChild(tsp);
+        const toggle=document.createElement("label");toggle.className="mlb-toggle";
+        const cb=document.createElement("input");cb.type="checkbox";cb.checked=!!state.auto_connect;
+        cb.addEventListener("change",()=>{checkpoint("Change Auto Connect");state.auto_connect=cb.checked;draw();});
+        toggle.append(document.createTextNode("Auto Connect"),cb);toolbar.appendChild(toggle);
+
+        const z=document.createElement("div");z.className="mlb-zoom";
+        const zm=btn("−");zm.addEventListener("click",()=>{zoom=Math.max(.65,zoom-.1);draw();});
+        const zs=document.createElement("span");zs.textContent=Math.round(zoom*100)+"%";
+        const zp=btn("+");zp.addEventListener("click",()=>{zoom=Math.min(1.5,zoom+.1);draw();});
+        z.append(zm,zs,zp);toolbar.appendChild(z);
+      }
       main.appendChild(toolbar);
 
-      const canvas=document.createElement("div");canvas.className="mlb-canvas";
+      const canvas=document.createElement("div");canvas.className="mlb-canvas"+(runtimePanel?" runtime-active":"");
+      if(runtimePanel && state.active_workspace==="model"){
+        const entry=builtModelById(runtimePanel.modelId);
+        if(entry){renderRuntimeWorkspace(canvas,entry,runtimePanel.mode);}
+        else{runtimePanel=null;}
+      }
       const ctop=document.createElement("div");ctop.className="mlb-canvas-top";
       const crumbs=document.createElement("div");crumbs.className="mlb-breadcrumbs";
       state.breadcrumbs.forEach((c,i)=>{const b=btn(c.name,"mlb-crumb");b.addEventListener("click",()=>{state.view_component_id=c.id;state.breadcrumbs=state.breadcrumbs.slice(0,i+1);selected=null;draw();});crumbs.appendChild(b);if(i<state.breadcrumbs.length-1){const s=document.createElement("span");s.textContent="/";crumbs.appendChild(s);}});
@@ -2712,7 +2969,12 @@
       shell.append(side,main,ins);root.appendChild(shell);
 
       const stat=document.createElement("div");stat.className="mlb-statusbar";
-      stat.innerHTML='<span>Workspace: '+workspaceName()+'</span><span>Backend: '+(state.active_workspace==="data"?"Builder Data API":"MLBricks Runtime")+'</span><span>GPU: Auto</span><span class="right mlb-ready">● '+status+"</span>";
+      let statusDevice="Auto";
+      if(runtimePanel){
+        const e=builtModelById(runtimePanel.modelId);
+        if(e){const cfg=runtimePanel.mode==="train"?e.training_config:e.generation_config;statusDevice=selectedRuntimeDevice(cfg).label;}
+      }
+      stat.innerHTML='<span>Workspace: '+workspaceName()+'</span><span>Backend: '+(state.active_workspace==="data"?"Builder Data API":"MLBricks Runtime")+'</span><span>Device: '+statusDevice+'</span><span class="right mlb-ready">● '+status+"</span>";
       root.appendChild(stat);
     }
 
