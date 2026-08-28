@@ -39,6 +39,30 @@
     const runtimeCaps=cp(payload.runtime_capabilities||{devices:[{id:"auto",label:"Auto"},{id:"cpu",label:"CPU"}]});
     let runtimePanel=null;
     let execution={status:"idle",overall:0,message:"Ready",nodes:{}};
+    let localFiles={roots:[],entries:[],truncated:false};
+    let localForm={path:"",content_type:"auto",tokenizer_name:"gpt2",text_column:"text"};
+    let cloudStatus={};
+    let cloudSecrets={
+      huggingface:{token:""},
+      github:{token:""},
+      aws:{access_key:"",secret_key:"",session_token:""},
+      gcp:{service_account_json:""},
+      azure:{connection_string:""}
+    };
+    let cloudForm={
+      provider:"huggingface",
+      push_type:state.active_workspace==="data"?"dataset":"model",
+      push_artifact:"",
+      load_type:state.active_workspace==="data"?"dataset":"model",
+      repo:"",
+      branch:"main",
+      revision:"main",
+      bucket:"",
+      container:"",
+      object_path:"",
+      private:true,
+      region:""
+    };
     let lastProgressRaw="";
     let bridgePollTimer=null;
     let bridgeAwaitTimer=null;
@@ -402,6 +426,68 @@
       setTimeout(()=>{clickBridgeButton(button);setTimeout(()=>{delete state._runtime_command;},500);},350);
     }
 
+    function requestLocalCommand(action,config={}){
+      updateKernelBadge();
+      if(!bridgeReady()){
+        execution={status:"error",runtime_kind:"local",overall:0,message:"Kernel bridge is offline. Re-run the Builder cell, then try again.",nodes:{}};
+        applyExecutionProgress(execution);setStatus(execution.message);return;
+      }
+      state._runtime_command={action,local:cp(config),ts:Date.now()};
+      if(!setBridgeState()){delete state._runtime_command;setStatus("Could not send local filesystem command to Python.");return;}
+      const button=bridgeControl(bridge.run,"button");
+      if(!button){delete state._runtime_command;setStatus("Python local filesystem control was not found.");return;}
+      const progressInput=bridgeControl(bridge.progress,"textarea");
+      lastProgressRaw=progressInput?.value||lastProgressRaw;
+      execution={status:"running",runtime_kind:"local",phase:action,overall:0,message:action==="local_scan"?"Scanning Kaggle files…":"Loading local content…",nodes:{}};
+      applyExecutionProgress(execution);setStatus(execution.message);
+      setTimeout(()=>{clickBridgeButton(button);setTimeout(()=>{delete state._runtime_command;},350);},250);
+    }
+
+    function requestCloudCommand(action,config={}){
+      updateKernelBadge();
+      if(!bridgeReady()){
+        execution={status:"error",runtime_kind:"cloud",overall:0,message:"Kernel bridge is offline. Re-run the Builder cell, then try again.",nodes:{}};
+        applyExecutionProgress(execution);setStatus(execution.message);return;
+      }
+      state._runtime_command={action,cloud:cp(config),ts:Date.now()};
+      if(!setBridgeState()){
+        delete state._runtime_command;
+        setStatus("Could not send cloud command to Python.");return;
+      }
+      const button=bridgeControl(bridge.run,"button");
+      if(!button){delete state._runtime_command;setStatus("Python cloud control was not found.");return;}
+      const progressInput=bridgeControl(bridge.progress,"textarea");
+      lastProgressRaw=progressInput?.value||lastProgressRaw;
+      execution={status:"running",runtime_kind:"cloud",phase:action,overall:0,message:"Connecting to cloud provider…",nodes:{}};
+      applyExecutionProgress(execution);setStatus(execution.message);
+      setTimeout(()=>{
+        clickBridgeButton(button);
+        // Credentials are transient. Remove them from browser project state as soon
+        // as the bridge has copied the command into the standard widget.
+        setTimeout(()=>{delete state._runtime_command;},350);
+      },250);
+    }
+
+    function requestHubCommand(action,config={}){
+      updateKernelBadge();
+      if(!bridgeReady()){
+        execution={status:"error",runtime_kind:"hub",overall:0,message:"Kernel bridge is offline. Re-run the Builder cell, then try again.",nodes:{}};
+        applyExecutionProgress(execution);setStatus(execution.message);return;
+      }
+      state._runtime_command={action,hub:cp(config),ts:Date.now()};
+      if(!setBridgeState()){
+        delete state._runtime_command;
+        setStatus("Could not send Hugging Face command to Python.");return;
+      }
+      const button=bridgeControl(bridge.run,"button");
+      if(!button){delete state._runtime_command;setStatus("Python Hub control was not found.");return;}
+      const progressInput=bridgeControl(bridge.progress,"textarea");
+      lastProgressRaw=progressInput?.value||lastProgressRaw;
+      execution={status:"running",runtime_kind:"hub",phase:action,overall:0,message:"Connecting to Hugging Face Hub…",nodes:{}};
+      applyExecutionProgress(execution);setStatus(execution.message);
+      setTimeout(()=>{clickBridgeButton(button);setTimeout(()=>{delete state._runtime_command;},500);},300);
+    }
+
     function requestRun(){
       if(state.active_workspace!=="data"){
         setStatus("Model execution is not compiled yet. Run is currently available for Data Processing.");
@@ -537,6 +623,37 @@
           if(next.message)setStatus(next.message);
           setTimeout(draw,80);
         }
+      }
+
+      if(next.runtime_kind==="hub"){
+        if(next.state_replace){
+          state=cp(next.state_replace);
+          delete state._runtime_command;
+          ensureWorkspaces();
+          selected=null;pendingPort=null;outputDirectorySelection=null;
+        }
+        if(next.message)setStatus(next.message);
+        if(next.status==="done"||next.status==="error")setTimeout(draw,80);
+      }
+
+      if(next.runtime_kind==="cloud"){
+        if(next.cloud_status){cloudStatus[next.cloud_status.provider]=cp(next.cloud_status);}
+        if(next.state_replace){
+          state=cp(next.state_replace);delete state._runtime_command;delete state._session_secrets;ensureWorkspaces();
+          selected=null;pendingPort=null;outputDirectorySelection=null;
+        }
+        if(next.message)setStatus(next.message);
+        if(next.status==="done"||next.status==="error")setTimeout(draw,80);
+      }
+
+      if(next.runtime_kind==="local"){
+        if(next.local_scan)localFiles=cp(next.local_scan);
+        if(next.state_replace){
+          state=cp(next.state_replace);delete state._runtime_command;ensureWorkspaces();
+          selected=null;pendingPort=null;outputDirectorySelection=null;
+        }
+        if(next.message)setStatus(next.message);
+        if(next.status==="done"||next.status==="error")setTimeout(draw,80);
       }
 
       if(next.prepared_dataset){
@@ -1404,6 +1521,7 @@
       if(!entry)return;
       ensureRuntimeConfigs(entry);
       runtimePanel={mode,modelId:entry.id,tab:"setup"};
+      bottomExpanded=false;
       selected=null;
       outputDirectorySelection=entry.id;
       setStatus(mode==="train"?"Training setup opened.":"Generation setup opened.");
@@ -2037,7 +2155,7 @@
           name:meta.name,
           category:"data",
           type:"Prepared Dataset",
-          location:meta.path || "Python memory",
+          location:meta.hub_repo_id ? ("HF: "+meta.hub_repo_id) : (meta.path || "Python memory"),
           path:meta.path || null,
           description:compactDatasetSummary(meta)+" · "+dataStorageLabel(meta),
           dataset_id:meta.id
@@ -2050,7 +2168,7 @@
           name:item.name||("Model Artifact "+(index+1)),
           category:"model",
           type:item.format||item.kind||"Model Artifact",
-          location:item.path||"Registered artifact",
+          location:item.hub_repo_id ? ("HF: "+item.hub_repo_id) : (item.path||"Registered artifact"),
           path:item.path||null,
           description:item.dataset?("Dataset: "+item.dataset):"Trained/exported model artifact"
         });
@@ -2071,7 +2189,7 @@
       if(!model)return;
       const config={
         format:"mlbricks-model-config",
-        builder_version:"0.6.5",
+        builder_version:"0.6.8",
         project:cp(state.project||{}),
         model:cp(model),
         selected_dataset:selectedModelDataset(),
@@ -2084,6 +2202,349 @@
       setTimeout(()=>URL.revokeObjectURL(url),1000);
       setStatus("Model config downloaded.");
     }
+
+    function localKindClass(kind){
+      if(kind==="model_checkpoint")return "model";
+      if(kind==="dataset_dir"||kind==="data_file")return "data";
+      if(kind==="bundle")return "bundle";
+      return "project";
+    }
+
+    function localTypeForKind(kind){
+      if(kind==="model_checkpoint")return "model";
+      if(kind==="dataset_dir"||kind==="data_file")return "dataset";
+      if(kind==="project_json"||kind==="project_bin")return "project";
+      return "auto";
+    }
+
+    function renderLocalView(container){
+      container.className="mlb-local-view";
+      const head=document.createElement("div");head.className="mlb-local-head";
+      const copyHead=document.createElement("div");
+      copyHead.innerHTML="<strong>LOCAL / KAGGLE FILES</strong><span>Load directly from /kaggle/working, /kaggle/input, Colab /content, or an absolute path</span>";
+      const badge=document.createElement("span");badge.className="mlb-local-badge";badge.textContent="LOCAL";
+      const refresh=btn("↻ Scan Files","mlb-local-refresh");
+      refresh.addEventListener("click",()=>requestLocalCommand("local_scan",{}));
+      head.append(copyHead,badge,refresh);container.appendChild(head);
+
+      if(localFiles.roots?.length){
+        const roots=document.createElement("div");roots.className="mlb-local-roots";
+        localFiles.roots.forEach(rootPath=>{const chip=document.createElement("span");chip.textContent=rootPath;chip.title=rootPath;roots.appendChild(chip);});
+        container.appendChild(roots);
+      }
+
+      const direct=document.createElement("div");direct.className="mlb-local-direct";
+      const pathField=document.createElement("div");pathField.className="mlb-local-field";
+      const pl=document.createElement("label");pl.textContent="Path";pathField.appendChild(pl);
+      const pathInput=document.createElement("input");pathInput.value=localForm.path||"";
+      pathInput.placeholder="/kaggle/working/prepared_dataset or /kaggle/working/.../last.pt";
+      pathInput.addEventListener("input",()=>localForm.path=pathInput.value);pathField.appendChild(pathInput);
+
+      const typeField=document.createElement("div");typeField.className="mlb-local-field small";
+      const tl=document.createElement("label");tl.textContent="Load As";typeField.appendChild(tl);
+      const type=document.createElement("select");
+      [["auto","Auto Detect"],["dataset","Dataset"],["model","Model"],["project","Project"]].forEach(([v,label])=>{const o=document.createElement("option");o.value=v;o.textContent=label;if(v===localForm.content_type)o.selected=true;type.appendChild(o);});
+      type.addEventListener("change",()=>{localForm.content_type=type.value;draw();});typeField.appendChild(type);
+
+      const load=btn("Load Path","mlb-local-load");
+      load.addEventListener("click",()=>{
+        if(!String(localForm.path||"").trim()){setStatus("Enter a Kaggle/local path first.");return;}
+        requestLocalCommand("local_load",{path:localForm.path.trim(),content_type:localForm.content_type,tokenizer_name:localForm.tokenizer_name||"gpt2",text_column:localForm.text_column||"text"});
+      });
+      direct.append(pathField,typeField,load);container.appendChild(direct);
+
+      if(localForm.content_type==="dataset"){
+        const opts=document.createElement("div");opts.className="mlb-local-dataset-options";
+        const tok=document.createElement("div");tok.className="mlb-local-field";
+        const tkl=document.createElement("label");tkl.innerHTML="Tokenizer Name <span>for tokenized save_to_disk data</span>";tok.appendChild(tkl);
+        const ti=document.createElement("input");ti.value=localForm.tokenizer_name||"gpt2";ti.placeholder="gpt2";ti.addEventListener("input",()=>localForm.tokenizer_name=ti.value);tok.appendChild(ti);
+        const text=document.createElement("div");text.className="mlb-local-field";
+        const txl=document.createElement("label");txl.innerHTML="Text Column <span>for raw dataset files</span>";text.appendChild(txl);
+        const tx=document.createElement("input");tx.value=localForm.text_column||"text";tx.placeholder="text";tx.addEventListener("input",()=>localForm.text_column=tx.value);text.appendChild(tx);
+        opts.append(tok,text);container.appendChild(opts);
+      }
+
+      const title=document.createElement("div");title.className="mlb-local-list-title";
+      title.innerHTML="<strong>DISCOVERED CONTENT</strong><span>"+(localFiles.entries?.length||0)+" loadable item"+((localFiles.entries?.length||0)===1?"":"s")+(localFiles.truncated?" · list limited":"")+"</span>";
+      container.appendChild(title);
+
+      if(!localFiles.entries?.length){
+        const empty=document.createElement("div");empty.className="mlb-output-empty";
+        empty.innerHTML="<strong>No scan results yet.</strong><span>Click Scan Files. You can also paste an absolute /kaggle/working path above.</span>";
+        container.appendChild(empty);return;
+      }
+
+      const list=document.createElement("div");list.className="mlb-local-list";
+      localFiles.entries.forEach(item=>{
+        const row=document.createElement("div");row.className="mlb-local-row";
+        const icon=document.createElement("span");icon.className="mlb-local-type "+localKindClass(item.kind);
+        icon.textContent=item.kind==="model_checkpoint"?"MODEL":item.kind==="dataset_dir"||item.kind==="data_file"?"DATA":item.kind==="bundle"?"BUNDLE":"PROJECT";
+        const main=document.createElement("div");main.className="mlb-local-name";main.innerHTML="<strong>"+item.name+"</strong><span>"+item.path+"</span>";
+        const meta=document.createElement("div");meta.className="mlb-local-meta";meta.innerHTML="<strong>"+item.label+"</strong><span>"+item.size_label+"</span>";
+        const button=btn("Load","mlb-local-row-load");
+        button.addEventListener("click",()=>{localForm.path=item.path;localForm.content_type=localTypeForKind(item.kind);requestLocalCommand("local_load",{path:item.path,content_type:localForm.content_type,tokenizer_name:localForm.tokenizer_name||"gpt2",text_column:localForm.text_column||"text"});});
+        row.append(icon,main,meta,button);list.appendChild(row);
+      });
+      container.appendChild(list);
+      const note=document.createElement("div");note.className="mlb-local-note";
+      note.innerHTML="<strong>Supported:</strong> Hugging Face <code>save_to_disk()</code> dataset folders, raw TXT/CSV/JSON/JSONL/Parquet files, MLBricks <code>last.pt</code>/checkpoint files, Builder JSON/BIN projects, and <code>.mlbricks.zip</code> bundles.";
+      container.appendChild(note);
+    }
+
+    function cloudArtifactOptions(type){
+      if(type==="dataset"){
+        return availablePreparedDatasets().map(x=>({id:x.id,name:x.name,detail:compactDatasetSummary(x)}));
+      }
+      if(type==="model"){
+        return modelDirectoryEntries().map(x=>({
+          id:x.id,name:x.name,detail:x.weights_ready?"Trained weights ready":"Architecture / build"
+        }));
+      }
+      return [{id:"project",name:state.project?.name||"Current Project",detail:"Complete Builder project"}];
+    }
+
+    function cloudField(label,type,value,placeholder,onChange,secret=false){
+      const field=document.createElement("div");field.className="mlb-cloud-field";
+      const l=document.createElement("label");l.textContent=label;field.appendChild(l);
+      let input;
+      if(type==="textarea"){
+        input=document.createElement("textarea");
+        input.rows=3;
+      }else{
+        input=document.createElement("input");
+        input.type=secret?"password":(type||"text");
+      }
+      input.value=value||"";
+      input.placeholder=placeholder||"";
+      input.autocomplete="off";
+      input.addEventListener("input",()=>onChange(input.value));
+      field.appendChild(input);
+      return field;
+    }
+
+    function cloudSelect(label,value,options,onChange){
+      const field=document.createElement("div");field.className="mlb-cloud-field";
+      const l=document.createElement("label");l.textContent=label;field.appendChild(l);
+      const select=document.createElement("select");
+      options.forEach(item=>{
+        const v=typeof item==="object"?item.value:item;
+        const text=typeof item==="object"?item.label:item;
+        const o=document.createElement("option");o.value=v;o.textContent=text;
+        if(String(v)===String(value))o.selected=true;
+        select.appendChild(o);
+      });
+      select.addEventListener("change",()=>onChange(select.value));
+      field.appendChild(select);return field;
+    }
+
+    function providerLabel(provider){
+      return {
+        huggingface:"Hugging Face",
+        github:"GitHub",
+        aws:"AWS S3",
+        gcp:"Google Cloud Storage",
+        azure:"Azure Blob Storage"
+      }[provider]||provider;
+    }
+
+    function renderProviderCredentials(card){
+      const p=cloudForm.provider;
+      const title=document.createElement("div");title.className="mlb-cloud-subtitle";
+      title.textContent="SESSION CREDENTIALS";card.appendChild(title);
+
+      if(p==="huggingface"){
+        card.appendChild(cloudField(
+          "API Token / Access Token","text",cloudSecrets.huggingface.token,
+          "hf_...  (optional if already logged in)",
+          v=>cloudSecrets.huggingface.token=v,true
+        ));
+      }else if(p==="github"){
+        card.appendChild(cloudField(
+          "GitHub Personal Access Token","text",cloudSecrets.github.token,
+          "github_pat_... / ghp_...",
+          v=>cloudSecrets.github.token=v,true
+        ));
+      }else if(p==="aws"){
+        const grid=document.createElement("div");grid.className="mlb-cloud-mini-grid";
+        grid.append(
+          cloudField("Access Key ID","text",cloudSecrets.aws.access_key,"AKIA...",v=>cloudSecrets.aws.access_key=v,true),
+          cloudField("Secret Access Key","text",cloudSecrets.aws.secret_key,"••••••",v=>cloudSecrets.aws.secret_key=v,true)
+        );
+        card.appendChild(grid);
+        card.appendChild(cloudField(
+          "Session Token (optional)","text",cloudSecrets.aws.session_token,"Temporary session token",
+          v=>cloudSecrets.aws.session_token=v,true
+        ));
+      }else if(p==="gcp"){
+        card.appendChild(cloudField(
+          "Service Account JSON","textarea",cloudSecrets.gcp.service_account_json,
+          '{"type":"service_account", ...}  (blank = Application Default Credentials)',
+          v=>cloudSecrets.gcp.service_account_json=v,true
+        ));
+      }else if(p==="azure"){
+        card.appendChild(cloudField(
+          "Connection String","textarea",cloudSecrets.azure.connection_string,
+          "DefaultEndpointsProtocol=...;AccountName=...;AccountKey=...",
+          v=>cloudSecrets.azure.connection_string=v,true
+        ));
+      }
+
+      const note=document.createElement("div");note.className="mlb-cloud-secret-note";
+      note.textContent="Session only · masked · never included in Save JSON, BIN, model, dataset, or project metadata.";
+      card.appendChild(note);
+    }
+
+    function currentCloudCredentials(){
+      const p=cloudForm.provider;
+      if(p==="huggingface")return {token:cloudSecrets.huggingface.token};
+      if(p==="github")return {token:cloudSecrets.github.token};
+      if(p==="aws")return {
+        access_key:cloudSecrets.aws.access_key,
+        secret_key:cloudSecrets.aws.secret_key,
+        session_token:cloudSecrets.aws.session_token,
+        region:cloudForm.region
+      };
+      if(p==="gcp")return {service_account_json:cloudSecrets.gcp.service_account_json};
+      if(p==="azure")return {connection_string:cloudSecrets.azure.connection_string};
+      return {};
+    }
+
+    function providerTargetFields(card){
+      const p=cloudForm.provider;
+      if(p==="huggingface"){
+        card.appendChild(cloudField("Repository ID","text",cloudForm.repo,"username-or-org/repo-name",v=>cloudForm.repo=v));
+        card.appendChild(cloudField("Revision","text",cloudForm.revision,"main",v=>cloudForm.revision=v));
+      }else if(p==="github"){
+        card.appendChild(cloudField("Repository","text",cloudForm.repo,"owner/repository",v=>cloudForm.repo=v));
+        const grid=document.createElement("div");grid.className="mlb-cloud-mini-grid";
+        grid.append(
+          cloudField("Branch","text",cloudForm.branch,"main",v=>cloudForm.branch=v),
+          cloudField("File Path","text",cloudForm.object_path,"mlbricks/project.mlbricks.zip",v=>cloudForm.object_path=v)
+        );
+        card.appendChild(grid);
+      }else if(p==="aws"||p==="gcp"){
+        const grid=document.createElement("div");grid.className="mlb-cloud-mini-grid";
+        grid.append(
+          cloudField("Bucket","text",cloudForm.bucket,"my-mlbricks-bucket",v=>cloudForm.bucket=v),
+          cloudField(p==="aws"?"Object Key":"Object Name","text",cloudForm.object_path,"models/model.mlbricks.zip",v=>cloudForm.object_path=v)
+        );
+        card.appendChild(grid);
+        if(p==="aws"){
+          card.appendChild(cloudField("Region","text",cloudForm.region,"us-east-1",v=>cloudForm.region=v));
+        }
+      }else if(p==="azure"){
+        const grid=document.createElement("div");grid.className="mlb-cloud-mini-grid";
+        grid.append(
+          cloudField("Container","text",cloudForm.container,"mlbricks",v=>cloudForm.container=v),
+          cloudField("Blob Name","text",cloudForm.object_path,"models/model.mlbricks.zip",v=>cloudForm.object_path=v)
+        );
+        card.appendChild(grid);
+      }
+    }
+
+    function cloudCommandConfig(contentType,artifactId){
+      return {
+        provider:cloudForm.provider,
+        content_type:contentType,
+        artifact_id:artifactId,
+        repo:cloudForm.repo,
+        branch:cloudForm.branch||"main",
+        revision:cloudForm.revision||"main",
+        bucket:cloudForm.bucket,
+        container:cloudForm.container,
+        object_path:cloudForm.object_path,
+        region:cloudForm.region,
+        private:!!cloudForm.private,
+        credentials:currentCloudCredentials()
+      };
+    }
+
+    function renderCloudView(container){
+      container.className="mlb-cloud-view";
+      const head=document.createElement("div");head.className="mlb-cloud-head";
+      head.innerHTML="<div><strong>CLOUD & REPOSITORIES</strong><span>Push and load Builder data, models and projects</span></div>"+
+        "<span class='mlb-cloud-badge'>CLOUD</span>";
+      container.appendChild(head);
+
+      const providerBar=document.createElement("div");providerBar.className="mlb-cloud-provider-bar";
+      providerBar.appendChild(cloudSelect("Provider",cloudForm.provider,[
+        {value:"huggingface",label:"Hugging Face"},
+        {value:"github",label:"GitHub"},
+        {value:"aws",label:"AWS S3"},
+        {value:"gcp",label:"Google Cloud Storage"},
+        {value:"azure",label:"Azure Blob Storage"}
+      ],v=>{cloudForm.provider=v;cloudStatus[v]=cloudStatus[v]||{};draw();}));
+      const status=cloudStatus[cloudForm.provider]||{};
+      const indicator=document.createElement("div");
+      indicator.className="mlb-cloud-status "+(status.ok||status.authenticated?"ok":status.message?"warn":"idle");
+      indicator.innerHTML="<strong>"+providerLabel(cloudForm.provider)+"</strong><span>"+(status.message||"Connection not checked")+"</span>";
+      const check=btn("Check Connection","mlb-cloud-check");
+      check.addEventListener("click",()=>requestCloudCommand("cloud_status",{
+        provider:cloudForm.provider,
+        credentials:currentCloudCredentials(),
+        region:cloudForm.region
+      }));
+      providerBar.append(indicator,check);container.appendChild(providerBar);
+
+      const credentials=document.createElement("div");credentials.className="mlb-cloud-card credentials";
+      renderProviderCredentials(credentials);
+      container.appendChild(credentials);
+
+      const grid=document.createElement("div");grid.className="mlb-cloud-grid";
+
+      const push=document.createElement("div");push.className="mlb-cloud-card";
+      const pt=document.createElement("div");pt.className="mlb-cloud-card-title";
+      pt.innerHTML="<strong>↑ PUSH</strong><span>Send local Builder content to "+providerLabel(cloudForm.provider)+"</span>";
+      push.appendChild(pt);
+      push.appendChild(cloudSelect("Content Type",cloudForm.push_type,[
+        {value:"dataset",label:"Prepared Dataset"},
+        {value:"model",label:"Built / Trained Model"},
+        {value:"project",label:"Builder Project"}
+      ],v=>{cloudForm.push_type=v;cloudForm.push_artifact="";draw();}));
+      const artifacts=cloudArtifactOptions(cloudForm.push_type);
+      if(!cloudForm.push_artifact&&artifacts.length)cloudForm.push_artifact=artifacts[0].id;
+      push.appendChild(cloudSelect("Local Content",cloudForm.push_artifact,
+        artifacts.length?artifacts.map(x=>({value:x.id,label:x.name+" — "+x.detail})):[{value:"",label:"Nothing available yet"}],
+        v=>cloudForm.push_artifact=v
+      ));
+      providerTargetFields(push);
+      if(cloudForm.provider==="huggingface"){
+        const privacy=document.createElement("label");privacy.className="mlb-cloud-private";
+        const box=document.createElement("input");box.type="checkbox";box.checked=!!cloudForm.private;
+        box.addEventListener("change",()=>cloudForm.private=box.checked);
+        const text=document.createElement("span");text.innerHTML="<strong>Private repository</strong><small>Uncheck to publish publicly</small>";
+        privacy.append(box,text);push.appendChild(privacy);
+      }
+      const pushBtn=btn("↑ Push","mlb-cloud-primary");
+      pushBtn.disabled=!artifacts.length;
+      pushBtn.addEventListener("click",()=>{
+        requestCloudCommand("cloud_push",cloudCommandConfig(cloudForm.push_type,cloudForm.push_artifact));
+      });
+      push.appendChild(pushBtn);grid.appendChild(push);
+
+      const load=document.createElement("div");load.className="mlb-cloud-card";
+      const lt=document.createElement("div");lt.className="mlb-cloud-card-title";
+      lt.innerHTML="<strong>↓ LOAD</strong><span>Restore content from "+providerLabel(cloudForm.provider)+"</span>";
+      load.appendChild(lt);
+      load.appendChild(cloudSelect("Content Type",cloudForm.load_type,[
+        {value:"dataset",label:"Prepared Dataset"},
+        {value:"model",label:"MLBricks Builder Model"},
+        {value:"project",label:"Builder Project"}
+      ],v=>cloudForm.load_type=v));
+      providerTargetFields(load);
+      const loadBtn=btn("↓ Load","mlb-cloud-primary secondary");
+      loadBtn.addEventListener("click",()=>{
+        requestCloudCommand("cloud_load",cloudCommandConfig(cloudForm.load_type,null));
+      });
+      load.appendChild(loadBtn);grid.appendChild(load);
+
+      container.appendChild(grid);
+
+      const note=document.createElement("div");note.className="mlb-cloud-note";
+      note.innerHTML="<strong>Cloud behavior:</strong> Hugging Face uses native dataset/model repositories. GitHub, S3, GCS and Azure store an MLBricks bundle containing the selected project, dataset or model. Large model checkpoints are better suited to object storage/Hugging Face than GitHub.";
+      container.appendChild(note);
+    }
+
 
     function renderFilesView(container){
       container.className="mlb-files-view";
@@ -2956,14 +3417,21 @@
       return base||"mlbricks-design";
     }
 
+    function sanitizedProjectState(){
+      const clean=cp(state);
+      delete clean._runtime_command;
+      delete clean._session_secrets;
+      return clean;
+    }
+
     function designPayload(){
       rememberWorkspaceView();
       return {
         format:"mlbricks-builder-design",
-        format_version:"0.6.5",
-        builder_version:"0.6.5",
+        format_version:"0.6.8",
+        builder_version:"0.6.8",
         saved_at:new Date().toISOString(),
-        state:cp(state)
+        state:sanitizedProjectState()
       };
     }
 
@@ -3028,6 +3496,7 @@
     }
 
     function draw(){
+      if(bottomView==="hub")bottomView="cloud";
       const wsKey=state.active_workspace||"model";
       const oldCanvas=root.querySelector(".mlb-canvas");
       if(oldCanvas && !switchingWorkspace){
@@ -3039,7 +3508,7 @@
 
       // Top bar
       const top=document.createElement("div");top.className="mlb-topbar";
-      const logo=document.createElement("div");logo.className="mlb-logo";logo.innerHTML='<span class="mlb-logo-mark">◇</span>MLBricks Builder <span class="mlb-beta">v0.6.5</span>';top.appendChild(logo);
+      const logo=document.createElement("div");logo.className="mlb-logo";logo.innerHTML='<span class="mlb-logo-mark">◇</span>MLBricks Builder <span class="mlb-beta">v0.6.7</span>';top.appendChild(logo);
       const title=document.createElement("div");title.className="mlb-project-title";title.textContent=state.project?.name||"Untitled";top.appendChild(title);
       const saved=document.createElement("div");saved.className="mlb-save-state";saved.textContent="• Saved";top.appendChild(saved);
       const sp=document.createElement("div");sp.className="mlb-topspacer";top.appendChild(sp);
@@ -3301,8 +3770,8 @@
         canvas.scrollTop=pos.top||0;
       });
 
-      // Bottom project drawer: hidden while Training/Generation occupies the model canvas.
-      if(!(runtimePanel && state.active_workspace==="model")){
+      // Bottom project drawer always remains visible. Runtime mode collapses it
+      // on entry, but the user can expand it manually without leaving training/generation.
       const details=document.createElement("div");details.className="mlb-details";
 
       const detailsBar=document.createElement("div");detailsBar.className="mlb-details-bar";
@@ -3312,8 +3781,8 @@
 
       const detailsSelect=document.createElement("select");detailsSelect.className="mlb-details-select";
       const options=state.active_workspace==="data"
-        ?[["details","Pipeline Details"],["outputs","Output Directory"],["files","Files"]]
-        :[["details","Model Details"],["outputs","Output Directory"],["files","Files"]];
+        ?[["details","Pipeline Details"],["outputs","Output Directory"],["files","Files"],["local","Local / Kaggle"],["cloud","Cloud & Repositories"]]
+        :[["details","Model Details"],["outputs","Output Directory"],["files","Files"],["local","Local / Kaggle"],["cloud","Cloud & Repositories"]];
       options.forEach(([value,label])=>{
         const o=document.createElement("option");o.value=value;o.textContent=label;
         if(bottomView===value)o.selected=true;
@@ -3343,6 +3812,16 @@
         filesPanel.className="mlb-files-view"+(bottomExpanded?" expanded":" collapsed");
         if(bottomExpanded)renderFilesView(filesPanel);
         details.appendChild(filesPanel);
+      }else if(bottomView==="local"){
+        const localPanelEl=document.createElement("div");
+        localPanelEl.className="mlb-local-view"+(bottomExpanded?" expanded":" collapsed");
+        if(bottomExpanded)renderLocalView(localPanelEl);
+        details.appendChild(localPanelEl);
+      }else if(bottomView==="cloud"){
+        const cloudPanelEl=document.createElement("div");
+        cloudPanelEl.className="mlb-cloud-view"+(bottomExpanded?" expanded":" collapsed");
+        if(bottomExpanded)renderCloudView(cloudPanelEl);
+        details.appendChild(cloudPanelEl);
       }else{
         const panels=document.createElement("div");panels.className="mlb-bottom-panels"+(bottomExpanded?" expanded":" collapsed");
         const p1=document.createElement("div");p1.className="mlb-bottom-card";
@@ -3375,7 +3854,6 @@
       }
 
       main.appendChild(details);
-      }
 
       // Inspector
       const ins=document.createElement("aside");ins.className="mlb-inspector";

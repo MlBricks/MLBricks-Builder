@@ -1015,3 +1015,132 @@ During training it becomes a fixed-width animated `◆ Training` indicator.
 During generation it becomes `◆ Generating`. A subtle pulse and moving highlight
 show activity without changing the button's dimensions. When runtime activity
 finishes, it returns to `◆ Build`.
+
+
+## v0.6.6 — Hugging Face Hub push/load
+
+The bottom project drawer now includes **Hugging Face**.
+
+### Authentication
+
+Builder uses the notebook's existing Hugging Face credentials:
+
+```bash
+hf auth login
+```
+
+or the `HF_TOKEN` environment variable.
+
+The token is **never stored** in Builder state, JSON, BIN, dataset metadata,
+model metadata, or project files.
+
+### Push
+
+The Hub panel can push:
+
+- **Prepared Dataset**
+  - uploads Dataset / DatasetDict splits using `datasets.push_to_hub`
+  - writes `mlbricks_dataset.json` so Builder-specific processing and tokenizer
+    metadata can be restored later
+- **Built / Trained Model**
+  - uploads the Builder model graph and model metadata
+  - includes `weights/last.pt` when trained weights exist
+  - includes a locally available tokenizer when possible
+- **Builder Project**
+  - uploads the complete Builder project state as `mlbricks_project.json`
+
+Repositories can be private or public.
+
+### Load
+
+The same panel can load:
+
+- a Hub dataset into the Prepared Dataset registry
+- an MLBricks Builder model into Model Builder / Model Outputs
+- a complete MLBricks Builder project
+
+Public repositories can load without authentication. Private repositories use
+the locally authenticated Hugging Face token.
+
+Loaded trained model packages restore their checkpoint path from the Hugging
+Face cache and can be opened for token generation. A newly selected local
+Prepared Dataset can be used for compatibility checking and further training.
+
+
+## v0.6.7 — collapsed runtime drawer + Cloud & Repositories
+
+### MODEL WORKSPACE behavior
+
+Entering Training or Generation now **collapses** MODEL WORKSPACE instead of
+removing it.
+
+The bar remains visible at the bottom and can be manually expanded while the
+runtime screen is open. Returning to the graph is not required.
+
+### Cloud & Repositories
+
+The previous Hugging Face-only view is now **Cloud & Repositories**.
+
+Providers:
+
+- Hugging Face
+- GitHub
+- AWS S3
+- Google Cloud Storage
+- Azure Blob Storage
+
+Content:
+
+- Prepared Dataset
+- Built / Trained Model
+- Complete Builder Project
+
+Hugging Face continues to use native Hub dataset/model repositories.
+
+GitHub, S3, GCS and Azure store portable `.mlbricks.zip` bundles containing the
+selected dataset/model/project so the same content can be restored into Builder.
+
+### Session-only credentials
+
+The Cloud panel includes masked credential fields:
+
+- Hugging Face API/access token
+- GitHub personal access token
+- AWS access key / secret key / optional session token
+- Google Cloud service-account JSON
+- Azure Storage connection string
+
+Credentials are session-only. They are extracted from the browser runtime
+command before Builder state is persisted and are explicitly excluded from
+JSON/BIN exports and cloud bundles.
+
+Environment/default credentials still work when supported, so users do not
+have to type a key into the UI if their notebook is already authenticated.
+
+### Optional cloud packages
+
+```bash
+pip install "mlbricks-builder[cloud]"
+```
+
+or install individual provider packages:
+
+```bash
+pip install boto3
+pip install google-cloud-storage google-auth
+pip install azure-storage-blob
+```
+
+GitHub support uses Python's standard HTTP library and needs no extra package.
+
+## v0.6.8 — Local / Kaggle filesystem loading
+
+Adds **Local / Kaggle** to the bottom workspace selector. Builder can now scan and directly load content from `/kaggle/working`, `/kaggle/input`, Colab `/content`, the current working directory, or any absolute path.
+
+Supported local data: Hugging Face `Dataset.save_to_disk()` / `DatasetDict.save_to_disk()` folders and raw TXT/CSV/JSON/JSONL/Parquet files. Loaded data is registered as Prepared Dataset and becomes available to Model Builder.
+
+Supported local models: MLBricks `last.pt`, periodic `.pt` checkpoints, `.pth` / `.ckpt`, plus `.mlbricks.zip` bundles. v0.6.8 training checkpoints now embed the Builder model graph, nested custom-brick definitions, project settings and dataset metadata so a new checkpoint can restore after a kernel restart.
+
+Older checkpoints can still load when the matching Builder project/custom definitions are already open. If they lack embedded nested definitions, Builder now explains that the matching project must be loaded first.
+
+Local projects: `.mlbricks.json`, `.mlbricks.bin`, and `.mlbricks.zip` project bundles.

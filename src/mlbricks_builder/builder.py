@@ -6,6 +6,13 @@ import uuid
 import threading
 import time
 import platform
+import os
+import re
+import copy
+import shutil
+import tempfile
+import zipfile
+from pathlib import Path
 from datetime import datetime, timezone
 from collections.abc import Mapping
 
@@ -115,6 +122,14 @@ class Builder:
         except Exception:
             pass
 
+        hf_info = {"package_available": False, "token_found": False}
+        try:
+            from huggingface_hub import get_token
+            hf_info["package_available"] = True
+            hf_info["token_found"] = bool(os.environ.get("HF_TOKEN") or get_token())
+        except Exception:
+            pass
+
         return {
             "devices": devices,
             "backends": ["auto", "native", "pytorch"],
@@ -123,6 +138,7 @@ class Builder:
             "precisions": ["auto", "fp32", "fp16", "bf16"],
             "torch_version": torch_version,
             "cuda_version": cuda_version,
+            "huggingface": hf_info,
         }
 
     def to_dict(self):
@@ -402,7 +418,7 @@ class Builder:
         if not entry.get("weights_ready"):
             raise RuntimeError("This model has no trained/loaded weights yet.")
         dataset_id = entry.get("selected_dataset_id")
-        meta = self._dataset_meta(dataset_id) if dataset_id else {}
+        meta = self._dataset_meta(dataset_id) if dataset_id else copy.deepcopy(entry.get("hub_dataset_meta") or {})
         config = dict(entry.get("generation_config") or {})
         self._stop_event.clear()
 
@@ -456,6 +472,744 @@ class Builder:
         if progress_callback: emit(payload)
         return text
 
+    def hub_status(self, token=None):
+        from .hub import auth_status
+        return auth_status(token=token)
+
+    def _hub_model_package(self, entry):
+        model_ws = (self.state.get("workspaces") or {}).get("model") or {}
+        root_id = model_ws.get("root_component_id") or self.state.get("root_component_id")
+        component = copy.deepcopy((self.state.get("components") or {}).get(root_id) or {})
+        dataset_meta = None
+        dataset_id = entry.get("selected_dataset_id")
+        if dataset_id:
+            try:
+                dataset_meta = copy.deepcopy(self._dataset_meta(dataset_id))
+            except Exception:
+                dataset_meta = None
+        return {
+            "project": copy.deepcopy(self.state.get("project") or {}),
+            "model_component": component,
+            "custom_components": copy.deepcopy(self.state.get("custom_components") or {}),
+            "model_entry": copy.deepcopy(entry),
+            "dataset_meta": dataset_meta,
+        }
+
+    def push_dataset_to_hub(self, dataset_id, repo_id, *, private=True, token=None):
+        from .hub import push_dataset
+        dataset = self.get_prepared_dataset(dataset_id)
+        meta = self._dataset_meta(dataset_id)
+        result = push_dataset(
+            dataset,
+            repo_id=repo_id,
+            metadata=meta,
+            private=private,
+            token=token,
+        )
+        meta["hub_repo_id"] = result["repo_id"]
+        meta["hub_url"] = result["url"]
+        meta["hub_revision"] = "main"
+        return result
+
+    def load_dataset_from_hub(self, repo_id, *, revision=None, token=None):
+        from .hub import load_dataset
+        dataset, saved_meta, result = load_dataset(repo_id, revision=revision, token=token)
+
+        summary = self._summarize_prepared_result(dataset)
+        dataset_id = f"dataset_{uuid.uuid4().hex[:12]}"
+        name = (
+            (saved_meta or {}).get("name")
+            or str(repo_id).rstrip("/").split("/")[-1]
+            or "Hub Dataset"
+        )
+        pipeline = copy.deepcopy((saved_meta or {}).get("pipeline") or {
+            "source": {
+                "type": "hf_dataset",
+                "name": "Hugging Face Dataset",
+                "dataset_id": repo_id,
+                "split": "train",
+            },
+            "text_processing": None,
+            "split": None,
+            "tokenizer": None,
+            "image_processing": None,
+            "audio_processing": None,
+            "batch": None,
+            "output": None,
+            "steps": [],
+        })
+        metadata = {
+            "id": dataset_id,
+            "name": name,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "output_node_id": None,
+            "storage": "hub+memory",
+            "path": None,
+            "pipeline": pipeline,
+            "hub_repo_id": result["repo_id"],
+            "hub_url": result["url"],
+            "hub_revision": result["revision"],
+            **summary,
+        }
+        self.state.setdefault("prepared_datasets", []).append(metadata)
+        self.prepared_datasets[dataset_id] = dataset
+        return metadata
+
+    def push_model_to_hub(self, model_id, repo_id, *, private=True, token=None):
+        from .hub import push_model
+        entry = self._model_output(model_id)
+        cached = self.trained_models.get(model_id) or {}
+        tokenizer = cached.get("tokenizer")
+        result = push_model(
+            repo_id=repo_id,
+            package=self._hub_model_package(entry),
+            checkpoint_path=entry.get("checkpoint_path") or entry.get("path"),
+            tokenizer=tokenizer,
+            private=private,
+            token=token,
+        )
+        entry["hub_repo_id"] = result["repo_id"]
+        entry["hub_url"] = result["url"]
+        entry["hub_revision"] = "main"
+        return result
+
+    def load_model_from_hub(self, repo_id, *, revision=None, token=None):
+        from .hub import load_model
+        package, folder, result = load_model(repo_id, revision=revision, token=token)
+
+        model_ws = (self.state.get("workspaces") or {}).get("model") or {}
+        root_id = model_ws.get("root_component_id") or self.state.get("root_component_id")
+        if not root_id:
+            raise RuntimeError("Model Builder workspace is unavailable.")
+
+        component = copy.deepcopy(package.get("model_component") or {})
+        if not component.get("nodes"):
+            raise RuntimeError("The Hub model package does not contain a Builder model graph.")
+        component["id"] = root_id
+        self.state.setdefault("components", {})[root_id] = component
+        self.state["view_component_id"] = root_id
+        self.state.setdefault("custom_components", {}).update(
+            copy.deepcopy(package.get("custom_components") or {})
+        )
+
+        loaded_project = copy.deepcopy(package.get("project") or {})
+        current_project = self.state.setdefault("project", {})
+        for key in (
+            "name", "context_length", "batch_size", "model_settings",
+            "estimated_parameters"
+        ):
+            if key in loaded_project:
+                current_project[key] = loaded_project[key]
+
+        source_entry = copy.deepcopy(package.get("model_entry") or {})
+        new_id = f"model_{uuid.uuid4().hex[:12]}"
+        source_entry["id"] = new_id
+        source_entry["architecture"] = copy.deepcopy(component)
+        source_entry["hub_repo_id"] = result["repo_id"]
+        source_entry["hub_url"] = result["url"]
+        source_entry["hub_revision"] = result["revision"]
+        source_entry["selected_dataset_id"] = None
+
+        hub_meta = copy.deepcopy(package.get("dataset_meta") or {})
+        tokenizer_dir = package.get("tokenizer_dir")
+        if tokenizer_dir and (folder / tokenizer_dir).exists():
+            hub_meta.setdefault("pipeline", {}).setdefault("tokenizer", {})[
+                "tokenizer_name"
+            ] = str(folder / tokenizer_dir)
+        source_entry["hub_dataset_meta"] = hub_meta
+
+        checkpoint_file = package.get("checkpoint_file")
+        checkpoint = folder / checkpoint_file if checkpoint_file else None
+        if checkpoint is not None and checkpoint.exists():
+            source_entry["path"] = str(checkpoint)
+            source_entry["checkpoint_path"] = str(checkpoint)
+            source_entry["weights_ready"] = True
+            source_entry["training_status"] = "trained"
+            source_entry["status"] = "trained"
+        else:
+            source_entry["weights_ready"] = False
+            source_entry["training_status"] = source_entry.get("training_status") or "untrained"
+            source_entry["status"] = "built"
+
+        self.state.setdefault("model_outputs", []).append(source_entry)
+        return source_entry
+
+    def push_project_to_hub(self, repo_id, *, private=True, token=None):
+        from .hub import push_project
+        return push_project(repo_id=repo_id, state=self.state, private=private, token=token)
+
+    def load_project_from_hub(self, repo_id, *, revision=None, token=None):
+        from .hub import load_project
+        loaded, result = load_project(repo_id, revision=revision, token=token)
+        if not isinstance(loaded, dict) or not loaded.get("components"):
+            raise RuntimeError("Downloaded Builder project is invalid.")
+        self.state = loaded
+        self.state.setdefault("prepared_datasets", [])
+        self.state.setdefault("model_outputs", [])
+        self.state.setdefault("project_files", [])
+        self.prepared_datasets = {}
+        self.trained_models = {}
+        return result
+
+    @staticmethod
+    def _safe_cloud_name(value):
+        text = re.sub(r"[^A-Za-z0-9._-]+", "-", str(value or "mlbricks")).strip("-")
+        return text or "mlbricks"
+
+    def _clean_state_for_export(self):
+        clean = copy.deepcopy(self.state)
+        clean.pop("_runtime_command", None)
+        clean.pop("_session_secrets", None)
+        return clean
+
+    def _create_cloud_bundle(self, content_type, artifact_id, destination):
+        content_type = str(content_type or "project").lower()
+        destination = Path(destination)
+        with tempfile.TemporaryDirectory(prefix="mlbricks_bundle_") as td:
+            root = Path(td) / "bundle"
+            root.mkdir(parents=True, exist_ok=True)
+            manifest = {
+                "format": "mlbricks-cloud-bundle-v1",
+                "builder_version": "0.6.8",
+                "content_type": content_type,
+            }
+
+            if content_type == "project":
+                manifest["name"] = (self.state.get("project") or {}).get("name") or "MLBricks Project"
+                (root / "project.json").write_text(
+                    json.dumps(self._clean_state_for_export(), indent=2),
+                    encoding="utf-8",
+                )
+            elif content_type == "dataset":
+                meta = copy.deepcopy(self._dataset_meta(artifact_id))
+                dataset = self.get_prepared_dataset(artifact_id)
+                manifest["name"] = meta.get("name") or "Prepared Dataset"
+                (root / "dataset_meta.json").write_text(
+                    json.dumps(meta, indent=2), encoding="utf-8"
+                )
+                data_dir = root / "dataset"
+                if not hasattr(dataset, "save_to_disk"):
+                    raise RuntimeError(
+                        "This prepared object cannot be bundled. Push before converting to a DataLoader."
+                    )
+                dataset.save_to_disk(str(data_dir))
+            elif content_type == "model":
+                entry = self._model_output(artifact_id)
+                package = self._hub_model_package(entry)
+                manifest["name"] = entry.get("name") or "MLBricks Model"
+                (root / "model_package.json").write_text(
+                    json.dumps(package, indent=2), encoding="utf-8"
+                )
+                checkpoint = entry.get("checkpoint_path") or entry.get("path")
+                if checkpoint and Path(checkpoint).exists():
+                    weights = root / "weights"
+                    weights.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(checkpoint, weights / "last.pt")
+                    manifest["checkpoint_file"] = "weights/last.pt"
+                cached = self.trained_models.get(artifact_id) or {}
+                tokenizer = cached.get("tokenizer")
+                if tokenizer is not None and hasattr(tokenizer, "save_pretrained"):
+                    tok = root / "tokenizer"
+                    tok.mkdir(parents=True, exist_ok=True)
+                    try:
+                        tokenizer.save_pretrained(str(tok))
+                        manifest["tokenizer_dir"] = "tokenizer"
+                    except Exception:
+                        pass
+            else:
+                raise ValueError(f"Unsupported cloud content type: {content_type!r}")
+
+            (root / "manifest.json").write_text(
+                json.dumps(manifest, indent=2), encoding="utf-8"
+            )
+            archive = shutil.make_archive(str(destination.with_suffix("")), "zip", root)
+            shutil.move(archive, destination)
+        return manifest
+
+    def _restore_cloud_bundle(self, archive_path):
+        archive_path = Path(archive_path)
+        with tempfile.TemporaryDirectory(prefix="mlbricks_restore_") as td:
+            root = Path(td)
+            with zipfile.ZipFile(archive_path, "r") as zf:
+                zf.extractall(root)
+            manifest_path = root / "manifest.json"
+            if not manifest_path.exists():
+                raise RuntimeError("Downloaded file is not an MLBricks cloud bundle.")
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if manifest.get("format") != "mlbricks-cloud-bundle-v1":
+                raise RuntimeError("Unsupported MLBricks cloud bundle format.")
+
+            content_type = manifest.get("content_type")
+            if content_type == "project":
+                loaded = json.loads((root / "project.json").read_text(encoding="utf-8"))
+                if not loaded.get("components"):
+                    raise RuntimeError("Cloud project does not contain a valid Builder state.")
+                self.state = loaded
+                self.state.setdefault("prepared_datasets", [])
+                self.state.setdefault("model_outputs", [])
+                self.state.setdefault("project_files", [])
+                self.prepared_datasets = {}
+                self.trained_models = {}
+                return {"content_type": "project", "name": manifest.get("name")}
+
+            if content_type == "dataset":
+                try:
+                    from datasets import load_from_disk
+                except ImportError as exc:
+                    raise RuntimeError("Loading a cloud dataset bundle needs `datasets`.") from exc
+                dataset = load_from_disk(str(root / "dataset"))
+                saved_meta = json.loads((root / "dataset_meta.json").read_text(encoding="utf-8"))
+                summary = self._summarize_prepared_result(dataset)
+                dataset_id = f"dataset_{uuid.uuid4().hex[:12]}"
+                meta = copy.deepcopy(saved_meta)
+                meta.update({
+                    "id": dataset_id,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "storage": "cloud+memory",
+                    "path": None,
+                    **summary,
+                })
+                self.state.setdefault("prepared_datasets", []).append(meta)
+                self.prepared_datasets[dataset_id] = dataset
+                return {"content_type": "dataset", "dataset": meta, "name": meta.get("name")}
+
+            if content_type == "model":
+                package = json.loads((root / "model_package.json").read_text(encoding="utf-8"))
+                model_ws = (self.state.get("workspaces") or {}).get("model") or {}
+                root_id = model_ws.get("root_component_id") or self.state.get("root_component_id")
+                component = copy.deepcopy(package.get("model_component") or {})
+                if not component.get("nodes"):
+                    raise RuntimeError("Cloud model bundle does not contain a model graph.")
+                component["id"] = root_id
+                self.state.setdefault("components", {})[root_id] = component
+                self.state["view_component_id"] = root_id
+                self.state.setdefault("custom_components", {}).update(
+                    copy.deepcopy(package.get("custom_components") or {})
+                )
+                source = copy.deepcopy(package.get("model_entry") or {})
+                source["id"] = f"model_{uuid.uuid4().hex[:12]}"
+                source["architecture"] = copy.deepcopy(component)
+                source["selected_dataset_id"] = None
+                checkpoint_file = manifest.get("checkpoint_file")
+                if checkpoint_file and (root / checkpoint_file).exists():
+                    # Persist the downloaded checkpoint outside the temporary extraction folder.
+                    cache_dir = Path.home() / ".cache" / "mlbricks_builder" / "cloud_models" / source["id"]
+                    cache_dir.mkdir(parents=True, exist_ok=True)
+                    checkpoint = cache_dir / "last.pt"
+                    shutil.copy2(root / checkpoint_file, checkpoint)
+                    source["path"] = str(checkpoint)
+                    source["checkpoint_path"] = str(checkpoint)
+                    source["weights_ready"] = True
+                    source["training_status"] = "trained"
+                    source["status"] = "trained"
+                else:
+                    source["weights_ready"] = False
+                    source["status"] = "built"
+                self.state.setdefault("model_outputs", []).append(source)
+                return {"content_type": "model", "model": source, "name": source.get("name")}
+
+            raise RuntimeError(f"Unknown cloud bundle type: {content_type!r}")
+
+    def scan_local_runtime_files(self, roots=None):
+        from .local_runtime import scan_local_files
+        return scan_local_files(roots=roots)
+
+    def _register_local_dataset(self, dataset, path, *, tokenizer_name="gpt2", saved_meta=None):
+        path = str(Path(path).resolve())
+        summary = self._summarize_prepared_result(dataset)
+        dataset_id = f"dataset_{uuid.uuid4().hex[:12]}"
+        name = (saved_meta or {}).get("name") or Path(path).name or "Local Dataset"
+        pipeline = copy.deepcopy((saved_meta or {}).get("pipeline") or {})
+        if not pipeline:
+            columns = set()
+            for split in (summary.get("splits") or {}).values():
+                columns.update(split.get("columns") or [])
+            tokenized = "input_ids" in columns
+            pipeline = {
+                "source": {"type": "local_dataset", "name": "Kaggle / Local Dataset", "path": path},
+                "text_processing": None,
+                "split": None,
+                "tokenizer": ({
+                    "type": "tokenize_text", "name": "Loaded Tokenizer",
+                    "tokenizer_name": tokenizer_name or "gpt2",
+                    "context_length": (self.state.get("project") or {}).get("context_length") or 512,
+                    "text_column": "text", "truncation": True,
+                } if tokenized else None),
+                "image_processing": None, "audio_processing": None, "batch": None,
+                "output": {"type": "prepared_dataset", "name": "Loaded from Kaggle / Local"},
+                "steps": [],
+            }
+        metadata = copy.deepcopy(saved_meta or {})
+        metadata.update({
+            "id": dataset_id, "name": name,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "output_node_id": None, "storage": "local+memory", "path": path,
+            "pipeline": pipeline, "local_source": True, **summary,
+        })
+        self.state.setdefault("prepared_datasets", []).append(metadata)
+        self.prepared_datasets[dataset_id] = dataset
+        return metadata
+
+    def load_local_dataset_path(self, path, *, tokenizer_name="gpt2", text_column="text"):
+        path_obj = Path(path).expanduser().resolve()
+        if not path_obj.exists():
+            raise FileNotFoundError(f"Local dataset path was not found: {path_obj}")
+        saved_meta = None
+        if path_obj.is_dir():
+            try:
+                from datasets import load_from_disk
+            except ImportError as exc:
+                raise RuntimeError("Loading a saved Kaggle dataset needs `datasets`. Install it with: pip install datasets") from exc
+            try:
+                dataset = load_from_disk(str(path_obj))
+            except Exception as exc:
+                raise RuntimeError(f"{path_obj} is not a valid Hugging Face save_to_disk dataset: {exc}") from exc
+            for meta_name in ("mlbricks_dataset.json", "dataset_meta.json"):
+                meta_path = path_obj / meta_name
+                if meta_path.exists():
+                    try: saved_meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                    except Exception: pass
+                    break
+        else:
+            from .data import load_local_dataset
+            dataset = load_local_dataset(path_obj, text_column=text_column or "", max_rows=None)
+        return self._register_local_dataset(dataset, path_obj, tokenizer_name=tokenizer_name, saved_meta=saved_meta)
+
+    def _restore_model_checkpoint(self, path):
+        import torch
+        path_obj = Path(path).expanduser().resolve()
+        if not path_obj.exists():
+            raise FileNotFoundError(f"Model checkpoint was not found: {path_obj}")
+        payload = torch.load(path_obj, map_location="cpu", weights_only=False)
+        if not isinstance(payload, dict) or "model_state" not in payload:
+            raise RuntimeError("This .pt/.pth file is not an MLBricks Builder training checkpoint (model_state was not found).")
+        package = copy.deepcopy(payload.get("builder_package") or {})
+        source_entry = copy.deepcopy(package.get("model_entry") or payload.get("model_entry") or {})
+        architecture = copy.deepcopy(package.get("model_component") or source_entry.get("architecture") or {})
+        if not architecture.get("nodes"):
+            raise RuntimeError("The checkpoint has weights but does not contain a Builder model architecture. This is an older checkpoint. Load the matching Builder project first, then load this checkpoint, or train/save once with MLBricks Builder v0.6.8+.")
+        custom_components = copy.deepcopy(package.get("custom_components") or {})
+        referenced = {n.get("definition_id") for n in architecture.get("nodes") or [] if n.get("type") == "custom" and n.get("definition_id")}
+        available = set(custom_components) | set(self.state.get("custom_components") or {})
+        missing = sorted(x for x in referenced if x not in available)
+        if missing:
+            raise RuntimeError("The checkpoint references nested/custom model blocks missing from this older checkpoint: " + ", ".join(missing) + ". Load the matching Builder project first. New v0.6.8 checkpoints embed these definitions automatically.")
+        model_ws = (self.state.get("workspaces") or {}).get("model") or {}
+        root_id = model_ws.get("root_component_id") or self.state.get("root_component_id")
+        if not root_id: raise RuntimeError("Model Builder workspace is unavailable.")
+        architecture["id"] = root_id
+        self.state.setdefault("components", {})[root_id] = architecture
+        self.state["view_component_id"] = root_id
+        self.state.setdefault("custom_components", {}).update(custom_components)
+        project = copy.deepcopy(package.get("project") or {})
+        current_project = self.state.setdefault("project", {})
+        for key in ("name", "context_length", "batch_size", "model_settings", "estimated_parameters"):
+            if key in project: current_project[key] = project[key]
+        new_id = f"model_{uuid.uuid4().hex[:12]}"
+        source_entry.update({
+            "id": new_id, "architecture": copy.deepcopy(architecture), "path": str(path_obj),
+            "checkpoint_path": str(path_obj), "weights_ready": True, "training_status": "trained",
+            "status": "trained", "format": "PyTorch checkpoint", "selected_dataset_id": None,
+            "local_source": True,
+        })
+        source_entry["trained_steps"] = payload.get("step", source_entry.get("trained_steps"))
+        source_entry["tokens_seen"] = payload.get("tokens_seen", source_entry.get("tokens_seen"))
+        source_entry["effective_vocab_size"] = payload.get("vocab_size", source_entry.get("effective_vocab_size"))
+        dataset_meta = copy.deepcopy(package.get("dataset_meta") or {})
+        if dataset_meta: source_entry["hub_dataset_meta"] = dataset_meta
+        self.state.setdefault("model_outputs", []).append(source_entry)
+        return source_entry
+
+    def _load_local_project_file(self, path):
+        path_obj = Path(path).expanduser().resolve()
+        raw = path_obj.read_bytes()
+        if path_obj.name.lower().endswith(".mlbricks.bin"):
+            magic = b"MLBRICKS-BIN-1\\n"
+            if not raw.startswith(magic): raise RuntimeError("Invalid MLBricks BIN file.")
+            raw = raw[len(magic):]
+        payload = json.loads(raw.decode("utf-8"))
+        loaded = payload.get("state") if payload.get("format") == "mlbricks-builder-design" else payload
+        if not isinstance(loaded, dict) or not loaded.get("components"):
+            raise RuntimeError("The selected file is not a valid MLBricks Builder project.")
+        self.state = loaded
+        self.state.setdefault("prepared_datasets", [])
+        self.state.setdefault("model_outputs", [])
+        self.state.setdefault("project_files", [])
+        self.prepared_datasets = {}
+        self.trained_models = {}
+        return {"content_type": "project", "name": (self.state.get("project") or {}).get("name") or path_obj.name, "path": str(path_obj)}
+
+    def load_local_runtime_path(self, path, *, content_type="auto", tokenizer_name="gpt2", text_column="text"):
+        from .local_runtime import detect_local_kind
+        path_obj = Path(path).expanduser().resolve()
+        info = detect_local_kind(path_obj)
+        kind = info.get("kind")
+        requested = str(content_type or "auto").lower()
+        if requested == "dataset" or (requested == "auto" and kind in {"dataset_dir", "data_file"}):
+            meta = self.load_local_dataset_path(path_obj, tokenizer_name=tokenizer_name, text_column=text_column)
+            return {"content_type": "dataset", "dataset": meta, "name": meta["name"]}
+        if requested == "model" or (requested == "auto" and kind == "model_checkpoint"):
+            model = self._restore_model_checkpoint(path_obj)
+            return {"content_type": "model", "model": model, "name": model.get("name") or path_obj.name}
+        if requested == "project" or (requested == "auto" and kind in {"project_json", "project_bin"}):
+            return self._load_local_project_file(path_obj)
+        if kind == "bundle":
+            restored = self._restore_cloud_bundle(path_obj); restored["path"] = str(path_obj); return restored
+        raise RuntimeError(f"Could not determine how to load {path_obj}. Detected: {info.get('label')}. Choose Dataset, Model, or Project explicitly if needed.")
+
+    def _execute_local_command(self, command, progress_callback=None):
+        local = command.get("local") or {}; action = str(command.get("action") or "")
+        def emit(payload):
+            if progress_callback: progress_callback(payload)
+        if action == "local_scan":
+            scan = self.scan_local_runtime_files(local.get("roots"))
+            emit({"status":"done","runtime_kind":"local","phase":"scan","overall":100,"message":f"Found {len(scan.get('entries') or [])} loadable local items.","local_scan":scan})
+            return scan
+        if action != "local_load": raise ValueError(f"Unknown local runtime command: {action!r}")
+        emit({"status":"running","runtime_kind":"local","phase":"load","overall":10,"message":"Loading from Kaggle / local filesystem…"})
+        result = self.load_local_runtime_path(local.get("path"), content_type=local.get("content_type") or "auto", tokenizer_name=local.get("tokenizer_name") or "gpt2", text_column=local.get("text_column") or "text")
+        emit({"status":"done","runtime_kind":"local","phase":"load","overall":100,"message":f"Loaded {result.get('name') or 'local content'}.","local_result":result,"state_replace":self.to_dict()})
+        return result
+
+    def _cloud_provider_status(self, provider, cloud):
+        provider = str(provider or "").lower()
+        credentials = cloud.get("credentials") or {}
+        if provider == "huggingface":
+            return self.hub_status(token=credentials.get("token"))
+        from . import cloud as cloud_backend
+        if provider == "github":
+            return cloud_backend.github_status(token=credentials.get("token") or "")
+        if provider == "aws":
+            return cloud_backend.s3_status(credentials)
+        if provider == "gcp":
+            return cloud_backend.gcs_status(credentials)
+        if provider == "azure":
+            return cloud_backend.azure_status(credentials)
+        raise ValueError(f"Unknown cloud provider: {provider!r}")
+
+    def _push_generic_cloud(self, provider, cloud):
+        from . import cloud as cloud_backend
+        provider = str(provider).lower()
+        credentials = cloud.get("credentials") or {}
+        content_type = cloud.get("content_type") or "project"
+        artifact_id = cloud.get("artifact_id")
+        name = self._safe_cloud_name(
+            cloud.get("name")
+            or (
+                (self.state.get("project") or {}).get("name")
+                if content_type == "project"
+                else artifact_id
+            )
+        )
+        with tempfile.TemporaryDirectory(prefix="mlbricks_cloud_push_") as td:
+            archive = Path(td) / f"{name}.mlbricks.zip"
+            self._create_cloud_bundle(content_type, artifact_id, archive)
+
+            if provider == "github":
+                return cloud_backend.github_upload(
+                    archive,
+                    repo=cloud.get("repo"),
+                    path_in_repo=cloud.get("object_path") or f"mlbricks/{archive.name}",
+                    branch=cloud.get("branch") or "main",
+                    token=credentials.get("token") or "",
+                    commit_message=f"Push {content_type} from MLBricks Builder",
+                )
+            if provider == "aws":
+                return cloud_backend.s3_upload(
+                    archive,
+                    bucket=cloud.get("bucket"),
+                    object_key=cloud.get("object_path") or archive.name,
+                    credentials=credentials,
+                )
+            if provider == "gcp":
+                return cloud_backend.gcs_upload(
+                    archive,
+                    bucket=cloud.get("bucket"),
+                    object_name=cloud.get("object_path") or archive.name,
+                    credentials=credentials,
+                )
+            if provider == "azure":
+                return cloud_backend.azure_upload(
+                    archive,
+                    container=cloud.get("container"),
+                    blob_name=cloud.get("object_path") or archive.name,
+                    credentials=credentials,
+                )
+        raise ValueError(f"Unsupported generic cloud provider: {provider!r}")
+
+    def _load_generic_cloud(self, provider, cloud):
+        from . import cloud as cloud_backend
+        provider = str(provider).lower()
+        credentials = cloud.get("credentials") or {}
+        with tempfile.TemporaryDirectory(prefix="mlbricks_cloud_load_") as td:
+            archive = Path(td) / "download.mlbricks.zip"
+            if provider == "github":
+                result = cloud_backend.github_download(
+                    archive,
+                    repo=cloud.get("repo"),
+                    path_in_repo=cloud.get("object_path"),
+                    branch=cloud.get("branch") or "main",
+                    token=credentials.get("token") or None,
+                )
+            elif provider == "aws":
+                result = cloud_backend.s3_download(
+                    archive,
+                    bucket=cloud.get("bucket"),
+                    object_key=cloud.get("object_path"),
+                    credentials=credentials,
+                )
+            elif provider == "gcp":
+                result = cloud_backend.gcs_download(
+                    archive,
+                    bucket=cloud.get("bucket"),
+                    object_name=cloud.get("object_path"),
+                    credentials=credentials,
+                )
+            elif provider == "azure":
+                result = cloud_backend.azure_download(
+                    archive,
+                    container=cloud.get("container"),
+                    blob_name=cloud.get("object_path"),
+                    credentials=credentials,
+                )
+            else:
+                raise ValueError(f"Unsupported generic cloud provider: {provider!r}")
+            restored = self._restore_cloud_bundle(archive)
+            result["restored"] = restored
+            return result
+
+    def _execute_cloud_command(self, command, progress_callback=None):
+        cloud = command.get("cloud") or {}
+        action = str(command.get("action") or "")
+        provider = str(cloud.get("provider") or "huggingface").lower()
+
+        def emit(payload):
+            if progress_callback:
+                progress_callback(payload)
+
+        if action == "cloud_status":
+            status = self._cloud_provider_status(provider, cloud)
+            emit({
+                "status": "done", "runtime_kind": "cloud", "phase": "status",
+                "overall": 100, "message": status.get("message", "Connection checked."),
+                "cloud_status": {"provider": provider, **status},
+            })
+            return status
+
+        emit({
+            "status": "running", "runtime_kind": "cloud", "phase": action,
+            "overall": 5, "message": f"Connecting to {provider}…",
+        })
+
+        if provider == "huggingface":
+            credentials = cloud.get("credentials") or {}
+            token = credentials.get("token")
+            repo_id = str(cloud.get("repo") or "").strip()
+            revision = str(cloud.get("revision") or "main").strip() or "main"
+            private = bool(cloud.get("private", True))
+            content_type = cloud.get("content_type") or "project"
+            artifact_id = cloud.get("artifact_id")
+            if action == "cloud_push":
+                if content_type == "dataset":
+                    result = self.push_dataset_to_hub(artifact_id, repo_id, private=private, token=token)
+                elif content_type == "model":
+                    result = self.push_model_to_hub(artifact_id, repo_id, private=private, token=token)
+                else:
+                    result = self.push_project_to_hub(repo_id, private=private, token=token)
+                message = f'{content_type.title()} pushed to {repo_id}.'
+            elif action == "cloud_load":
+                if content_type == "dataset":
+                    restored = self.load_dataset_from_hub(repo_id, revision=revision, token=token)
+                    result = {"restored": {"content_type": "dataset", "dataset": restored}}
+                elif content_type == "model":
+                    restored = self.load_model_from_hub(repo_id, revision=revision, token=token)
+                    result = {"restored": {"content_type": "model", "model": restored}}
+                else:
+                    result = self.load_project_from_hub(repo_id, revision=revision, token=token)
+                message = f'{content_type.title()} loaded from {repo_id}.'
+            else:
+                raise ValueError(f"Unknown cloud action: {action!r}")
+        else:
+            if action == "cloud_push":
+                result = self._push_generic_cloud(provider, cloud)
+                message = f'{(cloud.get("content_type") or "content").title()} pushed to {provider}.'
+            elif action == "cloud_load":
+                result = self._load_generic_cloud(provider, cloud)
+                message = f'Content loaded from {provider}.'
+            else:
+                raise ValueError(f"Unknown cloud action: {action!r}")
+
+        emit({
+            "status": "done", "runtime_kind": "cloud", "phase": action,
+            "overall": 100, "message": message,
+            "cloud_result": result,
+            "state_replace": self.to_dict(),
+        })
+        return result
+
+    def _execute_hub_command(self, command, progress_callback=None):
+        hub = command.get("hub") or {}
+        action = str(command.get("action") or "")
+        repo_id = str(hub.get("repo_id") or "").strip()
+        revision = str(hub.get("revision") or "main").strip() or "main"
+        private = bool(hub.get("private", True))
+
+        def emit(payload):
+            if progress_callback:
+                progress_callback(payload)
+
+        if action == "hub_status":
+            status = self.hub_status()
+            emit({
+                "status": "done", "runtime_kind": "hub", "phase": "status",
+                "overall": 100, "message": status.get("message", "Hub status checked."),
+                "hub_status": status,
+            })
+            return status
+
+        emit({
+            "status": "running", "runtime_kind": "hub", "phase": action,
+            "overall": 5, "message": "Connecting to Hugging Face Hub…",
+        })
+
+        if action == "hub_push_dataset":
+            result = self.push_dataset_to_hub(
+                hub.get("artifact_id"), repo_id, private=private
+            )
+            message = f'Dataset pushed to {result["repo_id"]}.'
+        elif action == "hub_load_dataset":
+            meta = self.load_dataset_from_hub(repo_id, revision=revision)
+            result = {"dataset": meta, "repo_id": repo_id, "url": meta.get("hub_url")}
+            message = f'Dataset loaded: {meta["name"]}.'
+        elif action == "hub_push_model":
+            result = self.push_model_to_hub(
+                hub.get("artifact_id"), repo_id, private=private
+            )
+            message = f'Model pushed to {result["repo_id"]}.'
+        elif action == "hub_load_model":
+            model = self.load_model_from_hub(repo_id, revision=revision)
+            result = {"model": model, "repo_id": repo_id, "url": model.get("hub_url")}
+            message = f'Model loaded: {model.get("name", repo_id)}.'
+        elif action == "hub_push_project":
+            result = self.push_project_to_hub(repo_id, private=private)
+            message = f'Project pushed to {result["repo_id"]}.'
+        elif action == "hub_load_project":
+            result = self.load_project_from_hub(repo_id, revision=revision)
+            message = f'Project loaded from {result["repo_id"]}.'
+        else:
+            raise ValueError(f"Unknown Hugging Face command: {action!r}")
+
+        emit({
+            "status": "done",
+            "runtime_kind": "hub",
+            "phase": action,
+            "overall": 100,
+            "message": message,
+            "hub_result": result,
+            "state_replace": self.to_dict(),
+        })
+        return result
+
     def stop(self):
         """Request that the current pipeline stop after the active step."""
         self._stop_event.set()
@@ -484,10 +1238,15 @@ class Builder:
 
         widgets = self._bridge_widgets or {}
         state_widget = widgets.get("state")
+        command = {}
         if state_widget is not None:
             try:
                 incoming = json.loads(state_widget.value)
                 if isinstance(incoming, dict) and incoming.get("components"):
+                    # Runtime commands may contain session-only credentials.
+                    # Extract them before persisting the incoming Builder state.
+                    command = incoming.pop("_runtime_command", None) or {}
+                    incoming.pop("_session_secrets", None)
                     self.state = incoming
             except Exception as exc:
                 self._publish_bridge_progress({
@@ -501,7 +1260,6 @@ class Builder:
         self._stop_event.clear()
         self.last_run_error = None
 
-        command = self.state.get("_runtime_command") or {}
         action = str(command.get("action") or "data").lower()
         model_id = command.get("model_id")
 
@@ -511,6 +1269,21 @@ class Builder:
                     self.train_model(model_id, progress_callback=self._publish_bridge_progress)
                 elif action == "generate":
                     self.generate_model(model_id, progress_callback=self._publish_bridge_progress)
+                elif action.startswith("hub_"):
+                    self._execute_hub_command(
+                        command,
+                        progress_callback=self._publish_bridge_progress,
+                    )
+                elif action.startswith("cloud_"):
+                    self._execute_cloud_command(
+                        command,
+                        progress_callback=self._publish_bridge_progress,
+                    )
+                elif action.startswith("local_"):
+                    self._execute_local_command(
+                        command,
+                        progress_callback=self._publish_bridge_progress,
+                    )
                 else:
                     self.last_data_result = self.run_data_pipeline(
                         progress_callback=self._publish_bridge_progress,
@@ -586,8 +1359,8 @@ class Builder:
         available = [k for k, v in self.mlbricks_api.items() if v.get("available")]
         unavailable = {k: v.get("error") for k, v in self.mlbricks_api.items() if not v.get("available")}
         return {
-            "builder_version": "0.6.5",
-            "frontend_version": "0.6.5",
+            "builder_version": "0.6.8",
+            "frontend_version": "0.6.8",
             "mlbricks": info,
             "api_components_available": available,
             "api_components_unavailable": unavailable,
@@ -608,7 +1381,7 @@ class Builder:
         }).replace("</", "<\\/")
         return f"""
 <style>{css}</style>
-<div id="{html.escape(self._instance_id)}" class="mlb-root" data-mlbricks-builder-version="0.6.5"></div>
+<div id="{html.escape(self._instance_id)}" class="mlb-root" data-mlbricks-builder-version="0.6.8"></div>
 <script>
 try {{ delete window.MLBricksBuilder; }} catch (e) {{ window.MLBricksBuilder = undefined; }}
 {js}

@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import json
 import math
+import copy
 import random
 import re
 import time
@@ -471,6 +472,15 @@ def train_builder_model(*,state,model_entry,dataset,dataset_meta,config,progress
     val_steps=runtime_int(config.get("validation_steps"),20,"Validation Steps",minimum=1)
     checkpoint_every=runtime_int(config.get("checkpoint_every"),500,"Checkpoint Every N Steps",minimum=0)
     output=Path(str(config.get("output_dir") or "/kaggle/working/mlbricks_training"))/_safe_name(model_entry.get("name","model"));output.mkdir(parents=True,exist_ok=True);(output/'checkpoints').mkdir(exist_ok=True)
+    builder_package={
+        "format":"mlbricks-builder-checkpoint-v1",
+        "builder_version":"0.6.8",
+        "project":copy.deepcopy(state.get("project") or {}),
+        "model_component":copy.deepcopy(_root_model(state)),
+        "custom_components":copy.deepcopy(state.get("custom_components") or {}),
+        "model_entry":copy.deepcopy(model_entry),
+        "dataset_meta":copy.deepcopy(dataset_meta or {}),
+    }
     rng=random.Random(seed);tokens_seen=0;best_val=float('inf');last_val=None;start=time.perf_counter();model.train()
     progress({"status":"running","runtime_kind":"train","phase":"train","overall":2,"step":0,"max_steps":max_steps,"tokens_seen":0,"loss":None,"val_loss":None,"message":f"Training started on {device} · {compiled.parameter_count:,} parameters"+(" · compiled" if compiled.compile_used else " · eager"),"compile_warning":compiled.compile_error})
     step=0
@@ -505,12 +515,12 @@ def train_builder_model(*,state,model_entry,dataset,dataset_meta,config,progress
             progress({"status":"running","runtime_kind":"train","phase":"validation_done","overall":min(99,round(step/max_steps*100)) if budget!="tokens" else min(99,round(tokens_seen/max_tokens*100)),"step":step,"max_steps":max_steps,"tokens_seen":tokens_seen,"loss":loss_value,"val_loss":last_val,"best_val_loss":None if best_val==float('inf') else best_val,"sample_text":sample,"elapsed_seconds":time.perf_counter()-start,"message":f"Validation complete at step {step} · val {last_val:.4f}"})
         if checkpoint_every>0 and step%checkpoint_every==0:
             checkpoint_path=output/'checkpoints'/f'step_{step:06d}.pt'
-            torch.save({"model_state":raw.state_dict(),"model_entry":model_entry,"training_config":config,"vocab_size":compiled.vocab_size,"step":step,"tokens_seen":tokens_seen},checkpoint_path)
+            torch.save({"model_state":raw.state_dict(),"model_entry":model_entry,"builder_package":builder_package,"training_config":config,"vocab_size":compiled.vocab_size,"step":step,"tokens_seen":tokens_seen},checkpoint_path)
             progress({"status":"running","runtime_kind":"train","phase":"checkpoint","overall":min(99,round(step/max_steps*100)) if budget!="tokens" else min(99,round(tokens_seen/max_tokens*100)),"step":step,"max_steps":max_steps,"tokens_seen":tokens_seen,"loss":loss_value,"val_loss":last_val,"best_val_loss":None if best_val==float('inf') else best_val,"sample_text":sample,"checkpoint_path":str(checkpoint_path),"elapsed_seconds":time.perf_counter()-start,"message":f"Checkpoint saved · step {step}"})
         if budget=="tokens":overall=min(99,round(tokens_seen/max_tokens*100))
         else:overall=min(99,round(step/max_steps*100))
         progress({"status":"running","runtime_kind":"train","phase":"train","overall":overall,"step":step,"max_steps":max_steps,"tokens_seen":tokens_seen,"loss":loss_value,"val_loss":last_val,"best_val_loss":None if best_val==float('inf') else best_val,"sample_text":sample,"elapsed_seconds":time.perf_counter()-start,"message":f"Step {step} · loss {loss_value:.4f}"+(f" · val {last_val:.4f}" if last_val is not None else "")})
-    final=output/'last.pt';torch.save({"model_state":raw.state_dict(),"model_entry":model_entry,"training_config":config,"vocab_size":compiled.vocab_size,"step":step,"tokens_seen":tokens_seen,"best_val_loss":best_val},final)
+    final=output/'last.pt';torch.save({"model_state":raw.state_dict(),"model_entry":model_entry,"builder_package":builder_package,"training_config":config,"vocab_size":compiled.vocab_size,"step":step,"tokens_seen":tokens_seen,"best_val_loss":best_val},final)
     update={"training_status":"trained","weights_ready":True,"path":str(final),"checkpoint_path":str(final),"trained_steps":step,"tokens_seen":tokens_seen,"last_loss":loss_value,"best_val_loss":None if best_val==float('inf') else best_val,"parameter_count":compiled.parameter_count,"effective_vocab_size":compiled.vocab_size,"trained_at":time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime()),"format":"PyTorch checkpoint"}
     return {"compiled":compiled,"tokenizer":tokenizer,"model_update":update,"last_sample":sample}
 
