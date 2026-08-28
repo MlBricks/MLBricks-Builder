@@ -1546,3 +1546,19 @@ Full Screen uses three levels in order:
 Press **Esc** or **↙ Exit Full Screen** to return to the notebook layout. Run Data,
 Build, Train, Generate, Serve, Local Environment, Cloud and Stop continue to use
 the original kernel bridge while Full Screen is active.
+
+
+## v0.7.19 — Standalone full-window Builder app
+
+The notebook Full Screen / detached-tab bridge has been replaced by a small Python HTTP app that runs inside the same Builder kernel process. The notebook toolbar now shows **↗ Open App**. On Kaggle the app uses Kaggle's authenticated Jupyter proxy URL, so the new browser tab talks directly to the Python Builder process rather than trying to cross the notebook output iframe. Local Python/Jupyter uses localhost.
+
+The standalone app uses a session-scoped random URL and exposes only that Builder instance. Runtime actions (Run Data, Build/Train/Generate, Serve, Local Environment and cloud operations) are sent to Python through the app's own HTTP API, and progress is polled back into the UI.
+
+Python can also start it directly:
+
+```python
+from mlbricks_builder import Builder
+builder = Builder()
+info = builder.open_app()
+print(info["url"])
+```

@@ -59,6 +59,7 @@ class Builder:
         self.last_run_error = None
         self.trained_models = {}
         self._model_servers = {}
+        self._web_app = None
         # Actual Dataset/DatasetDict objects stay in Python memory. The serializable
         # metadata lives in state["prepared_datasets"] and is saved with the design.
         self.prepared_datasets = {}
@@ -805,7 +806,7 @@ class Builder:
             root.mkdir(parents=True, exist_ok=True)
             manifest = {
                 "format": "mlbricks-cloud-bundle-v1",
-                "builder_version": "0.7.18",
+                "builder_version": "0.7.19",
                 "content_type": content_type,
             }
 
@@ -1789,6 +1790,117 @@ class Builder:
         })
         return result
 
+    def start_web_app(self, port=None):
+        """Start the standalone Builder web app and return its browser URL."""
+        from .webapp import BuilderWebApp
+        if self._web_app is not None and self._web_app.running:
+            return self._web_app.info()
+        self._web_app = BuilderWebApp(self, port=port)
+        return self._web_app.start()
+
+    def stop_web_app(self):
+        """Stop the standalone Builder web app, if running."""
+        if self._web_app is None:
+            return {"running": False}
+        info = self._web_app.stop()
+        return info
+
+    def web_app_info(self):
+        if self._web_app is None:
+            return {"running": False}
+        return self._web_app.info()
+
+    def open_app(self, port=None):
+        """Start the Builder web app and display a full-window browser link."""
+        info = self.start_web_app(port=port)
+        try:
+            from IPython.display import HTML, display
+            url = html.escape(str(info.get("url") or ""), quote=True)
+            display(HTML(
+                f'<a href="{url}" target="_blank" rel="noopener" '
+                'style="display:inline-block;padding:9px 14px;border-radius:8px;'
+                'background:#171f2a;color:#f5f7fa;text-decoration:none;font-weight:700;'
+                'border:1px solid #394556">↗ Open MLBricks Builder</a>'
+            ))
+        except Exception:
+            pass
+        return info
+
+    def _launch_command(self, command, incoming_state=None, progress_callback=None):
+        """Launch one Builder runtime command from widgets or the standalone web app."""
+        if self._run_thread is not None and self._run_thread.is_alive():
+            if progress_callback:
+                progress_callback({
+                    "status": "running",
+                    "message": "A Builder runtime action is already active.",
+                    "overall": 0,
+                    "nodes": {},
+                })
+            return False
+
+        if isinstance(incoming_state, dict) and incoming_state.get("components"):
+            clean = copy.deepcopy(incoming_state)
+            clean.pop("_runtime_command", None)
+            clean.pop("_session_secrets", None)
+            self.state = clean
+
+        self._stop_event.clear()
+        self.last_run_error = None
+        command = command if isinstance(command, dict) else {}
+        action = str(command.get("action") or "data").lower()
+        model_id = command.get("model_id")
+        emit = progress_callback or self._publish_bridge_progress
+
+        def worker():
+            try:
+                if action == "train":
+                    self.train_model(model_id, progress_callback=emit)
+                elif action == "generate":
+                    self.generate_model(model_id, progress_callback=emit)
+                elif action == "webapp_start":
+                    info = self.start_web_app(port=(command.get("webapp") or {}).get("port"))
+                    emit({
+                        "status": "done", "runtime_kind": "webapp", "phase": "start",
+                        "overall": 100, "message": "Builder app is ready in a separate tab.",
+                        "webapp_info": info,
+                    })
+                elif action == "webapp_stop":
+                    info = self.stop_web_app()
+                    emit({
+                        "status": "done", "runtime_kind": "webapp", "phase": "stop",
+                        "overall": 100, "message": "Builder web app stopped.",
+                        "webapp_info": info,
+                    })
+                elif action.startswith("hub_"):
+                    self._execute_hub_command(command, progress_callback=emit)
+                elif action.startswith("cloud_"):
+                    self._execute_cloud_command(command, progress_callback=emit)
+                elif action.startswith("local_"):
+                    self._execute_local_command(command, progress_callback=emit)
+                elif action.startswith("serve_"):
+                    self._execute_serve_command(command, progress_callback=emit)
+                else:
+                    self.last_data_result = self.run_data_pipeline(progress_callback=emit)
+            except (PipelineStopped, TrainingStopped):
+                emit({
+                    "status": "stopped", "runtime_kind": action, "overall": 0,
+                    "message": f"{action.title()} stopped."
+                })
+            except Exception as exc:
+                self.last_run_error = exc
+                emit({
+                    "status": "error", "runtime_kind": action, "overall": 0,
+                    "message": f"{type(exc).__name__}: {exc}"
+                })
+
+        self._run_thread = threading.Thread(
+            target=worker,
+            name=f"mlbricks-builder-run-{self._instance_id}",
+            daemon=True,
+        )
+        self._run_thread.start()
+        return True
+
     def stop(self):
         """Request that the current pipeline stop after the active step."""
         self._stop_event.set()
@@ -1850,60 +1962,7 @@ class Builder:
                 })
                 return
 
-        self._stop_event.clear()
-        self.last_run_error = None
-
-        action = str(command.get("action") or "data").lower()
-        model_id = command.get("model_id")
-
-        def worker():
-            try:
-                if action == "train":
-                    self.train_model(model_id, progress_callback=self._publish_bridge_progress)
-                elif action == "generate":
-                    self.generate_model(model_id, progress_callback=self._publish_bridge_progress)
-                elif action.startswith("hub_"):
-                    self._execute_hub_command(
-                        command,
-                        progress_callback=self._publish_bridge_progress,
-                    )
-                elif action.startswith("cloud_"):
-                    self._execute_cloud_command(
-                        command,
-                        progress_callback=self._publish_bridge_progress,
-                    )
-                elif action.startswith("local_"):
-                    self._execute_local_command(
-                        command,
-                        progress_callback=self._publish_bridge_progress,
-                    )
-                elif action.startswith("serve_"):
-                    self._execute_serve_command(
-                        command,
-                        progress_callback=self._publish_bridge_progress,
-                    )
-                else:
-                    self.last_data_result = self.run_data_pipeline(
-                        progress_callback=self._publish_bridge_progress,
-                    )
-            except (PipelineStopped, TrainingStopped):
-                self._publish_bridge_progress({
-                    "status":"stopped","runtime_kind":action,"overall":0,
-                    "message":f"{action.title()} stopped."
-                })
-            except Exception as exc:
-                self.last_run_error = exc
-                self._publish_bridge_progress({
-                    "status":"error","runtime_kind":action,"overall":0,
-                    "message":f"{type(exc).__name__}: {exc}"
-                })
-
-        self._run_thread = threading.Thread(
-            target=worker,
-            name=f"mlbricks-builder-run-{self._instance_id}",
-            daemon=True,
-        )
-        self._run_thread.start()
+        self._launch_command(command, incoming_state=self.state, progress_callback=self._publish_bridge_progress)
 
     def _setup_widget_bridge(self):
         """Create a bridge using only standard ipywidgets (no custom frontend module)."""
@@ -1961,8 +2020,8 @@ class Builder:
         available = [k for k, v in self.mlbricks_api.items() if v.get("available")]
         unavailable = {k: v.get("error") for k, v in self.mlbricks_api.items() if not v.get("available")}
         return {
-            "builder_version": "0.7.18",
-            "frontend_version": "0.7.18",
+            "builder_version": "0.7.19",
+            "frontend_version": "0.7.19",
             "mlbricks": info,
             "api_components_available": available,
             "api_components_unavailable": unavailable,
@@ -1985,7 +2044,7 @@ class Builder:
         }).replace("</", "<\\/")
         return f"""
 <style>{css}</style>
-<div id="{html.escape(self._instance_id)}" class="mlb-root" data-mlbricks-builder-version="0.7.18"></div>
+<div id="{html.escape(self._instance_id)}" class="mlb-root" data-mlbricks-builder-version="0.7.19"></div>
 <script>
 try {{ delete window.MLBricksBuilder; }} catch (e) {{ window.MLBricksBuilder = undefined; }}
 {js}
