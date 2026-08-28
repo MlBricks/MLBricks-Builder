@@ -1336,3 +1336,14 @@ This prevents orphaned model-server threads from accumulating occupied ports.
 
 On Kaggle the local link still is not externally reachable; fix the displayed
 ngrok error and restart to obtain the Public HTTPS URL.
+
+
+## v0.7.6 — Kaggle bridge reliability, copy fallback, workspace default
+
+- MODEL/DATA WORKSPACE opens by default.
+- Entering Train or Generate collapses it automatically. Serve Model/API does not.
+- Copy API Key now falls back from Clipboard API to `execCommand("copy")`, then a manual copy prompt for restrictive Kaggle iframes.
+- The API key is no longer copied into serialized Builder state.
+- Local model/data, cloud and runtime actions use a dedicated standard-ipywidgets command channel instead of embedding commands in the complete project JSON.
+- Local data import reports a single actionable dependency error if `datasets` is not installed.
+- The visible version badge now follows the actual frontend version instead of the stale hard-coded `v0.6.7`.

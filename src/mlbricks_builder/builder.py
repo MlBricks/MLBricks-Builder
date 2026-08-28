@@ -803,7 +803,7 @@ class Builder:
             root.mkdir(parents=True, exist_ok=True)
             manifest = {
                 "format": "mlbricks-cloud-bundle-v1",
-                "builder_version": "0.7.5",
+                "builder_version": "0.7.6",
                 "content_type": content_type,
             }
 
@@ -1251,6 +1251,15 @@ class Builder:
                     paths.add(str(value))
         return paths
 
+    def _require_local_data_runtime(self):
+        try:
+            import datasets  # noqa: F401
+        except ImportError as exc:
+            raise RuntimeError(
+                "Local / Kaggle Data import requires the `datasets` package. "
+                "In Kaggle run: %pip install -q datasets pyarrow pandas, then restart the kernel."
+            ) from exc
+
     def import_data_from_local_path(
         self,
         base_path,
@@ -1261,6 +1270,7 @@ class Builder:
     ):
         from .local_runtime import scan_data_candidates
 
+        self._require_local_data_runtime()
         scan = scan_data_candidates(
             base_path,
             max_entries=int(max_entries or 1000),
@@ -1754,15 +1764,29 @@ class Builder:
 
         widgets = self._bridge_widgets or {}
         state_widget = widgets.get("state")
+        command_widget = widgets.get("command")
         command = {}
+
+        # v0.7.6: runtime actions use a dedicated tiny command widget instead of
+        # being embedded in the entire project JSON. This avoids Kaggle iframe
+        # races for Local/Data/Model/Cloud actions and keeps secrets out of state.
+        if command_widget is not None:
+            try:
+                parsed = json.loads(command_widget.value or "{}")
+                if isinstance(parsed, dict):
+                    command = parsed
+                command_widget.value = "{}"
+            except Exception:
+                command = {}
+
         if state_widget is not None:
             try:
                 incoming = json.loads(state_widget.value)
                 if isinstance(incoming, dict) and incoming.get("components"):
-                    # Runtime commands may contain session-only credentials.
-                    # Extract them before persisting the incoming Builder state.
-                    command = incoming.pop("_runtime_command", None) or {}
+                    legacy_command = incoming.pop("_runtime_command", None) or {}
                     incoming.pop("_session_secrets", None)
+                    if not command:
+                        command = legacy_command
                     self.state = incoming
             except Exception as exc:
                 self._publish_bridge_progress({
@@ -1845,6 +1869,7 @@ class Builder:
             overflow="hidden",
         )
         state_widget = widgets.Textarea(value=json.dumps(self.state), layout=hidden)
+        command_widget = widgets.Textarea(value="{}", layout=hidden)
         run_widget = widgets.Button(description="", layout=hidden)
         stop_widget = widgets.Button(description="", layout=hidden)
         progress_widget = widgets.Textarea(
@@ -1854,11 +1879,13 @@ class Builder:
 
         classes = {
             "state": f"mlb-state-bridge-{suffix}",
+            "command": f"mlb-command-bridge-{suffix}",
             "run": f"mlb-run-bridge-{suffix}",
             "stop": f"mlb-stop-bridge-{suffix}",
             "progress": f"mlb-progress-bridge-{suffix}",
         }
         state_widget.add_class(classes["state"])
+        command_widget.add_class(classes["command"])
         run_widget.add_class(classes["run"])
         stop_widget.add_class(classes["stop"])
         progress_widget.add_class(classes["progress"])
@@ -1868,6 +1895,7 @@ class Builder:
 
         self._bridge_widgets = {
             "state": state_widget,
+            "command": command_widget,
             "run": run_widget,
             "stop": stop_widget,
             "progress": progress_widget,
@@ -1880,8 +1908,8 @@ class Builder:
         available = [k for k, v in self.mlbricks_api.items() if v.get("available")]
         unavailable = {k: v.get("error") for k, v in self.mlbricks_api.items() if not v.get("available")}
         return {
-            "builder_version": "0.7.5",
-            "frontend_version": "0.7.5",
+            "builder_version": "0.7.6",
+            "frontend_version": "0.7.6",
             "mlbricks": info,
             "api_components_available": available,
             "api_components_unavailable": unavailable,
@@ -1902,7 +1930,7 @@ class Builder:
         }).replace("</", "<\\/")
         return f"""
 <style>{css}</style>
-<div id="{html.escape(self._instance_id)}" class="mlb-root" data-mlbricks-builder-version="0.7.5"></div>
+<div id="{html.escape(self._instance_id)}" class="mlb-root" data-mlbricks-builder-version="0.7.6"></div>
 <script>
 try {{ delete window.MLBricksBuilder; }} catch (e) {{ window.MLBricksBuilder = undefined; }}
 {js}
@@ -1934,6 +1962,7 @@ window.MLBricksBuilder.mount(
                 import ipywidgets as widgets
                 box = widgets.HBox([
                     bridge_widgets["state"],
+                    bridge_widgets["command"],
                     bridge_widgets["run"],
                     bridge_widgets["stop"],
                     bridge_widgets["progress"],

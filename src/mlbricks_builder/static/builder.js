@@ -105,7 +105,7 @@
     const collapsedCategories=new Set(["Advanced","Position","Heads","Outputs","Image","Audio"]);
     const collapsedInspectorGroups=new Set();
     let myBricksCollapsed=false;
-    let bottomExpanded=false;
+    let bottomExpanded=true;
     let bottomView="details";
     let outputDirectorySelection=null;
     let filesFilter="all";
@@ -314,6 +314,7 @@
       if(!bridge)return false;
       return !!(
         bridgeControl(bridge.state,"textarea") &&
+        (!bridge.command||bridgeControl(bridge.command,"textarea")) &&
         bridgeControl(bridge.run,"button") &&
         bridgeControl(bridge.stop,"button") &&
         bridgeControl(bridge.progress,"textarea")
@@ -334,11 +335,38 @@
         :"Builder cannot currently reach the Python widget bridge.";
     }
 
+    function bridgeStatePayload(){
+      const clean=cp(state);
+      delete clean._runtime_command;
+      delete clean._session_secrets;
+      // API/ngrok secrets are browser-session values, never project state.
+      (clean.model_outputs||[]).forEach(entry=>{
+        if(entry.serve_live&&typeof entry.serve_live==="object"){
+          delete entry.serve_live.api_key;
+        }
+      });
+      return clean;
+    }
+
     function setBridgeState(){
       if(!bridge)return false;
       const input=bridgeControl(bridge.state,"textarea");
       if(!input)return false;
-      return setNativeValue(input,JSON.stringify(state));
+      return setNativeValue(input,JSON.stringify(bridgeStatePayload()));
+    }
+
+    function setBridgeCommand(command){
+      if(!bridge)return false;
+      if(!bridge.command){
+        // Backward compatibility with an older Python bridge.
+        state._runtime_command=cp(command||{});
+        const ok=setBridgeState();
+        delete state._runtime_command;
+        return ok;
+      }
+      const input=bridgeControl(bridge.command,"textarea");
+      if(!input)return false;
+      return setNativeValue(input,JSON.stringify(command||{}));
     }
 
     function markExecutionLocally(kind,message){
@@ -415,18 +443,18 @@
         applyExecutionProgress(execution);setStatus(execution.message);return;
       }
       const secret=serveSecrets[entry.id]||{api_key:"",ngrok_token:""};
-      state._runtime_command={action,model_id:entry.id,serve:{
+      const command={action,model_id:entry.id,serve:{
         config:cp(entry.serve_config||{}),
         credentials:{api_key:secret.api_key||"",ngrok_token:secret.ngrok_token||""}
       },ts:Date.now()};
-      if(!setBridgeState()){delete state._runtime_command;setStatus("Could not send API server configuration to Python.");return;}
+      if(!setBridgeState()||!setBridgeCommand(command)){setStatus("Could not send API server configuration to Python.");return;}
       const button=bridgeControl(bridge.run,"button");
-      if(!button){delete state._runtime_command;setStatus("Python API server control was not found.");return;}
+      if(!button){setStatus("Python API server control was not found.");return;}
       const progressInput=bridgeControl(bridge.progress,"textarea");lastProgressRaw=progressInput?.value||lastProgressRaw;
       execution={status:"running",runtime_kind:"serve",phase:action,overall:0,message:
         action==="serve_start"?"Starting model API server…":action==="serve_stop"?"Stopping model API server…":"Checking model API server…",nodes:{}};
       applyExecutionProgress(execution);setStatus(execution.message);
-      setTimeout(()=>{clickBridgeButton(button);setTimeout(()=>{delete state._runtime_command;},350);},250);
+      setTimeout(()=>{clickBridgeButton(button);},250);
     }
 
     function requestRuntimeCommand(action,entry){
@@ -436,18 +464,17 @@
         execution={status:"error",runtime_kind:action,overall:0,message:"Kernel bridge is offline. Re-run the Builder cell, then try again.",nodes:{}};
         applyExecutionProgress(execution);setStatus(execution.message);return;
       }
-      state._runtime_command={action,model_id:entry.id,ts:Date.now()};
-      if(!setBridgeState()){
-        delete state._runtime_command;
+      const command={action,model_id:entry.id,ts:Date.now()};
+      if(!setBridgeState()||!setBridgeCommand(command)){
         setStatus("Could not send runtime configuration to Python.");return;
       }
       const button=bridgeControl(bridge.run,"button");
-      if(!button){delete state._runtime_command;setStatus("Python runtime control was not found.");return;}
+      if(!button){setStatus("Python runtime control was not found.");return;}
       const progressInput=bridgeControl(bridge.progress,"textarea");
       lastProgressRaw=progressInput?.value||lastProgressRaw;
       execution={status:"running",runtime_kind:action,phase:"starting",overall:0,message:action==="train"?"Starting training in Python…":"Starting generation in Python…",nodes:{}};
       applyExecutionProgress(execution);setStatus(execution.message);
-      setTimeout(()=>{clickBridgeButton(button);setTimeout(()=>{delete state._runtime_command;},500);},350);
+      setTimeout(()=>{clickBridgeButton(button);},350);
     }
 
     function requestLocalCommand(action,config={}){
@@ -456,15 +483,18 @@
         execution={status:"error",runtime_kind:"local",overall:0,message:"Kernel bridge is offline. Re-run the Builder cell, then try again.",nodes:{}};
         applyExecutionProgress(execution);setStatus(execution.message);return;
       }
-      state._runtime_command={action,local:cp(config),ts:Date.now()};
-      if(!setBridgeState()){delete state._runtime_command;setStatus("Could not send local filesystem command to Python.");return;}
+      const command={action,local:cp(config),ts:Date.now()};
+      if(!setBridgeState()||!setBridgeCommand(command)){setStatus("Could not send local filesystem command to Python.");return;}
       const button=bridgeControl(bridge.run,"button");
-      if(!button){delete state._runtime_command;setStatus("Python local filesystem control was not found.");return;}
+      if(!button){setStatus("Python local filesystem control was not found.");return;}
       const progressInput=bridgeControl(bridge.progress,"textarea");
       lastProgressRaw=progressInput?.value||lastProgressRaw;
-      execution={status:"running",runtime_kind:"local",phase:action,overall:0,message:action==="local_scan"?"Scanning Kaggle files…":"Loading local content…",nodes:{}};
+      execution={status:"running",runtime_kind:"local",phase:action,overall:0,message:
+        action==="local_import_models"?"Scanning and importing models…":
+        action==="local_import_data"?"Scanning and importing datasets…":
+        action==="local_scan"?"Scanning Kaggle files…":"Loading local content…",nodes:{}};
       applyExecutionProgress(execution);setStatus(execution.message);
-      setTimeout(()=>{clickBridgeButton(button);setTimeout(()=>{delete state._runtime_command;},350);},250);
+      setTimeout(()=>{clickBridgeButton(button);},250);
     }
 
     function requestCloudCommand(action,config={}){
@@ -473,23 +503,17 @@
         execution={status:"error",runtime_kind:"cloud",overall:0,message:"Kernel bridge is offline. Re-run the Builder cell, then try again.",nodes:{}};
         applyExecutionProgress(execution);setStatus(execution.message);return;
       }
-      state._runtime_command={action,cloud:cp(config),ts:Date.now()};
-      if(!setBridgeState()){
-        delete state._runtime_command;
+      const command={action,cloud:cp(config),ts:Date.now()};
+      if(!setBridgeState()||!setBridgeCommand(command)){
         setStatus("Could not send cloud command to Python.");return;
       }
       const button=bridgeControl(bridge.run,"button");
-      if(!button){delete state._runtime_command;setStatus("Python cloud control was not found.");return;}
+      if(!button){setStatus("Python cloud control was not found.");return;}
       const progressInput=bridgeControl(bridge.progress,"textarea");
       lastProgressRaw=progressInput?.value||lastProgressRaw;
       execution={status:"running",runtime_kind:"cloud",phase:action,overall:0,message:"Connecting to cloud provider…",nodes:{}};
       applyExecutionProgress(execution);setStatus(execution.message);
-      setTimeout(()=>{
-        clickBridgeButton(button);
-        // Credentials are transient. Remove them from browser project state as soon
-        // as the bridge has copied the command into the standard widget.
-        setTimeout(()=>{delete state._runtime_command;},350);
-      },250);
+      setTimeout(()=>{clickBridgeButton(button);},250);
     }
 
     function requestHubCommand(action,config={}){
@@ -498,18 +522,17 @@
         execution={status:"error",runtime_kind:"hub",overall:0,message:"Kernel bridge is offline. Re-run the Builder cell, then try again.",nodes:{}};
         applyExecutionProgress(execution);setStatus(execution.message);return;
       }
-      state._runtime_command={action,hub:cp(config),ts:Date.now()};
-      if(!setBridgeState()){
-        delete state._runtime_command;
+      const command={action,hub:cp(config),ts:Date.now()};
+      if(!setBridgeState()||!setBridgeCommand(command)){
         setStatus("Could not send Hugging Face command to Python.");return;
       }
       const button=bridgeControl(bridge.run,"button");
-      if(!button){delete state._runtime_command;setStatus("Python Hub control was not found.");return;}
+      if(!button){setStatus("Python Hub control was not found.");return;}
       const progressInput=bridgeControl(bridge.progress,"textarea");
       lastProgressRaw=progressInput?.value||lastProgressRaw;
       execution={status:"running",runtime_kind:"hub",phase:action,overall:0,message:"Connecting to Hugging Face Hub…",nodes:{}};
       applyExecutionProgress(execution);setStatus(execution.message);
-      setTimeout(()=>{clickBridgeButton(button);setTimeout(()=>{delete state._runtime_command;},500);},300);
+      setTimeout(()=>{clickBridgeButton(button);},300);
     }
 
     function requestRun(){
@@ -697,11 +720,14 @@
       if(next.runtime_kind==="serve"){
         const entry=builtModelById(next.model_id||runtimePanel?.modelId);
         if(entry&&next.serve_info){
-          entry.serve_live=cp(next.serve_info);
-          entry.serve_tunnel_error=next.serve_info.public_tunnel_error||null;
-          if(next.serve_info.api_key){
+          const liveInfo=cp(next.serve_info);
+          const returnedApiKey=liveInfo.api_key||"";
+          delete liveInfo.api_key;
+          entry.serve_live=liveInfo;
+          entry.serve_tunnel_error=liveInfo.public_tunnel_error||null;
+          if(returnedApiKey){
             serveSecrets[entry.id]=serveSecrets[entry.id]||{};
-            serveSecrets[entry.id].api_key=next.serve_info.api_key;
+            serveSecrets[entry.id].api_key=returnedApiKey;
           }
         }
         if(entry&&next.status==="error"){
@@ -1596,7 +1622,9 @@
       if(!entry)return;
       ensureRuntimeConfigs(entry);
       runtimePanel={mode,modelId:entry.id,tab:"setup"};
-      bottomExpanded=false;
+      // Keep MODEL WORKSPACE open normally and while serving. Only training
+      // and generation collapse it automatically to maximize runtime space.
+      if(mode==="train"||mode==="generate")bottomExpanded=false;
       selected=null;
       outputDirectorySelection=entry.id;
       setStatus(mode==="train"?"Training setup opened.":mode==="generate"?"Generation setup opened.":"Model API server setup opened.");
@@ -1864,12 +1892,52 @@
       const stop=btn("Stop Generation","mlb-runtime-stop");stop.disabled=!(execution.status==="running"&&execution.runtime_kind==="generate");stop.addEventListener("click",requestStop);side.appendChild(stop);
     }
 
+    async function copyTextRobust(text,label="Text"){
+      const value=String(text||"");
+      if(!value){setStatus(label+" is empty.");return false;}
+
+      try{
+        if(navigator.clipboard&&navigator.clipboard.writeText){
+          await navigator.clipboard.writeText(value);
+          setStatus(label+" copied.");
+          return true;
+        }
+      }catch(_){/* Kaggle iframe may block clipboard permission. */}
+
+      try{
+        const doc=root.ownerDocument||document;
+        const area=doc.createElement("textarea");
+        area.value=value;
+        area.setAttribute("readonly","");
+        area.style.position="fixed";
+        area.style.left="-9999px";
+        area.style.top="0";
+        doc.body.appendChild(area);
+        area.focus();area.select();area.setSelectionRange(0,value.length);
+        const ok=doc.execCommand&&doc.execCommand("copy");
+        area.remove();
+        if(ok){setStatus(label+" copied.");return true;}
+      }catch(_){/* fall through */}
+
+      // Last-resort Kaggle-safe behavior: select/show the secret so Ctrl+C works.
+      try{
+        const win=(root.ownerDocument&&root.ownerDocument.defaultView)||window;
+        if(win&&typeof win.prompt==="function"){
+          win.prompt("Copy "+label+" (Ctrl+C, Enter):",value);
+          setStatus("Copy "+label+" from the opened box.");
+          return false;
+        }
+      }catch(_){ }
+      setStatus("Clipboard blocked. Select the "+label+" value and press Ctrl+C.");
+      return false;
+    }
+
     function serveUrlCard(label,url,kind,emptyLabel="Unavailable"){
       const card=document.createElement("div");card.className="mlb-serve-url "+kind;
       const top=document.createElement("div");top.innerHTML="<strong>"+label+"</strong><span>"+(url||emptyLabel)+"</span>";card.appendChild(top);
       if(url){const actions=document.createElement("div");
         const open=btn("Open","mlb-serve-mini");open.addEventListener("click",()=>window.open(url,"_blank","noopener"));
-        const copyBtn=btn("Copy","mlb-serve-mini");copyBtn.addEventListener("click",async()=>{try{await navigator.clipboard.writeText(url);setStatus(label+" copied.");}catch(_){setStatus(url);}});
+        const copyBtn=btn("Copy","mlb-serve-mini");copyBtn.addEventListener("click",()=>copyTextRobust(url,label));
         actions.append(open,copyBtn);card.appendChild(actions);}
       return card;
     }
@@ -1953,7 +2021,11 @@
         [["Playground","GET /"],["Health","GET /health"],["Generate","POST /v1/generate"],["OpenAI-style","POST /v1/completions"],["Models","GET /v1/models"]].forEach(([a,b])=>{const row=document.createElement("div");row.innerHTML="<span>"+a+"</span><strong>"+b+"</strong>";ep.appendChild(row);});endpoints.appendChild(ep);main.appendChild(endpoints);
         const code=runtimeSection("Web App Example"),pre=document.createElement("pre");pre.className="mlb-serve-code";pre.textContent=serveCodeExample(entry,info);code.appendChild(pre);main.appendChild(code);
         const summary=document.createElement("div");summary.className="mlb-runtime-summary";summary.innerHTML="<h3>Server</h3><div><span>Status</span><strong>"+(running?"Running":"Stopped")+"</strong></div><div><span>Port</span><strong>"+(info.port||config.port)+"</strong></div><div><span>API Key</span><strong>"+(config.require_api_key?"Required":"Off")+"</strong></div><div><span>Public Tunnel</span><strong>"+(config.public_tunnel||"off")+"</strong></div>";side.appendChild(summary);
-        if(config.require_api_key){const keyBox=document.createElement("div");keyBox.className="mlb-serve-secret";keyBox.innerHTML="<strong>API KEY</strong><code>"+(secret.api_key||"Restart server to generate key")+"</code>";const copyKey=btn("Copy API Key","mlb-dark-btn");copyKey.addEventListener("click",async()=>{try{await navigator.clipboard.writeText(secret.api_key||"");setStatus("API key copied.");}catch(_){}});keyBox.appendChild(copyKey);side.appendChild(keyBox);}
+        if(config.require_api_key){const keyBox=document.createElement("div");keyBox.className="mlb-serve-secret";keyBox.innerHTML="<strong>API KEY</strong><code title='Click to select'>"+(secret.api_key||"Restart server to generate key")+"</code>";
+          const keyCode=keyBox.querySelector("code");
+          keyCode?.addEventListener("click",()=>{
+            try{const range=(root.ownerDocument||document).createRange();range.selectNodeContents(keyCode);const sel=(root.ownerDocument.defaultView||window).getSelection();sel.removeAllRanges();sel.addRange(range);setStatus("API key selected — press Ctrl+C.");}catch(_){}
+          });const copyKey=btn("Copy API Key","mlb-dark-btn");copyKey.addEventListener("click",()=>copyTextRobust(secret.api_key||"","API key"));keyBox.appendChild(copyKey);side.appendChild(keyBox);}
         const check=btn("Refresh Status","mlb-dark-btn");check.addEventListener("click",()=>requestServeCommand("serve_status",entry));side.appendChild(check);
         const stop=btn("Stop API Server","mlb-runtime-stop");stop.disabled=!running;stop.addEventListener("click",()=>requestServeCommand("serve_stop",entry));side.appendChild(stop);
         canvas.appendChild(outer);return;
@@ -3741,7 +3813,8 @@
 
       // Top bar
       const top=document.createElement("div");top.className="mlb-topbar";
-      const logo=document.createElement("div");logo.className="mlb-logo";logo.innerHTML='<span class="mlb-logo-mark">◇</span>MLBricks Builder <span class="mlb-beta">v0.6.7</span>';top.appendChild(logo);
+      const frontendVersion=root.dataset.mlbricksBuilderVersion||"0.7.6";
+      const logo=document.createElement("div");logo.className="mlb-logo";logo.innerHTML='<span class="mlb-logo-mark">◇</span>MLBricks Builder <span class="mlb-beta">v'+frontendVersion+'</span>';top.appendChild(logo);
       const title=document.createElement("div");title.className="mlb-project-title";title.textContent=state.project?.name||"Untitled";top.appendChild(title);
       const saved=document.createElement("div");saved.className="mlb-save-state";saved.textContent="• Saved";top.appendChild(saved);
       const sp=document.createElement("div");sp.className="mlb-topspacer";top.appendChild(sp);
@@ -4005,8 +4078,8 @@
         canvas.scrollTop=pos.top||0;
       });
 
-      // Bottom project drawer always remains visible. Runtime mode collapses it
-      // on entry, but the user can expand it manually without leaving training/generation.
+      // Bottom project drawer is open by default. Train/Generate collapse it on
+      // entry; normal design, local import and Serve Model/API keep it open.
       const details=document.createElement("div");details.className="mlb-details";
 
       const detailsBar=document.createElement("div");detailsBar.className="mlb-details-bar";
