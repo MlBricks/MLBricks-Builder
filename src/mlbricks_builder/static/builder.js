@@ -41,6 +41,7 @@
     let bridgePollTimer=null;
     let bridgeAwaitTimer=null;
     let bridgeLastReady=false;
+    let modelBuildTimer=null;
     const workspaceScroll={model:{left:0,top:0},data:{left:0,top:0}};
     let switchingWorkspace=false;
     const undoStack=[],redoStack=[];
@@ -552,7 +553,11 @@
       const run=root.querySelector(".mlb-run");
       if(run){
         run.disabled=execution.status==="running";
-        run.textContent=execution.status==="running"?"▶ Running…":"▶ Run";
+        if(state.active_workspace==="model"){
+          run.textContent=execution.status==="running"?"◆ Building…":"◆ Build";
+        }else{
+          run.textContent=execution.status==="running"?"▶ Running…":"▶ Run Data";
+        }
       }
     }
 
@@ -735,11 +740,396 @@
     }
 
     function modelDirectoryEntries(){
-      const entries=[];
-      const current=currentModelDirectoryEntry();
-      if(current)entries.push(current);
-      (state.model_outputs||[]).forEach(item=>entries.push(item));
-      return entries;
+      return (state.model_outputs||[]).filter(item=>item.kind==="built_model"||item.kind==="trained_model"||item.kind==="model_artifact");
+    }
+
+    function builtModelById(id){
+      return (state.model_outputs||[]).find(item=>item.id===id)||null;
+    }
+
+    function selectedOutputModel(){
+      if(state.active_workspace!=="model" || bottomView!=="outputs" || !outputDirectorySelection)return null;
+      return builtModelById(outputDirectorySelection);
+    }
+
+    function modelFingerprint(model){
+      return JSON.stringify({
+        nodes:(model?.nodes||[]).map(n=>({
+          id:n.id,type:n.type,name:n.name,definition_id:n.definition_id||null,
+          repeat:n.repeat||1,params:n.params||{}
+        })),
+        edges:(model?.edges||[]).map(e=>({
+          source:e.source,target:e.target,kind:e.kind||"main",
+          source_port:e.source_port||null,target_port:e.target_port||null
+        }))
+      });
+    }
+
+    function inferModelRequirements(model){
+      const nodes=model?.nodes||[];
+      const types=new Set(nodes.map(n=>n.type));
+      let modality="unknown";
+      if(types.has("text_input"))modality="text";
+      else if(types.has("image_input"))modality="image";
+      else if(types.has("audio_input"))modality="audio";
+
+      const terminal=[...nodes].reverse().find(n=>
+        ["text_output","logits_output","classifier","lm_head"].includes(n.type)
+      );
+
+      return {
+        modality,
+        output_type:terminal?.type||"unknown",
+        requires_tokenizer:modality==="text" && (types.has("embedding")||types.has("lm_head")),
+        context_length:Number(state.project?.context_length||0)||null,
+        batch_size:Number(state.project?.batch_size||0)||null,
+      };
+    }
+
+    function validateModelBuild(){
+      const model=modelRootComponent();
+      const errors=[];
+      if(!model || !(model.nodes||[]).length){
+        return [{node_ids:[],message:"Model canvas is empty. Add model components before Build."}];
+      }
+
+      const nodes=model.nodes||[];
+      const byId=new Map(nodes.map(n=>[n.id,n]));
+      const mainEdges=(model.edges||[]).filter(e=>(e.kind||"main")==="main");
+      const inputTypes=new Set(["text_input","image_input","audio_input"]);
+      const outputTypes=new Set(["text_output","logits_output","classifier","lm_head"]);
+
+      const inputs=nodes.filter(n=>inputTypes.has(n.type));
+      const outputs=nodes.filter(n=>outputTypes.has(n.type));
+      if(!inputs.length)errors.push({node_ids:[],message:"Add at least one model Input before Build."});
+      if(!outputs.length)errors.push({node_ids:[],message:"Add a model output/head before Build."});
+
+      const degree=new Map(nodes.map(n=>[n.id,0]));
+      mainEdges.forEach(e=>{
+        if(byId.has(e.source)&&byId.has(e.target)){
+          degree.set(e.source,(degree.get(e.source)||0)+1);
+          degree.set(e.target,(degree.get(e.target)||0)+1);
+        }
+      });
+      const disconnected=nodes.filter(n=>nodes.length>1 && (degree.get(n.id)||0)===0);
+      if(disconnected.length){
+        errors.push({
+          node_ids:disconnected.map(n=>n.id),
+          message:"Disconnected model components: "+disconnected.map(n=>n.name).join(", ")
+        });
+      }
+
+      // Detect cycles on the Main lane, while allowing branches/parallel graphs.
+      const incoming=new Map(nodes.map(n=>[n.id,0]));
+      const outgoing=new Map(nodes.map(n=>[n.id,[]]));
+      mainEdges.forEach(e=>{
+        if(byId.has(e.source)&&byId.has(e.target)){
+          incoming.set(e.target,(incoming.get(e.target)||0)+1);
+          outgoing.get(e.source).push(e.target);
+        }
+      });
+      const queue=nodes.filter(n=>(incoming.get(n.id)||0)===0).map(n=>n.id);
+      let visited=0;
+      while(queue.length){
+        const id=queue.shift();visited++;
+        (outgoing.get(id)||[]).forEach(next=>{
+          incoming.set(next,incoming.get(next)-1);
+          if(incoming.get(next)===0)queue.push(next);
+        });
+      }
+      if(visited!==nodes.length){
+        errors.push({node_ids:[],message:"Main model flow contains a cycle. Remove the cycle before Build."});
+      }
+
+      return errors;
+    }
+
+    function registerBuiltModel(){
+      const model=modelRootComponent();
+      const requirements=inferModelRequirements(model);
+      const name=state.project?.name||model?.name||"Built Model";
+      const fingerprint=modelFingerprint(model);
+      let entry=(state.model_outputs||[]).find(item=>item.kind==="built_model" && item.name===name);
+
+      const latestData=selectedModelDataset()||latestPreparedDataset();
+      const snapshot={
+        name,
+        kind:"built_model",
+        status:"built",
+        built_at:new Date().toISOString(),
+        revision:(entry?.revision||0)+1,
+        nodes:(model?.nodes||[]).length,
+        connections:(model?.edges||[]).length,
+        context_length:state.project?.context_length??null,
+        batch_size:state.project?.batch_size??null,
+        estimated_parameters:state.project?.estimated_parameters??null,
+        architecture:cp(model),
+        requirements,
+        fingerprint,
+        selected_dataset_id:entry?.selected_dataset_id || latestData?.id || null,
+        training_status:entry?.training_status||"untrained",
+        weights_ready:!!entry?.weights_ready,
+      };
+
+      if(entry){
+        Object.assign(entry,snapshot);
+      }else{
+        entry={id:uid("model"),...snapshot};
+        state.model_outputs=state.model_outputs||[];
+        state.model_outputs.push(entry);
+      }
+      return entry;
+    }
+
+    function showModelBuildErrors(errors){
+      const states={};
+      (modelRootComponent()?.nodes||[]).forEach(n=>states[n.id]={status:"queued",message:"Waiting"});
+      errors.forEach(err=>(err.node_ids||[]).forEach(id=>{
+        states[id]={status:"error",message:err.message};
+      }));
+      execution={status:"error",overall:0,message:errors[0]?.message||"Model Build failed.",nodes:states};
+      setStatus(execution.message);
+      draw();
+    }
+
+    function requestModelBuild(){
+      if(state.active_workspace!=="model")return;
+      const errors=validateModelBuild();
+      if(errors.length){showModelBuildErrors(errors);return;}
+
+      if(modelBuildTimer){clearInterval(modelBuildTimer);modelBuildTimer=null;}
+      const model=modelRootComponent();
+      const nodes=model.nodes||[];
+      const states={};
+      nodes.forEach(n=>states[n.id]={status:"queued",message:"Waiting to build"});
+      execution={status:"running",overall:0,message:"Building model design…",nodes:states};
+      setStatus(execution.message);
+      draw();
+
+      let index=0;
+      const finish=()=>{
+        const entry=registerBuiltModel();
+        execution={
+          status:"done",overall:100,message:"Model built: "+entry.name,
+          nodes:Object.fromEntries(nodes.map(n=>[n.id,{status:"done",message:"Built"}]))
+        };
+        bottomView="outputs";
+        bottomExpanded=true;
+        outputDirectorySelection=entry.id;
+        selected=null;
+        setStatus("Build complete. Select training data and check compatibility.");
+        draw();
+      };
+
+      modelBuildTimer=setInterval(()=>{
+        if(index>0){
+          const prev=nodes[index-1];
+          states[prev.id]={status:"done",message:"Built"};
+        }
+        if(index>=nodes.length){
+          clearInterval(modelBuildTimer);modelBuildTimer=null;finish();return;
+        }
+        const node=nodes[index];
+        states[node.id]={status:"running",message:"Building "+node.name+"…"};
+        execution={
+          status:"running",
+          overall:Math.round(index/Math.max(nodes.length,1)*100),
+          message:"Building "+node.name+"…",
+          nodes:cp(states)
+        };
+        applyExecutionProgress(execution);
+        index++;
+      },110);
+    }
+
+    function datasetModality(meta){
+      const p=meta?.pipeline||{};
+      if(p.image_processing)return "image";
+      if(p.audio_processing)return "audio";
+      return "text";
+    }
+
+    function modelDatasetCompatibility(modelEntry,datasetMeta){
+      const checks=[];
+      const add=(label,ok,detail)=>checks.push({label,ok,detail});
+      if(!datasetMeta){
+        add("Prepared dataset",false,"Select a prepared dataset.");
+        return {ok:false,checks};
+      }
+
+      const req=modelEntry?.requirements||{};
+      const modality=datasetModality(datasetMeta);
+      add(
+        "Modality",
+        req.modality==="unknown" || req.modality===modality,
+        "Model: "+(req.modality||"unknown")+" · Data: "+modality
+      );
+
+      const trainRows=datasetMeta?.splits?.train?.rows;
+      add("Train split",Number(trainRows)>0,"Train rows: "+(trainRows??0));
+
+      const pipeline=datasetMeta.pipeline||{};
+      const tokenizer=pipeline.tokenizer;
+      if(req.modality==="text" && req.requires_tokenizer){
+        add("Tokenizer",!!tokenizer,tokenizer?.tokenizer_name||"Tokenizer missing");
+        const dataContext=Number(tokenizer?.context_length||0);
+        const modelContext=Number(req.context_length||0);
+        if(dataContext && modelContext){
+          add(
+            "Context length",
+            dataContext<=modelContext,
+            "Data "+dataContext+" ≤ Model "+modelContext
+          );
+        }else{
+          add("Context length",true,"No conflicting context length found");
+        }
+
+        const cols=datasetMeta?.splits?.train?.columns||[];
+        if(cols.length){
+          add(
+            "Tokenized fields",
+            cols.includes("input_ids"),
+            cols.includes("input_ids")?"input_ids available":"input_ids not found"
+          );
+        }
+      }
+
+      return {ok:checks.every(c=>c.ok),checks};
+    }
+
+    function setBuiltModelDataset(entry,datasetId){
+      if(!entry)return;
+      entry.selected_dataset_id=datasetId||null;
+      const meta=preparedDatasetById(datasetId);
+      if(meta){
+        // Keep the editable model Text Input aligned with the training selection.
+        const model=modelRootComponent();
+        (model?.nodes||[]).filter(n=>n.type==="text_input").forEach(n=>configureTextInputForDataset(n,meta));
+        state.project=state.project||{};
+        state.project.dataset=meta.name;
+      }
+      setStatus(meta?meta.name+" selected for compatibility check.":"Training dataset cleared.");
+      draw();
+    }
+
+    function requestBuiltModelTraining(entry,compat){
+      if(!entry||!compat?.ok)return;
+      entry.training_status="ready";
+      setStatus(
+        "Compatibility passed. Training is ready, but the model training executor is not connected yet."
+      );
+      draw();
+    }
+
+    function requestTokenGeneration(entry){
+      if(!entry?.weights_ready){
+        setStatus("Generate Tokens requires trained or loaded model weights.");
+        draw();
+        return;
+      }
+      setStatus("Generation runtime is not connected yet.");
+      draw();
+    }
+
+    function compatibilityCard(compat){
+      const box=document.createElement("div");
+      box.className="mlb-compat-card "+(compat.ok?"compatible":"incompatible");
+      const head=document.createElement("div");head.className="mlb-compat-head";
+      head.innerHTML="<strong>"+(compat.ok?"✓ Compatible":"✕ Not Compatible")+"</strong><span>"+(compat.ok?"Ready for training":"Fix the items below")+"</span>";
+      box.appendChild(head);
+      (compat.checks||[]).forEach(check=>{
+        const row=document.createElement("div");row.className="mlb-compat-row "+(check.ok?"pass":"fail");
+        row.innerHTML="<span>"+(check.ok?"✓":"✕")+" "+check.label+"</span><strong>"+check.detail+"</strong>";
+        box.appendChild(row);
+      });
+      return box;
+    }
+
+    function renderBuiltModelInspector(body,entry){
+      const dataset=preparedDatasetById(entry.selected_dataset_id)||null;
+      const compat=modelDatasetCompatibility(entry,dataset);
+      const req=entry.requirements||{};
+
+      const head=document.createElement("div");head.className="mlb-selected";
+      head.innerHTML="<strong>"+entry.name+"</strong><span class='mlb-pill'>Built Model</span>";
+      body.appendChild(head);
+
+      const built=document.createElement("div");built.className="mlb-api-status ok";
+      built.textContent="✓ Build complete · revision "+(entry.revision||1);
+      body.appendChild(built);
+
+      detailSection(body,"MODEL DETAILS",[
+        ["Status",entry.status||"built"],
+        ["Layers",entry.nodes??"—"],
+        ["Connections",entry.connections??"—"],
+        ["Input",req.modality||"unknown"],
+        ["Output",req.output_type||"unknown"],
+        ["Context",entry.context_length??"—"],
+        ["Batch",entry.batch_size??"—"],
+        ["Parameters",entry.estimated_parameters??"—"],
+        ["Built",entry.built_at||"—"],
+      ]);
+
+      const dataTitle=document.createElement("div");dataTitle.className="mlb-section-title";dataTitle.textContent="TRAINING DATA";
+      body.appendChild(dataTitle);
+
+      const field=document.createElement("div");field.className="mlb-field";
+      const label=document.createElement("label");label.textContent="Prepared Dataset";
+      const select=document.createElement("select");
+      const datasets=availablePreparedDatasets();
+      if(!datasets.length){
+        const o=document.createElement("option");o.value="";o.textContent="No prepared datasets available";
+        select.appendChild(o);select.disabled=true;
+      }else{
+        const blank=document.createElement("option");blank.value="";blank.textContent="Select data…";select.appendChild(blank);
+        datasets.forEach(meta=>{
+          const o=document.createElement("option");o.value=meta.id;
+          o.textContent=meta.name+" — "+compactDatasetSummary(meta);
+          if(entry.selected_dataset_id===meta.id)o.selected=true;
+          select.appendChild(o);
+        });
+        select.addEventListener("change",()=>setBuiltModelDataset(entry,select.value));
+      }
+      field.append(label,select);body.appendChild(field);
+
+      const compTitle=document.createElement("div");compTitle.className="mlb-section-title";compTitle.textContent="COMPATIBILITY";
+      body.appendChild(compTitle);
+      body.appendChild(compatibilityCard(compat));
+
+      if(dataset){
+        body.appendChild(datasetSummaryCard(dataset,"SELECTED TRAINING DATA"));
+      }
+
+      const actionTitle=document.createElement("div");actionTitle.className="mlb-section-title";actionTitle.textContent="ACTIONS";
+      body.appendChild(actionTitle);
+      const actions=document.createElement("div");actions.className="mlb-model-actions";
+
+      if(compat.ok){
+        const train=btn("Train","mlb-train-btn");
+        train.addEventListener("click",()=>requestBuiltModelTraining(entry,compat));
+        actions.appendChild(train);
+      }else{
+        const blocked=document.createElement("div");blocked.className="mlb-train-blocked";
+        blocked.textContent="Train appears when the selected data is compatible.";
+        actions.appendChild(blocked);
+      }
+
+      if(req.modality==="text"){
+        const generate=btn("Generate Tokens","mlb-generate-btn");
+        generate.disabled=!entry.weights_ready;
+        generate.title=entry.weights_ready
+          ?"Generate tokens with this model"
+          :"Train or load model weights before token generation";
+        generate.addEventListener("click",()=>requestTokenGeneration(entry));
+        actions.appendChild(generate);
+      }
+      body.appendChild(actions);
+
+      const note=document.createElement("div");note.className="mlb-runtime-note";
+      note.textContent=entry.weights_ready
+        ?"Weights are available."
+        :"Build validates/packages the architecture. Training/generation execution will require the model runtime/compiler.";
+      body.appendChild(note);
     }
 
     function dataStorageLabel(meta){
@@ -772,59 +1162,48 @@
 
     function renderModelOutputDirectory(container){
       const entries=modelDirectoryEntries();
-      const artifacts=(state.model_outputs||[]);
       const head=document.createElement("div");head.className="mlb-output-head";
-      head.innerHTML="<div><strong>MODEL OUTPUTS</strong><span>Current design + "+artifacts.length+" model artifact"+(artifacts.length===1?"":"s")+"</span></div>";
+      head.innerHTML="<div><strong>MODEL OUTPUTS</strong><span>"+entries.length+" built model"+(entries.length===1?"":"s")+" · click one to train or generate</span></div>";
       container.appendChild(head);
 
       if(!entries.length){
         container.appendChild(makeDirectoryEmpty(
-          "No model design is available.",
-          "Build a model in Model Builder. Trained/exported model artifacts will appear here later."
+          "No built model yet.",
+          "Finish the architecture in Model Builder, then click Build."
         ));
         return;
       }
 
-      const list=document.createElement("div");list.className="mlb-output-list";
+      const list=document.createElement("div");list.className="mlb-output-list compact";
       entries.forEach(entry=>{
         const card=document.createElement("div");
-        card.className="mlb-output-entry"+(outputDirectorySelection===entry.id?" selected":"");
+        card.className="mlb-output-entry compact"+(outputDirectorySelection===entry.id?" selected":"");
 
         const top=document.createElement("div");top.className="mlb-output-entry-top";
-        const kind=entry.kind==="design"?"Model Design":(entry.kind||"Model Artifact");
-        top.innerHTML="<div class='mlb-output-name'><strong>"+entry.name+"</strong><span>"+kind+"</span></div>"+
+        top.innerHTML="<div class='mlb-output-name'><strong>"+entry.name+"</strong><span>Built Model · r"+(entry.revision||1)+"</span></div>"+
           "<span class='mlb-output-type model'>MODEL</span>";
         card.appendChild(top);
 
-        const stats=document.createElement("div");stats.className="mlb-output-stats model";
-        [["Layers",entry.nodes??entry.layers??"—"],["Links",entry.connections??"—"],
-         ["Context",entry.context_length??"—"],["Batch",entry.batch_size??"—"]].forEach(([label,value])=>{
-          const item=document.createElement("div");
-          item.innerHTML="<span>"+label+"</span><strong>"+value+"</strong>";
-          stats.appendChild(item);
+        const stats=document.createElement("div");stats.className="mlb-output-stats compact model-three";
+        [["Layers",entry.nodes??"—"],["Context",entry.context_length??"—"],["Batch",entry.batch_size??"—"]].forEach(([label,value])=>{
+          const item=document.createElement("div");item.innerHTML="<span>"+label+"</span><strong>"+value+"</strong>";stats.appendChild(item);
         });
         card.appendChild(stats);
 
-        const metaLine=document.createElement("div");metaLine.className="mlb-output-meta";
-        metaLine.innerHTML="<span>"+(entry.kind==="design"?"Editable Builder design":(entry.format||"Model artifact"))+"</span>"+
-          "<span>"+(entry.dataset?("Data: "+entry.dataset):"No prepared dataset selected")+"</span>";
-        card.appendChild(metaLine);
+        const foot=document.createElement("div");foot.className="mlb-output-compact-foot";
+        const ds=preparedDatasetById(entry.selected_dataset_id);
+        foot.innerHTML="<span>"+(ds?ds.name:"No training data")+"</span><span>Train / Generate →</span>";
+        card.appendChild(foot);
 
-        if(entry.path){
-          const path=document.createElement("div");path.className="mlb-output-path";
-          path.textContent=entry.path;path.title=entry.path;card.appendChild(path);
-        }
-
-        card.addEventListener("click",()=>{outputDirectorySelection=entry.id;draw();});
+        card.addEventListener("click",()=>{
+          outputDirectorySelection=entry.id;
+          selected=null;inspectorTab="settings";
+          setStatus(entry.name+" model details opened.");
+          draw();
+        });
         list.appendChild(card);
       });
       container.appendChild(list);
-
-      if(!artifacts.length){
-        const note=document.createElement("div");note.className="mlb-output-note";
-        note.textContent="No trained/exported model artifact yet. They will be listed here when model training/export is connected.";
-        container.appendChild(note);
-      }
     }
 
     function renderOutputDirectory(container){
@@ -906,7 +1285,7 @@
       if(!model)return;
       const config={
         format:"mlbricks-model-config",
-        builder_version:"0.5.6",
+        builder_version:"0.6.0",
         project:cp(state.project||{}),
         model:cp(model),
         selected_dataset:selectedModelDataset(),
@@ -1779,8 +2158,8 @@
       rememberWorkspaceView();
       return {
         format:"mlbricks-builder-design",
-        format_version:"0.5.6",
-        builder_version:"0.5.1",
+        format_version:"0.6.0",
+        builder_version:"0.6.0",
         saved_at:new Date().toISOString(),
         state:cp(state)
       };
@@ -1858,12 +2237,15 @@
 
       // Top bar
       const top=document.createElement("div");top.className="mlb-topbar";
-      const logo=document.createElement("div");logo.className="mlb-logo";logo.innerHTML='<span class="mlb-logo-mark">◇</span>MLBricks Builder <span class="mlb-beta">v0.5.6</span>';top.appendChild(logo);
+      const logo=document.createElement("div");logo.className="mlb-logo";logo.innerHTML='<span class="mlb-logo-mark">◇</span>MLBricks Builder <span class="mlb-beta">v0.6.0</span>';top.appendChild(logo);
       const title=document.createElement("div");title.className="mlb-project-title";title.textContent=state.project?.name||"Untitled";top.appendChild(title);
       const saved=document.createElement("div");saved.className="mlb-save-state";saved.textContent="• Saved";top.appendChild(saved);
       const sp=document.createElement("div");sp.className="mlb-topspacer";top.appendChild(sp);
       const acts=document.createElement("div");acts.className="mlb-top-actions";
-      const run=btn("▶ Run","mlb-run");run.addEventListener("click",requestRun);
+      const run=state.active_workspace==="model"
+        ?btn("◆ Build","mlb-run mlb-build")
+        :btn("▶ Run Data","mlb-run");
+      run.addEventListener("click",state.active_workspace==="model"?requestModelBuild:requestRun);
       const undoBtn=btn("↶ Undo","mlb-dark-btn mlb-history-btn");undoBtn.disabled=undoStack.length===0;undoBtn.title="Undo last model edit";undoBtn.addEventListener("click",undo);
       const redoBtn=btn("↷ Redo","mlb-dark-btn mlb-history-btn");redoBtn.disabled=redoStack.length===0;redoBtn.title="Redo last undone edit";redoBtn.addEventListener("click",redo);
       const clearBtn=btn("↻ Clear","mlb-dark-btn");clearBtn.addEventListener("click",()=>{
@@ -1874,7 +2256,9 @@
       const saveBinBtn=btn("BIN","mlb-dark-btn");saveBinBtn.title="Save full project as .mlbricks.bin";saveBinBtn.addEventListener("click",saveDesignBin);
       const loadBtn=btn("⇧ Load","mlb-dark-btn");loadBtn.title="Load .mlbricks.json or .mlbricks.bin";loadBtn.addEventListener("click",loadDesign);
       const stopBtn=btn("□ Stop","mlb-stop");stopBtn.addEventListener("click",requestStop);
-      acts.append(run,stopBtn,undoBtn,redoBtn,clearBtn,saveBtn,saveBinBtn,loadBtn,btn("⇩ Export","mlb-dark-btn"),btn("⌯ Share","mlb-dark-btn"),btn("?","mlb-dark-btn"),btn("⚙","mlb-dark-btn"));top.appendChild(acts);
+      acts.appendChild(run);
+      if(state.active_workspace==="data")acts.appendChild(stopBtn);
+      acts.append(undoBtn,redoBtn,clearBtn,saveBtn,saveBinBtn,loadBtn,btn("⇩ Export","mlb-dark-btn"),btn("⌯ Share","mlb-dark-btn"),btn("?","mlb-dark-btn"),btn("⚙","mlb-dark-btn"));top.appendChild(acts);
       root.appendChild(top);
 
       const shell=document.createElement("div");shell.className="mlb-shell";
@@ -2154,7 +2538,7 @@
         }else{
           p1.innerHTML='<div class="mlb-bottom-title">PRESETS</div><div class="mlb-preset-card"><strong>★ TinyStories 30M (6L)</strong>Context 512 · Batch 16<br>~30M parameters</div>';
           p1.querySelector(".mlb-preset-card").addEventListener("click",loadTinyStories);
-          p2.innerHTML='<div class="mlb-bottom-title">GRAPH INFO</div><div class="mlb-stat-row"><span>Layers</span><strong>'+current(state).nodes.length+'</strong></div><div class="mlb-stat-row"><span>Connections</span><strong>'+(current(state).edges||[]).length+'</strong></div><div class="mlb-stat-row"><span>Context</span><strong>'+(state.project?.context_length||"—")+'</strong></div><div class="mlb-stat-row"><span>Batch Size</span><strong>'+(state.project?.batch_size||"—")+'</strong></div><div class="mlb-stat-row"><span>Status</span><strong class="mlb-good">✓ Valid</strong></div>';
+          p2.innerHTML='<div class="mlb-bottom-title">GRAPH INFO</div><div class="mlb-stat-row"><span>Layers</span><strong>'+current(state).nodes.length+'</strong></div><div class="mlb-stat-row"><span>Connections</span><strong>'+(current(state).edges||[]).length+'</strong></div><div class="mlb-stat-row"><span>Context</span><strong>'+(state.project?.context_length||"—")+'</strong></div><div class="mlb-stat-row"><span>Batch Size</span><strong>'+(state.project?.batch_size||"—")+'</strong></div><div class="mlb-stat-row"><span>Status</span><strong class="mlb-good">Design Ready</strong></div>';
           p3.innerHTML='<div class="mlb-bottom-title">COMPUTE ESTIMATE</div><div class="mlb-stat-row"><span>Target Params</span><strong>'+(state.project?.estimated_parameters||"—")+'</strong></div><div class="mlb-stat-row"><span>Dataset</span><strong>'+(state.project?.dataset||"—")+'</strong></div><div class="mlb-stat-row"><span>Precision</span><strong>float16</strong></div><div class="mlb-stat-row"><span>Backend</span><strong>MLBricks</strong></div>';
           p4.innerHTML='<div class="mlb-bottom-title">CONNECTION LANES</div><div class="mlb-stat-row"><span>Skip</span><strong>Top Out → Top In</strong></div><div class="mlb-stat-row"><span>Main</span><strong>Middle Out → Middle In</strong></div><div class="mlb-stat-row"><span>Extra</span><strong>Bottom Out → Bottom In</strong></div><div class="mlb-stat-row"><span>Remove</span><strong>Inspector → Remove</strong></div>';
         }
@@ -2170,10 +2554,13 @@
       [["settings","Inspector"],["info","Node Info"]].forEach(([k,t])=>{const b=btn(t);if(inspectorTab===k)b.className="active";b.addEventListener("click",()=>{inspectorTab=k;draw();});tabs.appendChild(b);});ins.appendChild(tabs);
       const body=document.createElement("div");body.className="mlb-ins-body";
       const outputDataset=selectedOutputDataset();
+      const outputModel=selectedOutputModel();
       const n=selectedNode();
 
       if(outputDataset){
         renderPreparedDatasetInspector(body,outputDataset);
+      }else if(outputModel){
+        renderBuiltModelInspector(body,outputModel);
       }else if(!n){
         body.innerHTML='<div class="mlb-section-title">SELECT A NODE</div><div class="mlb-api-path">'+(state.active_workspace==="data"?"Choose a data step, or click a prepared dataset in Output Directory to inspect it.":"Choose a model component to edit its MLBricks API.")+'</div>';
       }else if(inspectorTab==="info"){

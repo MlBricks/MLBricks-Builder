@@ -729,3 +729,68 @@ appear in the same Files browser without redesigning the UI.
 Prepared dataset cards in Output Directory are now compact, close to the Starter card footprint. Click a card to inspect source, split, cleaning, tokenizer, context and storage settings in the right Inspector.
 
 Also fixes DatasetDict split counting: a three-split DatasetDict no longer appears as `Train = 3`. Re-run the data pipeline once after upgrading to refresh old registry metadata.
+
+
+## v0.6.0 — Model Build lifecycle + data compatibility gate
+
+Model Builder no longer presents the data-processing **Run** action.
+
+### Model workflow
+
+`Design → Build → Select Built Model → Check Data → Train → Generate`
+
+In **Model Builder**, the top action is now **Build**.
+
+Build:
+
+- validates that the architecture has an input and output/head
+- rejects disconnected components
+- rejects Main-lane cycles
+- visually walks through the model nodes
+- snapshots the current architecture into **Model Outputs**
+- preserves revisions when the same model is rebuilt
+
+Data Processing still uses **Run Data**.
+
+### Built Model Inspector
+
+Click a built model in **Output Directory** to open the right-side model panel.
+
+It shows:
+
+- model status / build revision
+- layers and connections
+- input modality
+- output type
+- context length
+- batch size
+- parameter estimate
+- build time
+- prepared-dataset selector
+
+### Compatibility gate
+
+A user can choose any prepared dataset from the project. Builder checks:
+
+- input/data modality
+- Train split existence
+- tokenizer availability for text language models
+- data context length versus model context length
+- `input_ids` availability when split-column metadata is available
+
+When compatible, the **Train** action appears.
+
+When incompatible, Train is hidden and the Inspector shows the exact failed
+checks.
+
+The model's dataset selection also updates its editable Text Input binding.
+
+### Generation
+
+**Generate Tokens** is shown for text models but remains disabled until the model
+has trained or loaded weights.
+
+Build is currently an architecture validation/snapshot step. This version does
+not pretend to execute model training or token generation without a model
+runtime/compiler. Train records readiness after compatibility passes; the
+training executor is the next runtime layer to connect.
