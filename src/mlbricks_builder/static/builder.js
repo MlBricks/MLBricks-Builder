@@ -41,6 +41,8 @@
     let popoutChannel=null;
     let popoutHostConnected=!isPopout;
     let popoutPeerWindow=null;
+    let popoutMessagePort=null;
+    let popoutPeerConnected=false;
     let popoutHelloTimer=null;
     let pendingBroadcastState=null;
     let pendingBroadcastCommand=null;
@@ -531,46 +533,68 @@
       return Object.assign({__mlbricks_builder_popout__:true,channel:popoutChannelName},message||{});
     }
 
+    function attachPopoutMessagePort(port){
+      if(!port)return false;
+      try{
+        if(popoutMessagePort && popoutMessagePort!==port){
+          try{popoutMessagePort.close();}catch(_){}
+        }
+        popoutMessagePort=port;
+        popoutMessagePort.onmessage=event=>{
+          try{handlePopoutMessage(event.data||{},null);}catch(_){}
+        };
+        try{popoutMessagePort.start();}catch(_){}
+        return true;
+      }catch(_){return false;}
+    }
+
     function sendPopoutMessage(message){
       const packet=popoutPacket(message);
+      let sent=false;
+      // Prefer the dedicated transferred MessagePort, but also send through the
+      // browser-window fallbacks. Duplicates are harmless and this prevents a
+      // stale port from hiding a working opener/BroadcastChannel route.
+      try{if(popoutMessagePort){popoutMessagePort.postMessage(packet);sent=true;}}catch(_){popoutMessagePort=null;}
+
       if(isPopout){
         try{
           if(window.opener && !window.opener.closed){
             window.opener.postMessage(packet,"*");
-            return true;
+            sent=true;
           }
         }catch(_){}
-        try{
-          if(popoutChannel){popoutChannel.postMessage(packet);return true;}
-        }catch(_){}
-        return false;
+        try{if(popoutChannel){popoutChannel.postMessage(packet);sent=true;}}catch(_){}
+        return sent;
       }
 
-      let sent=false;
       try{
         if(popoutPeerWindow && !popoutPeerWindow.closed){
           popoutPeerWindow.postMessage(packet,"*");
           sent=true;
         }
       }catch(_){}
-      if(!sent){
-        try{if(popoutChannel){popoutChannel.postMessage(packet);sent=true;}}catch(_){}
-      }
+      try{if(popoutChannel){popoutChannel.postMessage(packet);sent=true;}}catch(_){}
       return sent;
     }
 
     function sendHostReply(targetWindow,message){
       const packet=popoutPacket(Object.assign({source:"host"},message||{}));
+      let sent=false;
+      try{if(popoutMessagePort){popoutMessagePort.postMessage(packet);sent=true;}}catch(_){popoutMessagePort=null;}
       try{
         if(targetWindow && !targetWindow.closed){
           targetWindow.postMessage(packet,"*");
-          return true;
+          sent=true;
         }
       }catch(_){}
       try{
-        if(popoutChannel){popoutChannel.postMessage(packet);return true;}
+        if(popoutPeerWindow && popoutPeerWindow!==targetWindow && !popoutPeerWindow.closed){
+          popoutPeerWindow.postMessage(packet,"*");
+          sent=true;
+        }
       }catch(_){}
-      return false;
+      try{if(popoutChannel){popoutChannel.postMessage(packet);sent=true;}}catch(_){}
+      return sent;
     }
 
     function clickBridgeButton(button){
@@ -1183,6 +1207,7 @@
       if(msg.source!=="popout")return;
       if(sourceWindow)popoutPeerWindow=sourceWindow;
       if(msg.type==="hello"){
+        popoutPeerConnected=true;
         sendHostReply(sourceWindow,{type:"hello_ack",state:cp(state),ts:Date.now()});
         return;
       }
@@ -1210,7 +1235,27 @@
 
     function setupPopoutBridge(){
       window.addEventListener("message",event=>{
-        try{handlePopoutMessage(event.data||{},event.source||null);}catch(_){}
+        try{
+          const msg=event.data||{};
+          if(
+            isPopout &&
+            msg.__mlbricks_builder_popout__===true &&
+            msg.channel===popoutChannelName &&
+            msg.type==="port_offer" &&
+            event.ports && event.ports[0]
+          ){
+            attachPopoutMessagePort(event.ports[0]);
+            if(msg.state?.components){state=cp(msg.state);ensureWorkspaces();selected=null;pendingPort=null;}
+            popoutHostConnected=true;
+            if(popoutHelloTimer){clearInterval(popoutHelloTimer);popoutHelloTimer=null;}
+            sendPopoutMessage({type:"hello",source:"popout",ts:Date.now()});
+            updateKernelBadge();
+            setStatus("Full Window connected to notebook kernel.");
+            draw();
+            return;
+          }
+          handlePopoutMessage(msg,event.source||null);
+        }catch(_){}
       });
 
       if(typeof BroadcastChannel!=="undefined"){
@@ -1271,36 +1316,60 @@
       // Build the closing script tag by concatenation so builder.js itself never
       // contains a raw script end tag while generated HTML receives a real one.
       const closeScript="</"+"script>";
-      return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MLBricks Builder · '+String(state.project?.name||"Full Window")+'</title><style>'+cssText+'</style><style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#0b1118}body{padding:0}.mlb-root{width:100vw!important;height:100vh!important;min-height:0!important;max-height:none!important;min-width:0!important;border-radius:0!important;border:0!important;box-shadow:none!important}</style></head><body><div id="'+targetId+'" class="mlb-root" data-mlbricks-builder-version="0.7.16"></div><script>'+jsText+closeScript+'<script>window.MLBricksBuilder.mount(document.getElementById('+JSON.stringify(targetId)+'),'+safePayload+');'+closeScript+'</body></html>';
+      return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MLBricks Builder · '+String(state.project?.name||"Full Window")+'</title><style>'+cssText+'</style><style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#0b1118}body{padding:0}.mlb-root{width:100vw!important;height:100vh!important;min-height:0!important;max-height:none!important;min-width:0!important;border-radius:0!important;border:0!important;box-shadow:none!important}</style></head><body><div id="'+targetId+'" class="mlb-root" data-mlbricks-builder-version="0.7.17"></div><script>'+jsText+closeScript+'<script>window.MLBricksBuilder.mount(document.getElementById('+JSON.stringify(targetId)+'),'+safePayload+');'+closeScript+'</body></html>';
     }
 
-    function prepareFullWindowLink(anchor){
+    function openFullWindow(){
       const page=fullWindowPage();
       if(!page){
         setStatus("Full Window assets are unavailable. Re-run the Builder cell.");
         return false;
       }
+
+      const targetName="mlbricks_builder_full_"+String(popoutChannelName).replace(/[^a-zA-Z0-9_-]/g,"_");
+      let popup=null;
       try{
         if(fullWindowObjectUrl)URL.revokeObjectURL(fullWindowObjectUrl);
         fullWindowObjectUrl=URL.createObjectURL(new Blob([page],{type:"text/html"}));
-        anchor.href=fullWindowObjectUrl;
-        anchor.target="mlbricks_builder_full_"+String(popoutChannelName).replace(/[^a-zA-Z0-9_-]/g,"_");
-        return true;
-      }catch(err){
-        setStatus("Could not create the Full Window page: "+String(err?.message||err));
+        // Calling window.open directly inside the click gives the notebook host a
+        // WindowProxy to the new tab. That lets us transfer a MessagePort even if
+        // the popup later has no usable window.opener because of sandbox policy.
+        popup=window.open(fullWindowObjectUrl,targetName);
+      }catch(_){popup=null;}
+      if(!popup){
+        setStatus("Browser blocked the Full Window tab. Allow pop-ups for this notebook, then try again.");
         return false;
       }
+
+      popoutPeerWindow=popup;
+      popoutPeerConnected=false;
+
+      const offerPort=()=>{
+        if(popoutPeerConnected || !popup || popup.closed || typeof MessageChannel==="undefined")return;
+        try{
+          const channel=new MessageChannel();
+          attachPopoutMessagePort(channel.port1);
+          popup.postMessage(
+            popoutPacket({type:"port_offer",source:"host",state:cp(state),ts:Date.now()}),
+            "*",
+            [channel.port2]
+          );
+        }catch(_){}
+      };
+      // Retrying with fresh MessageChannels handles slow notebook/popup startup;
+      // a transferred port can only be offered once, so each retry uses a new one.
+      [120,400,900,1600,2600].forEach(ms=>setTimeout(offerPort,ms));
+
+      // Also send a normal-window acknowledgement after startup. If opener works,
+      // this connects immediately; otherwise the MessageChannel offers above do.
+      setTimeout(()=>sendHostReply(popup,{type:"hello_ack",state:cp(state),ts:Date.now()}),220);
+      setStatus("Opening Builder in a full-window tab. Keep this notebook tab open for Python execution.");
+      return true;
     }
 
-    function activateFullWindowLink(event,anchor){
-      if(!prepareFullWindowLink(anchor)){
-        event.preventDefault();
-        return;
-      }
-      // Navigation is left to the browser's normal anchor behavior. This is more
-      // reliable inside Kaggle/Colab notebook sandboxes than window.open/about:blank
-      // and counts as a direct user-initiated new-tab navigation.
-      setStatus("Opening Builder in a full-window tab. Keep this notebook tab open for Python execution.");
+    function activateFullWindowLink(event){
+      event.preventDefault();
+      openFullWindow();
     }
 
     function btn(text,cls){const b=document.createElement("button");b.type="button";b.className=cls||"";b.textContent=text;return b;}
@@ -2927,7 +2996,7 @@
       if(!model)return;
       const config={
         format:"mlbricks-model-config",
-        builder_version:"0.7.16",
+        builder_version:"0.7.17",
         project:cp(state.project||{}),
         model:cp(model),
         selected_dataset:selectedModelDataset(),
@@ -4218,7 +4287,7 @@
       return {
         format:"mlbricks-builder-design",
         format_version:"0.7.5",
-        builder_version:"0.7.16",
+        builder_version:"0.7.17",
         saved_at:new Date().toISOString(),
         state:sanitizedProjectState()
       };
@@ -4264,7 +4333,7 @@
       }
       const payload={
         format:"mlbricks-export",
-        builder_version:"0.7.16",
+        builder_version:"0.7.17",
         workspace:state.active_workspace,
         project:cp(state.project||{}),
         prepared_datasets:cp(state.prepared_datasets||[]),
@@ -4281,7 +4350,7 @@
     async function shareWorkspace(){
       const lines=[
         "MLBricks Builder — "+(state.project?.name||workspaceName()),
-        "Version: 0.7.10",
+        "Version: 0.7.17",
         "Workspace: "+workspaceName(),
         "Nodes: "+(current(state).nodes||[]).length,
         "Connections: "+(current(state).edges||[]).length
@@ -4297,7 +4366,7 @@
     function showQuickHelp(){
       const win=(root.ownerDocument&&root.ownerDocument.defaultView)||window;
       const help=[
-        'MLBricks Builder v0.7.16',
+        'MLBricks Builder v0.7.17',
         '',
         '• Add bricks or data steps from the left library.',
         '• Export downloads a model config or workspace export file.',
@@ -4418,7 +4487,7 @@
         fullBtn.textContent="↗ Full Window";
         fullBtn.href="#";
         fullBtn.title="Open MLBricks Builder in a separate full-window browser tab";
-        fullBtn.addEventListener("click",event=>activateFullWindowLink(event,fullBtn));
+        fullBtn.addEventListener("click",activateFullWindowLink);
       }
       const helpBtn=btn("?","mlb-dark-btn");helpBtn.title="Quick help";helpBtn.addEventListener("click",showQuickHelp);
       const settingsBtn=btn("⚙","mlb-dark-btn");settingsBtn.title="Project settings";settingsBtn.addEventListener("click",openBuilderSettings);

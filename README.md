@@ -1496,17 +1496,30 @@ tag, so the browser treated the rest of the page as part of the first script.
 
 v0.7.16 fixes the generated HTML and hardens Full Window for notebook sandboxes:
 
-- **Full Window** is now a real user-initiated link backed by a self-contained
-  Blob URL instead of `window.open("about:blank")` + `document.write`
-- the generated page now receives real script closing tags and mounts normally
-- notebook ↔ Full Window communication primarily uses `window.postMessage`
-  through the opener and falls back to `BroadcastChannel`
+- **Full Window** uses a self-contained Blob page
+- the generated page receives real script closing tags and mounts normally
+- notebook ↔ Full Window communication uses `window.postMessage` with
+  `BroadcastChannel` fallback
 - Run and Stop have distinct proxy bridge identifiers in the popout
-- repeated hello/handshake attempts make the kernel-host connection more robust
-  when the new tab loads slowly
+- repeated hello/handshake attempts help when the new tab loads slowly
 - Full Window remains 100vw × 100vh and keeps the notebook tab as the Python host
 - local scan status text is environment-neutral instead of Kaggle-specific
 
-The popout path was tested in a Chromium sandboxed iframe with `allow-scripts`
-and `allow-popups`, including successful rendering and message forwarding back
-to the host frame.
+## v0.7.17 — dedicated Full Window kernel channel
+
+v0.7.16 could render the Full Window correctly but some sandboxed notebook
+environments could strip or isolate `window.opener` / `BroadcastChannel`, leaving
+the new tab showing **Kernel bridge is offline**.
+
+v0.7.17 makes the notebook tab explicitly own the popout and transfers a dedicated
+`MessageChannel` to it:
+
+- Full Window is opened directly from the user click so the notebook retains its
+  `WindowProxy` even when the popup cannot use `window.opener`
+- the notebook transfers a two-way `MessagePort` to the Full Window
+- fresh channel offers retry during slow popup startup
+- opener, `postMessage`, and `BroadcastChannel` remain fallbacks
+- duplicate transport messages are tolerated rather than letting one stale route
+  hide another working route
+- state sync, Run, Stop, Train, Generate, Serve, local import, and cloud commands
+  all use the same dedicated transport back to the notebook Python bridge
