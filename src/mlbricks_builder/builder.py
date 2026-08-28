@@ -58,6 +58,7 @@ class Builder:
         self.last_data_result = None
         self.last_run_error = None
         self.trained_models = {}
+        self._model_servers = {}
         # Actual Dataset/DatasetDict objects stay in Python memory. The serializable
         # metadata lives in state["prepared_datasets"] and is saved with the design.
         self.prepared_datasets = {}
@@ -472,6 +473,103 @@ class Builder:
         if progress_callback: emit(payload)
         return text
 
+    def _generation_runtime_for_entry(self, entry, serve_config):
+        runtime=dict(entry.get("generation_config") or {})
+        for key in ("device","backend","execution_mode","compile_mode","precision"):
+            value=(serve_config or {}).get(key)
+            if value not in (None,""): runtime[key]=value
+        return runtime
+
+    def start_model_server(self, model_id, *, config=None, api_key=None, ngrok_token=None, progress_callback=None):
+        from .model_runtime import load_trained_for_generation
+        from .serve import ModelHTTPRuntime
+        entry=self._model_output(model_id)
+        if not entry.get("weights_ready"): raise RuntimeError("Train or load model weights before serving.")
+        config=dict(config or entry.get("serve_config") or {})
+        runtime=self._generation_runtime_for_entry(entry,config)
+        dataset_id=entry.get("selected_dataset_id")
+        meta=self._dataset_meta(dataset_id) if dataset_id else copy.deepcopy(entry.get("hub_dataset_meta") or {})
+        old=self._model_servers.pop(model_id,None)
+        if old is not None: old.stop()
+
+        def emit(message,overall):
+            if progress_callback: progress_callback({"status":"running","runtime_kind":"serve","phase":"starting","overall":overall,"message":message,"model_id":model_id})
+        emit("Loading trained model for API server…",10)
+
+        compiled=tokenizer=None
+        cached=self.trained_models.get(model_id)
+        if cached:
+            previous=cached.get("runtime") or {}
+            keys=("device","backend","execution_mode","compile_mode","precision")
+            if all(str(previous.get(k,"auto"))==str(runtime.get(k,"auto")) for k in keys):
+                compiled,tokenizer=cached.get("compiled"),cached.get("tokenizer")
+        if compiled is None or tokenizer is None:
+            compiled,tokenizer=load_trained_for_generation(
+                state=self.state,model_entry=entry,dataset_meta=meta,config=runtime,
+                checkpoint_path=entry.get("checkpoint_path") or entry.get("path"),progress=None)
+            self.trained_models[model_id]={"compiled":compiled,"tokenizer":tokenizer,"runtime":dict(runtime)}
+
+        emit("Starting HTTP inference server…",55)
+        server=ModelHTTPRuntime(
+            model_id=model_id,model_name=entry.get("name") or "MLBricks Model",
+            compiled=compiled,tokenizer=tokenizer,
+            context=entry.get("context_length") or (self.state.get("project") or {}).get("context_length") or 512,
+            generation_defaults=entry.get("generation_config") or {},
+            host=config.get("host") or "0.0.0.0",port=config.get("port") if config.get("port") is not None else 8000,
+            cors_origin=config.get("cors_origin") or "*",api_key_required=bool(config.get("require_api_key",True)),
+            api_key=api_key or None)
+        info=server.start()
+        tunnel=str(config.get("public_tunnel") or "off").lower()
+        if tunnel=="ngrok":
+            emit("Opening public HTTPS tunnel…",80)
+            server.start_ngrok(auth_token=ngrok_token or None); info=server.info()
+        self._model_servers[model_id]=server
+
+        safe_config={"host":server.host,"port":info.port,"cors_origin":server.cors_origin,
+                     "require_api_key":server.api_key_required,"public_tunnel":tunnel,
+                     "device":runtime.get("device","auto"),"backend":runtime.get("backend","auto"),
+                     "execution_mode":runtime.get("execution_mode","eager"),
+                     "compile_mode":runtime.get("compile_mode","reduce-overhead"),
+                     "precision":runtime.get("precision","auto")}
+        entry["serve_config"]=safe_config; entry["serve_status"]="running"
+        entry["serve_urls"]={"local_url":info.local_url,"lan_url":info.lan_url,"public_url":info.public_url}
+        result=info.to_dict(include_secret=True)
+        if progress_callback: progress_callback({"status":"done","runtime_kind":"serve","phase":"running","overall":100,
+            "message":f'Model API running on port {info.port}.',"model_id":model_id,"serve_info":result,
+            "model_update":{"serve_config":safe_config,"serve_status":"running","serve_urls":entry["serve_urls"]}})
+        return result
+
+    def stop_model_server(self, model_id, *, progress_callback=None):
+        entry=self._model_output(model_id); server=self._model_servers.pop(model_id,None)
+        if server is not None: server.stop()
+        entry["serve_status"]="stopped"; entry["serve_urls"]={}
+        payload={"status":"stopped","runtime_kind":"serve","phase":"stopped","overall":100,
+                 "message":"Model API server stopped.","model_id":model_id,
+                 "serve_info":{"model_id":model_id,"model_name":entry.get("name"),"running":False},
+                 "model_update":{"serve_status":"stopped","serve_urls":{}}}
+        if progress_callback: progress_callback(payload)
+        return payload["serve_info"]
+
+    def model_server_status(self, model_id, *, progress_callback=None):
+        entry=self._model_output(model_id); server=self._model_servers.get(model_id)
+        if server is None:
+            info={"model_id":model_id,"model_name":entry.get("name"),"running":False}; message="Model API server is not running."; status="stopped"
+        else:
+            info=server.info().to_dict(include_secret=False); info["running"]=True
+            message=f'Model API running on port {info["port"]}.'; status="done"
+        if progress_callback: progress_callback({"status":status,"runtime_kind":"serve","phase":"status","overall":100,
+                                                 "message":message,"model_id":model_id,"serve_info":info})
+        return info
+
+    def _execute_serve_command(self, command, progress_callback=None):
+        action=str(command.get("action") or ""); model_id=command.get("model_id"); serve=command.get("serve") or {}
+        credentials=serve.get("credentials") or {}
+        if action=="serve_start": return self.start_model_server(model_id,config=serve.get("config") or {},
+            api_key=credentials.get("api_key"),ngrok_token=credentials.get("ngrok_token"),progress_callback=progress_callback)
+        if action=="serve_stop": return self.stop_model_server(model_id,progress_callback=progress_callback)
+        if action=="serve_status": return self.model_server_status(model_id,progress_callback=progress_callback)
+        raise ValueError(f"Unknown serve command: {action!r}")
+
     def hub_status(self, token=None):
         from .hub import auth_status
         return auth_status(token=token)
@@ -670,7 +768,7 @@ class Builder:
             root.mkdir(parents=True, exist_ok=True)
             manifest = {
                 "format": "mlbricks-cloud-bundle-v1",
-                "builder_version": "0.6.8",
+                "builder_version": "0.7.0",
                 "content_type": content_type,
             }
 
@@ -1284,6 +1382,11 @@ class Builder:
                         command,
                         progress_callback=self._publish_bridge_progress,
                     )
+                elif action.startswith("serve_"):
+                    self._execute_serve_command(
+                        command,
+                        progress_callback=self._publish_bridge_progress,
+                    )
                 else:
                     self.last_data_result = self.run_data_pipeline(
                         progress_callback=self._publish_bridge_progress,
@@ -1359,8 +1462,8 @@ class Builder:
         available = [k for k, v in self.mlbricks_api.items() if v.get("available")]
         unavailable = {k: v.get("error") for k, v in self.mlbricks_api.items() if not v.get("available")}
         return {
-            "builder_version": "0.6.8",
-            "frontend_version": "0.6.8",
+            "builder_version": "0.7.0",
+            "frontend_version": "0.7.0",
             "mlbricks": info,
             "api_components_available": available,
             "api_components_unavailable": unavailable,
@@ -1381,7 +1484,7 @@ class Builder:
         }).replace("</", "<\\/")
         return f"""
 <style>{css}</style>
-<div id="{html.escape(self._instance_id)}" class="mlb-root" data-mlbricks-builder-version="0.6.8"></div>
+<div id="{html.escape(self._instance_id)}" class="mlb-root" data-mlbricks-builder-version="0.7.0"></div>
 <script>
 try {{ delete window.MLBricksBuilder; }} catch (e) {{ window.MLBricksBuilder = undefined; }}
 {js}

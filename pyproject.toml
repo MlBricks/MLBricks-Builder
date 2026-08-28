@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mlbricks-builder"
-version = "0.6.8"
+version = "0.7.0"
 description = "Hierarchical visual node builder for MLBricks models in Jupyter, Kaggle and Colab."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -54,4 +54,8 @@ cloud = [
   "google-cloud-storage>=2.16",
   "google-auth>=2.29",
   "azure-storage-blob>=12.20"
+]
+
+serve = [
+  "pyngrok>=7.2"
 ]

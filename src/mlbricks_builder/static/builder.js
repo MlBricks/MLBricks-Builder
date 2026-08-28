@@ -41,6 +41,7 @@
     let execution={status:"idle",overall:0,message:"Ready",nodes:{}};
     let localFiles={roots:[],entries:[],truncated:false};
     let localForm={path:"",content_type:"auto",tokenizer_name:"gpt2",text_column:"text"};
+    let serveSecrets={};
     let cloudStatus={};
     let cloudSecrets={
       huggingface:{token:""},
@@ -405,6 +406,28 @@
       setStatus(execution.message);
     }
 
+    function requestServeCommand(action,entry){
+      if(!entry)return;
+      updateKernelBadge();
+      if(!bridgeReady()){
+        execution={status:"error",runtime_kind:"serve",overall:0,message:"Kernel bridge is offline. Re-run the Builder cell, then try again.",nodes:{}};
+        applyExecutionProgress(execution);setStatus(execution.message);return;
+      }
+      const secret=serveSecrets[entry.id]||{api_key:"",ngrok_token:""};
+      state._runtime_command={action,model_id:entry.id,serve:{
+        config:cp(entry.serve_config||{}),
+        credentials:{api_key:secret.api_key||"",ngrok_token:secret.ngrok_token||""}
+      },ts:Date.now()};
+      if(!setBridgeState()){delete state._runtime_command;setStatus("Could not send API server configuration to Python.");return;}
+      const button=bridgeControl(bridge.run,"button");
+      if(!button){delete state._runtime_command;setStatus("Python API server control was not found.");return;}
+      const progressInput=bridgeControl(bridge.progress,"textarea");lastProgressRaw=progressInput?.value||lastProgressRaw;
+      execution={status:"running",runtime_kind:"serve",phase:action,overall:0,message:
+        action==="serve_start"?"Starting model API server…":action==="serve_stop"?"Stopping model API server…":"Checking model API server…",nodes:{}};
+      applyExecutionProgress(execution);setStatus(execution.message);
+      setTimeout(()=>{clickBridgeButton(button);setTimeout(()=>{delete state._runtime_command;},350);},250);
+    }
+
     function requestRuntimeCommand(action,entry){
       if(!entry)return;
       updateKernelBadge();
@@ -654,6 +677,19 @@
         }
         if(next.message)setStatus(next.message);
         if(next.status==="done"||next.status==="error")setTimeout(draw,80);
+      }
+
+      if(next.runtime_kind==="serve"){
+        const entry=builtModelById(next.model_id||runtimePanel?.modelId);
+        if(entry&&next.serve_info){
+          entry.serve_live=cp(next.serve_info);
+          if(next.serve_info.api_key){
+            serveSecrets[entry.id]=serveSecrets[entry.id]||{};
+            serveSecrets[entry.id].api_key=next.serve_info.api_key;
+          }
+        }
+        if(next.message)setStatus(next.message);
+        if(runtimePanel?.mode==="serve")setTimeout(draw,80);
       }
 
       if(next.prepared_dataset){
@@ -1511,10 +1547,24 @@
       return out;
     }
 
+    function defaultServeConfig(entry){
+      const gen=defaultGenerationConfig(entry);
+      return {
+        host:"0.0.0.0",port:8000,cors_origin:"*",require_api_key:true,public_tunnel:"off",
+        device:entry?.generation_config?.device||gen.device,
+        backend:entry?.generation_config?.backend||gen.backend,
+        execution_mode:entry?.generation_config?.execution_mode||gen.execution_mode,
+        compile_mode:entry?.generation_config?.compile_mode||gen.compile_mode,
+        precision:entry?.generation_config?.precision||gen.precision
+      };
+    }
+
     function ensureRuntimeConfigs(entry){
       const dataset=preparedDatasetById(entry?.selected_dataset_id)||null;
       entry.training_config=mergeRuntimeDefaults(defaultTrainingConfig(entry,dataset),entry.training_config);
       entry.generation_config=mergeRuntimeDefaults(defaultGenerationConfig(entry),entry.generation_config);
+      entry.serve_config=mergeRuntimeDefaults(defaultServeConfig(entry),entry.serve_config);
+      serveSecrets[entry.id]=serveSecrets[entry.id]||{api_key:"",ngrok_token:""};
     }
 
     function openRuntimePanel(mode,entry){
@@ -1524,7 +1574,7 @@
       bottomExpanded=false;
       selected=null;
       outputDirectorySelection=entry.id;
-      setStatus(mode==="train"?"Training setup opened.":"Generation setup opened.");
+      setStatus(mode==="train"?"Training setup opened.":mode==="generate"?"Generation setup opened.":"Model API server setup opened.");
       draw();
     }
 
@@ -1537,6 +1587,11 @@
     function requestTokenGeneration(entry){
       if(!entry)return;
       openRuntimePanel("generate",entry);
+    }
+
+    function requestModelServing(entry){
+      if(!entry||!entry.weights_ready)return;
+      openRuntimePanel("serve",entry);
     }
 
     function runtimeDeviceOptions(){
@@ -1784,7 +1839,89 @@
       const stop=btn("Stop Generation","mlb-runtime-stop");stop.disabled=!(execution.status==="running"&&execution.runtime_kind==="generate");stop.addEventListener("click",requestStop);side.appendChild(stop);
     }
 
+    function serveUrlCard(label,url,kind){
+      const card=document.createElement("div");card.className="mlb-serve-url "+kind;
+      const top=document.createElement("div");top.innerHTML="<strong>"+label+"</strong><span>"+(url||"Unavailable")+"</span>";card.appendChild(top);
+      if(url){const actions=document.createElement("div");
+        const open=btn("Open","mlb-serve-mini");open.addEventListener("click",()=>window.open(url,"_blank","noopener"));
+        const copyBtn=btn("Copy","mlb-serve-mini");copyBtn.addEventListener("click",async()=>{try{await navigator.clipboard.writeText(url);setStatus(label+" copied.");}catch(_){setStatus(url);}});
+        actions.append(open,copyBtn);card.appendChild(actions);}
+      return card;
+    }
+
+    function serveCodeExample(entry,info){
+      const base=info?.public_url||info?.lan_url||info?.local_url||"http://127.0.0.1:8000";
+      const secret=serveSecrets[entry.id]?.api_key||"YOUR_API_KEY";
+      const auth=entry.serve_config?.require_api_key!==false?'\\n    "Authorization": "Bearer '+secret+'",':"";
+      return 'fetch("'+base+'/v1/generate", {\\n  method: "POST",\\n  headers: {\\n    "Content-Type": "application/json",'+auth+'\\n  },\\n  body: JSON.stringify({\\n    prompt: "Once upon a time",\\n    max_new_tokens: 128\\n  })\\n}).then(r => r.json()).then(console.log);';
+    }
+
+    function renderServingWorkspace(canvas,entry){
+      ensureRuntimeConfigs(entry);
+      const config=entry.serve_config,secret=serveSecrets[entry.id]||(serveSecrets[entry.id]={api_key:"",ngrok_token:""});
+      const tab=runtimePanel?.tab||"setup",info=entry.serve_live||{};
+      const outer=document.createElement("div");outer.className="mlb-runtime-workspace";
+      const top=document.createElement("div");top.className="mlb-runtime-head";
+      const title=document.createElement("div");title.innerHTML="<strong>SERVE MODEL / API</strong><span>"+entry.name+"</span>";
+      const tabs=document.createElement("div");tabs.className="mlb-runtime-tabs";
+      tabs.append(runtimeTabButton("API Server Setup","setup",entry,"serve"),runtimeTabButton("API Server Status","status",entry,"serve"));
+      top.append(title,tabs);outer.appendChild(top);
+      const layout=document.createElement("div");layout.className="mlb-runtime-layout";
+      const main=document.createElement("div");main.className="mlb-runtime-main",side=document.createElement("aside");side.className="mlb-runtime-side";
+      layout.append(main,side);outer.appendChild(layout);
+      const update=(key,value)=>{config[key]=value;setStatus("Server setting updated: "+key);draw();};
+
+      if(tab==="status"){
+        const running=entry.serve_status==="running"||!!info.local_url;
+        const hero=runtimeSection("API Server Status"),status=document.createElement("div");status.className="mlb-serve-status "+(running?"running":"stopped");
+        status.innerHTML="<strong>"+(running?"● RUNNING":"○ STOPPED")+"</strong><span>"+(running?"Model is accepting HTTP inference requests.":"Start the server from API Server Setup.")+"</span>";hero.appendChild(status);main.appendChild(hero);
+        const links=runtimeSection("Access Links"),linkGrid=document.createElement("div");linkGrid.className="mlb-serve-links";
+        linkGrid.append(serveUrlCard("Localhost",info.local_url||entry.serve_urls?.local_url,"local"),
+          serveUrlCard("LAN / Same Wi‑Fi",info.lan_url||entry.serve_urls?.lan_url,"lan"),
+          serveUrlCard("Public HTTPS",info.public_url||entry.serve_urls?.public_url,"public"));links.appendChild(linkGrid);main.appendChild(links);
+        if(info.remote_notebook&&!info.public_url){const warn=document.createElement("div");warn.className="mlb-serve-warning";
+          warn.innerHTML="<strong>"+(info.environment||"Remote notebook")+" detected</strong><span>localhost and LAN belong to the remote kernel. Enable ngrok Public HTTPS in Setup for your phone or local web app.</span>";main.appendChild(warn);}
+        const endpoints=runtimeSection("API Endpoints"),ep=document.createElement("div");ep.className="mlb-serve-endpoints";
+        [["Playground","GET /"],["Health","GET /health"],["Generate","POST /v1/generate"],["OpenAI-style","POST /v1/completions"],["Models","GET /v1/models"]].forEach(([a,b])=>{const row=document.createElement("div");row.innerHTML="<span>"+a+"</span><strong>"+b+"</strong>";ep.appendChild(row);});endpoints.appendChild(ep);main.appendChild(endpoints);
+        const code=runtimeSection("Web App Example"),pre=document.createElement("pre");pre.className="mlb-serve-code";pre.textContent=serveCodeExample(entry,info);code.appendChild(pre);main.appendChild(code);
+        const summary=document.createElement("div");summary.className="mlb-runtime-summary";summary.innerHTML="<h3>Server</h3><div><span>Status</span><strong>"+(running?"Running":"Stopped")+"</strong></div><div><span>Port</span><strong>"+(info.port||config.port)+"</strong></div><div><span>API Key</span><strong>"+(config.require_api_key?"Required":"Off")+"</strong></div><div><span>Public Tunnel</span><strong>"+(config.public_tunnel||"off")+"</strong></div>";side.appendChild(summary);
+        if(config.require_api_key){const keyBox=document.createElement("div");keyBox.className="mlb-serve-secret";keyBox.innerHTML="<strong>API KEY</strong><code>"+(secret.api_key||"Restart server to generate key")+"</code>";const copyKey=btn("Copy API Key","mlb-dark-btn");copyKey.addEventListener("click",async()=>{try{await navigator.clipboard.writeText(secret.api_key||"");setStatus("API key copied.");}catch(_){}});keyBox.appendChild(copyKey);side.appendChild(keyBox);}
+        const check=btn("Refresh Status","mlb-dark-btn");check.addEventListener("click",()=>requestServeCommand("serve_status",entry));side.appendChild(check);
+        const stop=btn("Stop API Server","mlb-runtime-stop");stop.disabled=!running;stop.addEventListener("click",()=>requestServeCommand("serve_stop",entry));side.appendChild(stop);
+        canvas.appendChild(outer);return;
+      }
+
+      const access=runtimeSection("Server Access"),accessGrid=document.createElement("div");accessGrid.className="mlb-runtime-grid";
+      accessGrid.append(runtimeField("Host","text",config.host,v=>update("host",v)),runtimeField("Port","number",config.port,v=>update("port",v)),
+        runtimeField("CORS Origin","text",config.cors_origin,v=>update("cors_origin",v)),runtimeField("Require API Key","checkbox",config.require_api_key,v=>update("require_api_key",v)),
+        runtimeField("Public Link","select",config.public_tunnel,v=>update("public_tunnel",v),[{value:"off",label:"Off — Local / LAN only"},{value:"ngrok",label:"ngrok — Public HTTPS"}]));
+      access.appendChild(accessGrid);main.appendChild(access);
+
+      const secretsSection=runtimeSection("Session Credentials"),secGrid=document.createElement("div");secGrid.className="mlb-runtime-grid";
+      secGrid.appendChild(runtimeField("API Key (blank = generate one)","password",secret.api_key,v=>secret.api_key=v));
+      if(config.public_tunnel==="ngrok")secGrid.appendChild(runtimeField("ngrok Authtoken","password",secret.ngrok_token,v=>secret.ngrok_token=v));
+      secretsSection.appendChild(secGrid);const sn=document.createElement("div");sn.className="mlb-serve-secret-note";sn.textContent="API keys and ngrok tokens are session-only and are not saved in Builder files.";secretsSection.appendChild(sn);main.appendChild(secretsSection);
+
+      const dev=runtimeSection("Available Devices");dev.appendChild(deviceCards(config));main.appendChild(dev);
+      const runtime=runtimeSection("Inference Runtime"),grid=document.createElement("div");grid.className="mlb-runtime-grid";
+      const deviceOpts=runtimeDeviceOptions().map(d=>({value:d.id,label:d.label}));
+      grid.append(runtimeField("Device","select",config.device,v=>update("device",v),deviceOpts),
+        runtimeField("Backend","select",config.backend,v=>update("backend",v),runtimeCaps.backends||["auto","native","pytorch"]),
+        runtimeField("Execution","select",config.execution_mode,v=>update("execution_mode",v),runtimeCaps.execution_modes||["eager","compiled"]),
+        runtimeField("Compile Mode","select",config.compile_mode,v=>update("compile_mode",v),runtimeCaps.compile_modes||["default","reduce-overhead","max-autotune"]),
+        runtimeField("Precision","select",config.precision,v=>update("precision",v),runtimeCaps.precisions||["auto","fp32","fp16","bf16"]));runtime.appendChild(grid);main.appendChild(runtime);
+
+      const device=selectedRuntimeDevice(config),summary=document.createElement("div");summary.className="mlb-runtime-summary";
+      summary.innerHTML="<h3>Serve Summary</h3><div><span>Device</span><strong>"+device.label+"</strong></div><div><span>Host</span><strong>"+config.host+":"+config.port+"</strong></div><div><span>Auth</span><strong>"+(config.require_api_key?"API key":"None")+"</strong></div><div><span>Public</span><strong>"+(config.public_tunnel==="ngrok"?"ngrok HTTPS":"Off")+"</strong></div><div><span>Execution</span><strong>"+config.execution_mode+"</strong></div>";side.appendChild(summary);
+      const weights=document.createElement("div");weights.className="mlb-weight-status "+(entry.weights_ready?"ready":"missing");weights.textContent=entry.weights_ready?"✓ Trained / loaded weights available":"✕ No weights available";side.appendChild(weights);
+      const start=btn(entry.serve_status==="running"?"Restart API Server":"Start API Server","mlb-runtime-start");start.disabled=!entry.weights_ready||execution.status==="running";
+      start.addEventListener("click",()=>{runtimePanel={mode:"serve",modelId:entry.id,tab:"status"};entry.serve_live={running:false,message:"Starting API server…"};draw();setTimeout(()=>requestServeCommand("serve_start",entry),80);});side.appendChild(start);
+      if(config.public_tunnel==="ngrok"){const note=document.createElement("div");note.className="mlb-serve-warning compact";note.innerHTML="<strong>Remote access</strong><span>ngrok creates the HTTPS URL needed to reach a Kaggle/Colab model from your phone or local web app.</span>";side.appendChild(note);}
+      canvas.appendChild(outer);
+    }
+
     function renderRuntimeWorkspace(canvas,entry,mode){
+      if(mode==="serve"){renderServingWorkspace(canvas,entry);return;}
       const outer=document.createElement("div");outer.className="mlb-runtime-workspace";
       const top=document.createElement("div");top.className="mlb-runtime-head";
       const title=document.createElement("div");title.innerHTML="<strong>"+(mode==="train"?"TRAIN MODEL":"GENERATE TOKENS")+"</strong><span>"+entry.name+"</span>";
@@ -2025,6 +2162,14 @@
           :"Configure generation now; actual token generation needs trained/loaded weights";
         generate.addEventListener("click",()=>requestTokenGeneration(entry));
         actions.appendChild(generate);
+
+        const serve=btn("Serve Model / API","mlb-serve-btn");
+        serve.disabled=!entry.weights_ready;
+        serve.title=entry.weights_ready
+          ?"Create localhost, LAN, or public API links"
+          :"Train or load model weights before serving";
+        serve.addEventListener("click",()=>requestModelServing(entry));
+        actions.appendChild(serve);
       }
       body.appendChild(actions);
 
@@ -2095,7 +2240,7 @@
 
         const foot=document.createElement("div");foot.className="mlb-output-compact-foot";
         const ds=preparedDatasetById(entry.selected_dataset_id);
-        foot.innerHTML="<span>"+(ds?ds.name:"No training data")+"</span><span>Train / Generate →</span>";
+        foot.innerHTML="<span>"+(ds?ds.name:"No training data")+"</span><span>"+(entry.weights_ready?"Train / Generate / Serve →":"Train →")+"</span>";
         card.appendChild(foot);
 
         card.addEventListener("click",()=>{
@@ -2189,7 +2334,7 @@
       if(!model)return;
       const config={
         format:"mlbricks-model-config",
-        builder_version:"0.6.8",
+        builder_version:"0.7.0",
         project:cp(state.project||{}),
         model:cp(model),
         selected_dataset:selectedModelDataset(),
@@ -3428,8 +3573,8 @@
       rememberWorkspaceView();
       return {
         format:"mlbricks-builder-design",
-        format_version:"0.6.8",
-        builder_version:"0.6.8",
+        format_version:"0.7.0",
+        builder_version:"0.7.0",
         saved_at:new Date().toISOString(),
         state:sanitizedProjectState()
       };
@@ -3621,7 +3766,9 @@
       workspaceBadge.textContent=runtimePanel
         ?(runtimePanel.mode==="train"
           ?((runtimePanel.tab||"setup")==="status"?"TRAINING STATUS":"TRAINING SETUP")
-          :((runtimePanel.tab||"setup")==="status"?"GENERATION STATUS":"GENERATION SETUP"))
+          :runtimePanel.mode==="generate"
+            ?((runtimePanel.tab||"setup")==="status"?"GENERATION STATUS":"GENERATION SETUP")
+            :((runtimePanel.tab||"setup")==="status"?"API SERVER STATUS":"API SERVER SETUP"))
         :workspaceName();
       toolbar.appendChild(workspaceBadge);
 
@@ -3629,7 +3776,7 @@
         const entry=builtModelById(runtimePanel.modelId);
         if(entry){const name=document.createElement("div");name.className="mlb-runtime-toolbar-name";name.textContent=entry.name;toolbar.appendChild(name);}
         const tsp=document.createElement("div");tsp.className="mlb-toolspacer";toolbar.appendChild(tsp);
-        const device=entry?selectedRuntimeDevice(runtimePanel.mode==="train"?entry.training_config:entry.generation_config):null;
+        const device=entry?selectedRuntimeDevice(runtimePanel.mode==="train"?entry.training_config:runtimePanel.mode==="generate"?entry.generation_config:entry.serve_config):null;
         if(device){const d=document.createElement("div");d.className="mlb-toolbar-device";d.textContent=device.label;toolbar.appendChild(d);}
       }else{
         const auto=btn("◎ Auto Layout","mlb-tool");

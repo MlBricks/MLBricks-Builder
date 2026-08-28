@@ -1144,3 +1144,48 @@ Supported local models: MLBricks `last.pt`, periodic `.pt` checkpoints, `.pth` /
 Older checkpoints can still load when the matching Builder project/custom definitions are already open. If they lack embedded nested definitions, Builder now explains that the matching project must be loaded first.
 
 Local projects: `.mlbricks.json`, `.mlbricks.bin`, and `.mlbricks.zip` project bundles.
+
+
+## v0.7.0 — Serve trained models through generated links
+
+A trained or locally loaded model now exposes **Serve Model / API**.
+
+### Links
+
+Starting the server generates:
+
+- `http://127.0.0.1:<port>` for apps on the same machine
+- a LAN URL for phones/devices on the same network
+- optional **ngrok Public HTTPS** for Kaggle, Colab, or remote access
+
+Kaggle/Colab localhost belongs to the remote kernel. To reach that model from
+your phone or a web app on your own computer, enable the public HTTPS tunnel.
+
+### HTTP API
+
+- `GET /` responsive browser playground
+- `GET /health`
+- `GET /v1/model`
+- `GET /v1/models`
+- `POST /v1/generate`
+- `POST /v1/completions` OpenAI-style text-completion response
+
+The trained model is loaded once when the server starts and remains resident.
+
+### Security
+
+Bearer API-key protection is enabled by default. If the API-key field is empty,
+Builder generates a random key. API keys and ngrok tokens are session-only and
+are not written into Builder project files.
+
+For public tunnels install:
+
+```bash
+pip install pyngrok
+```
+
+or:
+
+```bash
+pip install "mlbricks-builder[serve]"
+```
