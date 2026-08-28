@@ -1474,3 +1474,16 @@ Examples:
 secondary **Scan This Path** action remains available for a specific directory.
 No browser-side filesystem guessing is used; detection comes from the Python
 runtime that actually owns the files.
+
+
+## v0.7.15 — Full Window Builder
+
+The top bar includes **↗ Full Window**. It opens the Builder in a separate tab
+that occupies the whole browser viewport. The notebook tab stays open as the
+Python execution host, while a same-browser BroadcastChannel proxies Run Data,
+Train, Generate, Serve Model/API, Local Environment import, Cloud actions and
+Stop between the Full Window tab and the notebook's standard-ipywidgets bridge.
+
+Visual edits in Full Window synchronize back to the notebook Builder. Keep the
+notebook tab/session open for Python-backed actions. No ngrok or public server is
+required simply to use Full Window mode.

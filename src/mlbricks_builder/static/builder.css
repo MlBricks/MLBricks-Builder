@@ -1338,3 +1338,7 @@
 .mlb-local-scan-actions .mlb-local-load{min-width:118px!important}
 .mlb-local-scan-actions .mlb-local-load.secondary{background:#121b24!important;border-color:#3a4c5c!important;color:#9fb0bf!important}
 .mlb-local-badge{max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* v0.7.15 Full Window launcher */
+.mlb-full-window-btn{border-color:#4b5f79;background:#162230;color:#cfe4ff;font-weight:800;white-space:nowrap}
+.mlb-full-window-btn:hover{background:#1b2b3b;border-color:#6282a8}

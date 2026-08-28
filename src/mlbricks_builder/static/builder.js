@@ -36,6 +36,13 @@
     const mlapi=cp(payload.mlbricks_api||{});
     let selected=null,pendingPort=null,filter="All",search="",inspectorTab="settings",zoom=1,status="Ready";
     const bridge=payload.bridge||null;
+    const isPopout=!!(bridge&&bridge.mode==="broadcast");
+    const popoutChannelName=(bridge&&bridge.channel)||("mlbricks-builder-"+(payload.instance_id||root.id||"session"));
+    let popoutChannel=null;
+    let popoutHostConnected=!isPopout;
+    let pendingBroadcastState=null;
+    let pendingBroadcastCommand=null;
+    let popoutSyncTimer=null;
     const runtimeCaps=cp(payload.runtime_capabilities||{devices:[{id:"auto",label:"Auto"},{id:"cpu",label:"CPU"}]});
     const localEnvironment=cp(payload.local_environment||{kind:"python",name:"Python / Jupyter Environment",roots:["."],default_root:"."});
     const localDefaultRoot=localEnvironment.default_root||(localEnvironment.roots||[])[0]||".";
@@ -483,6 +490,10 @@
     }
 
     function bridgeControl(cls,selector){
+      if(isPopout){
+        if(selector==="button")return {__mlbBroadcastKind:cls===bridge.stop?"stop":"run",click(){return true;}};
+        if(selector==="textarea")return {value:lastProgressRaw||""};
+      }
       const host=bridgeRoot(cls);
       if(!host)return null;
       if(host.matches && host.matches(selector))return host;
@@ -515,6 +526,15 @@
 
     function clickBridgeButton(button){
       if(!button)return false;
+      if(isPopout&&button.__mlbBroadcastKind){
+        if(!popoutChannel||!popoutHostConnected)return false;
+        if(button.__mlbBroadcastKind==="stop") popoutChannel.postMessage({type:"stop",source:"popout",ts:Date.now()});
+        else {
+          popoutChannel.postMessage({type:"command",source:"popout",ts:Date.now(),state:pendingBroadcastState||bridgeStatePayload(),command:pendingBroadcastCommand||{action:"data",ts:Date.now()}});
+          pendingBroadcastCommand=null;
+        }
+        return true;
+      }
       try{
         button.click();
         return true;
@@ -531,6 +551,7 @@
 
     function bridgeReady(){
       if(!bridge)return false;
+      if(isPopout)return !!popoutChannel&&popoutHostConnected;
       return !!(
         bridgeControl(bridge.state,"textarea") &&
         (!bridge.command||bridgeControl(bridge.command,"textarea")) &&
@@ -569,6 +590,7 @@
 
     function setBridgeState(){
       if(!bridge)return false;
+      if(isPopout){pendingBroadcastState=bridgeStatePayload();return true;}
       const input=bridgeControl(bridge.state,"textarea");
       if(!input)return false;
       return setNativeValue(input,JSON.stringify(bridgeStatePayload()));
@@ -576,6 +598,7 @@
 
     function setBridgeCommand(command){
       if(!bridge)return false;
+      if(isPopout){pendingBroadcastCommand=cp(command||{});return true;}
       if(!bridge.command){
         // Backward compatibility with an older Python bridge.
         state._runtime_command=cp(command||{});
@@ -856,6 +879,11 @@
         setStatus("Nothing is running.");
         return;
       }
+      if(isPopout){
+        if(popoutChannel&&popoutHostConnected){popoutChannel.postMessage({type:"stop",source:"popout",ts:Date.now()});setStatus("Stop requested in notebook kernel.");}
+        else setStatus("Notebook bridge is disconnected.");
+        return;
+      }
       if(!bridge){
         setStatus("Stop bridge unavailable.");
         return;
@@ -876,6 +904,7 @@
     function applyExecutionProgress(next){
       if(!next||typeof next!=="object")return;
       execution=next;
+      if(popoutChannel&&!isPopout){try{popoutChannel.postMessage({type:"progress",source:"host",payload:cp(next),state:next.state_replace?cp(state):null,ts:Date.now()});}catch(_){}}
 
       if(next.model_id && next.model_update){
         const entry=builtModelById(next.model_id);
@@ -1076,6 +1105,72 @@
         pollBridgeProgress();
         updateKernelBadge();
       },250);
+    }
+
+    function setupPopoutBridge(){
+      if(typeof BroadcastChannel==="undefined")return;
+      try{
+        popoutChannel=new BroadcastChannel(popoutChannelName);
+        popoutChannel.onmessage=(event)=>{
+          const msg=event.data||{};
+          if(isPopout){
+            if(msg.source!=="host")return;
+            if(msg.type==="hello_ack"){
+              popoutHostConnected=true;
+              if(msg.state?.components){state=cp(msg.state);ensureWorkspaces();draw();}
+              updateKernelBadge();
+              return;
+            }
+            if(msg.type==="progress"){
+              if(msg.state?.components){state=cp(msg.state);ensureWorkspaces();}
+              applyExecutionProgress(cp(msg.payload||{}));
+              if(msg.payload?.message)setStatus(msg.payload.message);
+              draw();
+            }
+            return;
+          }
+          if(msg.source!=="popout")return;
+          if(msg.type==="hello"){
+            popoutChannel.postMessage({type:"hello_ack",source:"host",state:cp(state),ts:Date.now()});
+            return;
+          }
+          if(msg.type==="state_sync"&&msg.state?.components){state=cp(msg.state);ensureWorkspaces();selected=null;pendingPort=null;draw();return;}
+          if(msg.type==="stop"){
+            const stopButton=bridgeControl(bridge?.stop,"button");if(stopButton)clickBridgeButton(stopButton);return;
+          }
+          if(msg.type==="command"){
+            if(msg.state?.components){state=cp(msg.state);ensureWorkspaces();}
+            if(!bridgeReady()){
+              popoutChannel.postMessage({type:"progress",source:"host",payload:{status:"error",overall:0,message:"Notebook Python bridge is offline."},ts:Date.now()});return;
+            }
+            const okState=setBridgeState(),okCommand=setBridgeCommand(msg.command||{action:"data"}),runButton=bridgeControl(bridge.run,"button");
+            if(okState&&okCommand&&runButton)clickBridgeButton(runButton);
+            else popoutChannel.postMessage({type:"progress",source:"host",payload:{status:"error",overall:0,message:"Could not forward Full Window command to Python."},ts:Date.now()});
+          }
+        };
+        if(isPopout){popoutChannel.postMessage({type:"hello",source:"popout",ts:Date.now()});setTimeout(()=>updateKernelBadge(),700);}
+      }catch(_){popoutChannel=null;}
+    }
+
+    function schedulePopoutStateSync(){
+      if(!isPopout||!popoutChannel)return;
+      if(popoutSyncTimer)clearTimeout(popoutSyncTimer);
+      popoutSyncTimer=setTimeout(()=>{try{popoutChannel.postMessage({type:"state_sync",source:"popout",state:bridgeStatePayload(),ts:Date.now()});}catch(_){}},180);
+    }
+
+    function openFullWindow(){
+      const assets=payload.popout_assets||{};
+      if(!assets.css||!assets.js){setStatus("Full Window assets are unavailable. Re-run the Builder cell.");return;}
+      const win=window.open("about:blank","_blank");
+      if(!win){setStatus("Browser blocked the Full Window tab. Allow pop-ups for this notebook and try again.");return;}
+      const popPayload=cp(payload);delete popPayload.popout_assets;popPayload.state=bridgeStatePayload();popPayload.bridge={mode:"broadcast",channel:popoutChannelName};popPayload.instance_id=(payload.instance_id||root.id||"mlbricks")+"-full";
+      const targetId="mlbricks-full-"+Date.now();
+      const safePayload=JSON.stringify(popPayload).replace(/</g,"\\u003c");
+      const cssText=String(assets.css).split("</style").join("<\\/style");
+      const jsText=String(assets.js).split("</script").join("<\\/script");
+      const page='<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MLBricks Builder · '+String(state.project?.name||"Full Window")+'</title><style>'+cssText+'</style><style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#0b1118}body{padding:0}.mlb-root{width:100vw!important;height:100vh!important;min-height:0!important;max-height:none!important;min-width:0!important;border-radius:0!important;border:0!important;box-shadow:none!important}</style></head><body><div id="'+targetId+'" class="mlb-root" data-mlbricks-builder-version="0.7.15"></div><script>'+jsText+'<\\/script><script>window.MLBricksBuilder.mount(document.getElementById('+JSON.stringify(targetId)+'),'+safePayload+');<\\/script></body></html>';
+      win.document.open();win.document.write(page);win.document.close();
+      setStatus("Builder opened in a full-window tab. Keep this notebook tab open for Python execution.");
     }
 
     function btn(text,cls){const b=document.createElement("button");b.type="button";b.className=cls||"";b.textContent=text;return b;}
@@ -2702,7 +2797,7 @@
       if(!model)return;
       const config={
         format:"mlbricks-model-config",
-        builder_version:"0.7.14",
+        builder_version:"0.7.15",
         project:cp(state.project||{}),
         model:cp(model),
         selected_dataset:selectedModelDataset(),
@@ -3993,7 +4088,7 @@
       return {
         format:"mlbricks-builder-design",
         format_version:"0.7.5",
-        builder_version:"0.7.14",
+        builder_version:"0.7.15",
         saved_at:new Date().toISOString(),
         state:sanitizedProjectState()
       };
@@ -4039,7 +4134,7 @@
       }
       const payload={
         format:"mlbricks-export",
-        builder_version:"0.7.14",
+        builder_version:"0.7.15",
         workspace:state.active_workspace,
         project:cp(state.project||{}),
         prepared_datasets:cp(state.prepared_datasets||[]),
@@ -4072,7 +4167,7 @@
     function showQuickHelp(){
       const win=(root.ownerDocument&&root.ownerDocument.defaultView)||window;
       const help=[
-        'MLBricks Builder v0.7.14',
+        'MLBricks Builder v0.7.15',
         '',
         '• Add bricks or data steps from the left library.',
         '• Export downloads a model config or workspace export file.',
@@ -4187,12 +4282,14 @@
       const loadBtn=btn("⇧ Load","mlb-dark-btn");loadBtn.title="Load .mlbricks.json or .mlbricks.bin";loadBtn.addEventListener("click",loadDesign);
       const exportBtn=btn("⇩ Export","mlb-dark-btn");exportBtn.title="Export model config or workspace data";exportBtn.addEventListener("click",exportWorkspace);
       const shareBtn=btn("⌯ Share","mlb-dark-btn");shareBtn.title="Copy a project summary";shareBtn.addEventListener("click",shareWorkspace);
+      const fullBtn=!isPopout?btn("↗ Full Window","mlb-dark-btn mlb-full-window-btn"):null;
+      if(fullBtn){fullBtn.title="Open MLBricks Builder in a separate full-window browser tab";fullBtn.addEventListener("click",openFullWindow);}
       const helpBtn=btn("?","mlb-dark-btn");helpBtn.title="Quick help";helpBtn.addEventListener("click",showQuickHelp);
       const settingsBtn=btn("⚙","mlb-dark-btn");settingsBtn.title="Project settings";settingsBtn.addEventListener("click",openBuilderSettings);
       const stopBtn=btn("□ Stop","mlb-stop");stopBtn.addEventListener("click",requestStop);
       acts.appendChild(run);
       if(state.active_workspace==="data")acts.appendChild(stopBtn);
-      acts.append(undoBtn,redoBtn,clearBtn,loadBtn,exportBtn,shareBtn,helpBtn,settingsBtn);top.appendChild(acts);
+      acts.append(undoBtn,redoBtn,clearBtn,loadBtn,exportBtn,shareBtn);if(fullBtn)acts.appendChild(fullBtn);acts.append(helpBtn,settingsBtn);top.appendChild(acts);
       root.appendChild(top);
 
       const shell=document.createElement("div");shell.className="mlb-shell";
@@ -4698,8 +4795,10 @@
       }
       stat.innerHTML='<span>Workspace: '+workspaceName()+'</span><span>Backend: '+(state.active_workspace==="data"?"Builder Data API":"MLBricks Runtime")+'</span><span>Device: '+statusDevice+'</span><span class="right mlb-ready">● '+status+"</span>";
       root.appendChild(stat);
+      if(isPopout)schedulePopoutStateSync();
     }
 
+    setupPopoutBridge();
     draw();
     startBridgePolling();
   }
