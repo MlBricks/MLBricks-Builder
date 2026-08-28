@@ -1415,3 +1415,31 @@ provides visual composition through **Custom Brick** and the model canvas.
 
 Their underlying catalog/API entries remain available internally so older saved
 Builder projects that already contain these node types can still load and render.
+
+
+## v0.7.12 — editable/locked layouts and personal Gallery
+
+### Toolbar cleanup
+- removed the top **Save** button because **Export** is the primary artifact action
+- removed **Auto Layout** and **Add Layer / Add Step**
+- added one layout-mode toggle: **Lock Layout** / **Edit Layout**
+- added **Rename Layout**
+- added **Gallery**
+
+### Layout lock
+Lock Layout protects structural edits: adding, deleting, duplicating, moving or
+reconnecting components, clearing the graph and changing Auto Connect. Node
+configuration remains inspectable/editable. Unlock with **Edit Layout**.
+
+### Unique names
+Components in the same layout are automatically given unique names. Repeated
+components become `ESA`, `ESA 2`, `ESA 3`, etc. Component and layout rename
+operations reject duplicate names.
+
+### Gallery
+The new Gallery stores reusable user-created assets:
+- **My Components** — custom bricks can be saved and re-added to My Bricks
+- **My Models** — model layouts can be saved and loaded back to the canvas
+
+Gallery data is part of Builder state and is also mirrored to browser local
+storage when the notebook/browser environment permits it.

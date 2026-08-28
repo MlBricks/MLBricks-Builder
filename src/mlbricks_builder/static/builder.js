@@ -117,6 +117,10 @@
       if(!Array.isArray(state.prepared_datasets))state.prepared_datasets=[];
       if(!Array.isArray(state.model_outputs))state.model_outputs=[];
       if(!Array.isArray(state.project_files))state.project_files=[];
+      if(!state.gallery||typeof state.gallery!=="object")state.gallery={components:[],models:[]};
+      if(!Array.isArray(state.gallery.components))state.gallery.components=[];
+      if(!Array.isArray(state.gallery.models))state.gallery.models=[];
+      if(!state.layout_locks||typeof state.layout_locks!=="object")state.layout_locks={};
       if(!state.workspaces){
         const modelRoot=state.root_component_id;
         const dataRoot=uid("component");
@@ -216,6 +220,195 @@
 
 
     ensureWorkspaces();
+    loadGalleryStorage();
+
+    function normalizedUserName(value){return String(value||"").trim().replace(/\s+/g," ").toLowerCase();}
+
+    function layoutIsLocked(componentId=state.view_component_id){
+      return !!state.layout_locks?.[componentId];
+    }
+
+    function requireEditableLayout(action="edit this layout"){
+      if(!layoutIsLocked())return true;
+      setStatus("Layout is locked. Click Edit Layout before you "+action+".");
+      return false;
+    }
+
+    function toggleLayoutLock(){
+      const id=state.view_component_id;
+      if(!id)return;
+      checkpoint(layoutIsLocked(id)?"Edit layout":"Lock layout");
+      state.layout_locks[id]=!layoutIsLocked(id);
+      pendingPort=null;
+      setStatus(state.layout_locks[id]?"Layout locked. Structure is protected.":"Edit Layout enabled.");
+      draw();
+    }
+
+    function nodeNameExists(name,component=current(state),exceptId=null){
+      const wanted=normalizedUserName(name);
+      return !!wanted && (component?.nodes||[]).some(n=>n.id!==exceptId&&normalizedUserName(n.name)===wanted);
+    }
+
+    function uniqueNodeName(base,component=current(state),exceptId=null){
+      const clean=String(base||"Component").trim().replace(/\s+/g," ")||"Component";
+      if(!nodeNameExists(clean,component,exceptId))return clean;
+      let i=2;
+      while(nodeNameExists(clean+" "+i,component,exceptId))i++;
+      return clean+" "+i;
+    }
+
+    function layoutNameExists(name,exceptId=null){
+      const wanted=normalizedUserName(name);
+      if(!wanted)return false;
+      return Object.values(state.components||{}).some(c=>c.id!==exceptId&&normalizedUserName(c.name)===wanted);
+    }
+
+    function uniqueCustomDefinitionName(base){
+      const clean=String(base||"My Component").trim().replace(/\s+/g," ")||"My Component";
+      if(!customNameExists(clean))return clean;
+      let i=2;
+      while(customNameExists(clean+" "+i))i++;
+      return clean+" "+i;
+    }
+
+    function renameCurrentLayout(){
+      const c=current(state);if(!c)return;
+      const win=(root.ownerDocument&&root.ownerDocument.defaultView)||window;
+      const proposed=win&&typeof win.prompt==="function"?win.prompt("Rename layout:",c.name||state.project?.name||"Layout"):null;
+      if(proposed===null)return;
+      const name=String(proposed||"").trim().replace(/\s+/g," ");
+      if(!name){setStatus("Layout name cannot be empty.");return;}
+      if(layoutNameExists(name,c.id)){setStatus('Another layout is already named "'+name+'".');return;}
+      checkpoint("Rename layout");
+      const oldName=c.name;
+      c.name=name;
+      const crumbs=state.breadcrumbs||[];
+      if(crumbs.length)crumbs[crumbs.length-1].name=name;
+      const ws=state.workspaces?.[state.active_workspace];
+      if(ws?.breadcrumbs?.length)ws.breadcrumbs[ws.breadcrumbs.length-1].name=name;
+      if(c.id===state.workspaces?.model?.root_component_id){
+        state.project=state.project||{};state.project.name=name;
+        if(state.workspaces.model?.breadcrumbs?.length)state.workspaces.model.breadcrumbs[0].name=name;
+        if(state.breadcrumbs?.length===1)state.breadcrumbs[0].name=name;
+      }
+      if(c.kind==="custom_edit"&&c.definition_id&&state.custom_components?.[c.definition_id]){
+        if(customNameExists(name,c.definition_id)){
+          c.name=oldName;
+          setStatus('A custom brick named "'+name+'" already exists.');
+          return;
+        }
+        const def=state.custom_components[c.definition_id];
+        def.name=name;
+        Object.values(state.components||{}).forEach(comp=>(comp.nodes||[]).forEach(n=>{if(n.definition_id===def.id)n.name=uniqueNodeName(name,comp,n.id);}));
+      }
+      setStatus('Layout renamed to "'+name+'".');draw();
+    }
+
+    function renameSelectedComponent(){
+      const n=selectedNode();if(!n)return;
+      const win=(root.ownerDocument&&root.ownerDocument.defaultView)||window;
+      const proposed=win&&typeof win.prompt==="function"?win.prompt("Rename component:",n.name||"Component"):null;
+      if(proposed===null)return;
+      const name=String(proposed||"").trim().replace(/\s+/g," ");
+      if(!name){setStatus("Component name cannot be empty.");return;}
+      if(nodeNameExists(name,current(state),n.id)){setStatus('Another component in this layout is already named "'+name+'".');return;}
+      checkpoint("Rename component");n.name=name;setStatus('Component renamed to "'+name+'".');draw();
+    }
+
+    const galleryStorageKey="mlbricks-builder-gallery-v1";
+    function loadGalleryStorage(){
+      try{
+        const store=(root.ownerDocument?.defaultView||window).localStorage;
+        const parsed=JSON.parse(store.getItem(galleryStorageKey)||"null");
+        if(!parsed)return;
+        ["components","models"].forEach(kind=>{
+          const existing=new Set((state.gallery[kind]||[]).map(x=>x.id));
+          (parsed[kind]||[]).forEach(item=>{if(item?.id&&!existing.has(item.id))state.gallery[kind].push(cp(item));});
+        });
+      }catch(_){/* browser storage is optional in notebook iframes */}
+    }
+
+    function persistGallery(){
+      try{(root.ownerDocument?.defaultView||window).localStorage.setItem(galleryStorageKey,JSON.stringify(state.gallery));}catch(_){ }
+    }
+
+    function galleryNameExists(kind,name,exceptId=null){
+      const wanted=normalizedUserName(name);
+      return (state.gallery?.[kind]||[]).some(x=>x.id!==exceptId&&normalizedUserName(x.name)===wanted);
+    }
+
+    function askGalleryName(kind,defaultName,label){
+      const win=(root.ownerDocument&&root.ownerDocument.defaultView)||window;
+      const proposed=win&&typeof win.prompt==="function"?win.prompt(label,defaultName||""):null;
+      if(proposed===null)return null;
+      const name=String(proposed||"").trim().replace(/\s+/g," ");
+      if(!name){setStatus("Gallery name cannot be empty.");return null;}
+      if(galleryNameExists(kind,name)){setStatus('Gallery already contains "'+name+'".');return null;}
+      return name;
+    }
+
+    function saveCurrentToGallery(){
+      const c=current(state);if(!c)return;
+      if(c.kind==="custom_edit"){
+        const def=state.custom_components?.[c.definition_id];
+        const name=askGalleryName("components",def?.name||c.name,"Save component to Gallery as:");
+        if(!name)return;
+        state.gallery.components.push({
+          id:uid("gallery_component"),name,kind:"component",saved_at:new Date().toISOString(),
+          definition:{id:def?.id||uid("custom"),name,description:def?.description||"Reusable custom brick",revision:def?.revision||1,input_count:3,output_count:3,nodes:cp(c.nodes||[]),edges:cp(c.edges||[])}
+        });
+        persistGallery();setStatus(name+" saved to Component Gallery.");draw();return;
+      }
+      if(state.active_workspace!=="model"){
+        setStatus("Gallery currently stores custom components and models. Open Model Builder to save a model.");return;
+      }
+      const model=modelRootComponent();if(!model)return;
+      const name=askGalleryName("models",state.project?.name||model.name||"My Model","Save model to Gallery as:");
+      if(!name)return;
+      state.gallery.models.push({
+        id:uid("gallery_model"),name,kind:"model",saved_at:new Date().toISOString(),
+        project:cp(state.project||{}),architecture:cp(model),custom_components:cp(state.custom_components||{})
+      });
+      persistGallery();setStatus(name+" saved to Model Gallery.");draw();
+    }
+
+    function addGalleryComponent(entry){
+      if(!entry?.definition)return;
+      const source=cp(entry.definition);const id=uid("custom");const name=uniqueCustomDefinitionName(entry.name||source.name);
+      source.id=id;source.name=name;source.revision=1;
+      state.custom_components[id]=source;
+      persistGallery();setStatus(name+" added to My Bricks.");draw();
+    }
+
+    function loadGalleryModel(entry){
+      if(!entry?.architecture)return;
+      checkpoint("Load model from Gallery");
+      rememberWorkspaceView();
+      state.active_workspace="model";
+      const rootId=state.workspaces.model.root_component_id;
+      const architecture=cp(entry.architecture);
+      const remap={};
+      Object.entries(entry.custom_components||{}).forEach(([oldId,def])=>{
+        const existing=Object.values(state.custom_components||{}).find(x=>normalizedUserName(x.name)===normalizedUserName(def.name));
+        if(existing){remap[oldId]=existing.id;return;}
+        const newId=uid("custom");const copyDef=cp(def);copyDef.id=newId;copyDef.name=uniqueCustomDefinitionName(copyDef.name);state.custom_components[newId]=copyDef;remap[oldId]=newId;
+      });
+      (architecture.nodes||[]).forEach(n=>{if(n.definition_id&&remap[n.definition_id])n.definition_id=remap[n.definition_id];n.name=uniqueNodeName(n.name,{nodes:(architecture.nodes||[]).filter(x=>x.id!==n.id)},n.id);});
+      architecture.id=rootId;architecture.name=entry.name;
+      state.components[rootId]=architecture;
+      state.root_component_id=rootId;state.view_component_id=rootId;
+      state.project={...(entry.project||{}),name:entry.name};
+      state.breadcrumbs=[{id:rootId,name:entry.name}];
+      state.workspaces.model.view_component_id=rootId;state.workspaces.model.breadcrumbs=cp(state.breadcrumbs);
+      selected=null;pendingPort=null;setStatus(entry.name+" loaded from Gallery.");draw();
+    }
+
+    function removeGalleryEntry(kind,id){
+      checkpoint("Remove Gallery item");
+      state.gallery[kind]=(state.gallery[kind]||[]).filter(x=>x.id!==id);persistGallery();setStatus("Gallery item removed.");draw();
+    }
+
+    function openGallery(){bottomView="gallery";bottomExpanded=true;outputDirectorySelection=null;setStatus("Gallery opened.");draw();}
 
     function bridgeDocuments(){
       const docs=[];
@@ -2504,7 +2697,7 @@
       if(!model)return;
       const config={
         format:"mlbricks-model-config",
-        builder_version:"0.7.11",
+        builder_version:"0.7.12",
         project:cp(state.project||{}),
         model:cp(model),
         selected_dataset:selectedModelDataset(),
@@ -2516,6 +2709,35 @@
       document.body.appendChild(a);a.click();a.remove();
       setTimeout(()=>URL.revokeObjectURL(url),1000);
       setStatus("Model config downloaded.");
+    }
+
+    function renderGalleryView(container){
+      container.className="mlb-gallery-view";
+      const head=document.createElement("div");head.className="mlb-gallery-head";
+      const title=document.createElement("div");title.innerHTML="<strong>MY GALLERY</strong><span>Reusable components and model designs saved by you.</span>";
+      const save=btn(current(state)?.kind==="custom_edit"?"+ Save Current Component":"+ Save Current Model","mlb-gallery-save");
+      save.addEventListener("click",saveCurrentToGallery);head.append(title,save);container.appendChild(head);
+
+      const grid=document.createElement("div");grid.className="mlb-gallery-grid";
+      const componentSection=document.createElement("section");componentSection.className="mlb-gallery-section";
+      const ct=document.createElement("div");ct.className="mlb-gallery-section-title";ct.innerHTML="<strong>MY COMPONENTS</strong><span>"+(state.gallery.components||[]).length+" saved</span>";componentSection.appendChild(ct);
+      if(!(state.gallery.components||[]).length){const e=document.createElement("div");e.className="mlb-gallery-empty";e.textContent="Open a Custom Brick and save it here for reuse.";componentSection.appendChild(e);}
+      (state.gallery.components||[]).forEach(entry=>{
+        const card=document.createElement("div");card.className="mlb-gallery-card";
+        const meta=document.createElement("div");meta.innerHTML="<strong>"+entry.name+"</strong><span>"+((entry.definition?.nodes||[]).length)+" blocks · "+(entry.saved_at?new Date(entry.saved_at).toLocaleDateString():"Saved")+"</span>";
+        const acts=document.createElement("div");const add=btn("Add to My Bricks","mlb-gallery-action");add.addEventListener("click",()=>addGalleryComponent(entry));const remove=btn("Remove","mlb-gallery-action danger");remove.addEventListener("click",()=>removeGalleryEntry("components",entry.id));acts.append(add,remove);card.append(meta,acts);componentSection.appendChild(card);
+      });
+
+      const modelSection=document.createElement("section");modelSection.className="mlb-gallery-section";
+      const mt=document.createElement("div");mt.className="mlb-gallery-section-title";mt.innerHTML="<strong>MY MODELS</strong><span>"+(state.gallery.models||[]).length+" saved</span>";modelSection.appendChild(mt);
+      if(!(state.gallery.models||[]).length){const e=document.createElement("div");e.className="mlb-gallery-empty";e.textContent="Save your current Model Builder layout to keep it for later.";modelSection.appendChild(e);}
+      (state.gallery.models||[]).forEach(entry=>{
+        const card=document.createElement("div");card.className="mlb-gallery-card";
+        const meta=document.createElement("div");meta.innerHTML="<strong>"+entry.name+"</strong><span>"+((entry.architecture?.nodes||[]).length)+" components · "+(entry.saved_at?new Date(entry.saved_at).toLocaleDateString():"Saved")+"</span>";
+        const acts=document.createElement("div");const load=btn("Load to Canvas","mlb-gallery-action");load.addEventListener("click",()=>loadGalleryModel(entry));const remove=btn("Remove","mlb-gallery-action danger");remove.addEventListener("click",()=>removeGalleryEntry("models",entry.id));acts.append(load,remove);card.append(meta,acts);modelSection.appendChild(card);
+      });
+      grid.append(componentSection,modelSection);container.appendChild(grid);
+      const note=document.createElement("div");note.className="mlb-gallery-note";note.textContent="Gallery is stored in the Builder project and is also mirrored to browser storage when available.";container.appendChild(note);
     }
 
     function renderLocalView(container){
@@ -3130,6 +3352,7 @@
     }
 
     function connect(a,b,kind="main",sourcePort="main_out",targetPort="main_in",record=true){
+      if(record&&!requireEditableLayout("change connections"))return;
       if(a===b){setStatus("A layer cannot connect to itself.");return;}
       const c=current(state);
       if(c.edges.some(e=>e.source===a&&e.target===b&&e.kind===kind&&e.source_port===sourcePort&&e.target_port===targetPort)){
@@ -3172,11 +3395,12 @@
     }
 
     function addPrimitive(item){
+      if(!requireEditableLayout("add components"))return;
       checkpoint("Add "+item.name);
-      const n=makeNode(item);
+      const n=makeNode(item);n.name=uniqueNodeName(item.name);
       if(n.type==="text_input")configureTextInputForLatest(n);
       const pos=insertAfterSelection(n);
-      setStatus(item.name+" inserted at layer "+(pos+1)+".");
+      setStatus(n.name+" inserted at layer "+(pos+1)+".");
       draw();
     }
 
@@ -3223,11 +3447,12 @@
     }
 
     function addCustom(def){
+      if(!requireEditableLayout("add components"))return;
       checkpoint("Add "+def.name);
       const n={
         id:uid("node"),
         type:"custom",
-        name:def.name,
+        name:uniqueNodeName(def.name),
         definition_id:def.id,
         repeat:1,
         params:{},
@@ -3287,6 +3512,7 @@
     }
 
     function deleteNode(id){
+      if(!requireEditableLayout("delete components"))return;
       checkpoint("Delete node");
       const c=current(state);
       c.nodes=c.nodes.filter(n=>n.id!==id);
@@ -3299,8 +3525,9 @@
 
     function duplicateSelected(){
       const n=selectedNode();if(!n)return;
+      if(!requireEditableLayout("duplicate components"))return;
       checkpoint("Duplicate "+n.name);
-      const c=current(state),d=cp(n);d.id=uid("node");d.name=n.name+" Copy";
+      const c=current(state),d=cp(n);d.id=uid("node");d.name=uniqueNodeName(n.name+" Copy",c);
       const idx=c.nodes.findIndex(x=>x.id===n.id);
       c.nodes.splice(idx+1,0,d);
       rebuildMainFlow();
@@ -3311,6 +3538,7 @@
 
     function moveSelected(delta){
       const n=selectedNode();if(!n)return;
+      if(!requireEditableLayout("move components"))return;
       const c=current(state);
       const from=c.nodes.findIndex(x=>x.id===n.id);
       if(from<0)return;
@@ -3331,6 +3559,7 @@
 
     function portClick(nodeId,side,portIndex,ev){
       ev.stopPropagation();
+      if(!requireEditableLayout("edit connections"))return;
       if(side==="out"){
         pendingPort={nodeId,side,portIndex};
         const lane=["Skip","Main","Extra"][portIndex]||"Lane";
@@ -3755,7 +3984,7 @@
       return {
         format:"mlbricks-builder-design",
         format_version:"0.7.5",
-        builder_version:"0.7.11",
+        builder_version:"0.7.12",
         saved_at:new Date().toISOString(),
         state:sanitizedProjectState()
       };
@@ -3801,7 +4030,7 @@
       }
       const payload={
         format:"mlbricks-export",
-        builder_version:"0.7.11",
+        builder_version:"0.7.12",
         workspace:state.active_workspace,
         project:cp(state.project||{}),
         prepared_datasets:cp(state.prepared_datasets||[]),
@@ -3834,10 +4063,9 @@
     function showQuickHelp(){
       const win=(root.ownerDocument&&root.ownerDocument.defaultView)||window;
       const help=[
-        'MLBricks Builder v0.7.11',
+        'MLBricks Builder v0.7.12',
         '',
         '• Add bricks or data steps from the left library.',
-        '• Save now asks whether to save BIN or JSON.',
         '• Export downloads a model config or workspace export file.',
         '• Load opens .mlbricks.json or .mlbricks.bin files.',
         '• Share copies a short project summary to the clipboard.',
@@ -3938,11 +4166,11 @@
       run.addEventListener("click",state.active_workspace==="model"?requestModelBuild:requestRun);
       const undoBtn=btn("↶ Undo","mlb-dark-btn mlb-history-btn");undoBtn.disabled=undoStack.length===0;undoBtn.title="Undo last model edit";undoBtn.addEventListener("click",undo);
       const redoBtn=btn("↷ Redo","mlb-dark-btn mlb-history-btn");redoBtn.disabled=redoStack.length===0;redoBtn.title="Redo last undone edit";redoBtn.addEventListener("click",redo);
-      const clearBtn=btn("↻ Clear","mlb-dark-btn");clearBtn.addEventListener("click",()=>{
+      const clearBtn=btn("↻ Clear","mlb-dark-btn");clearBtn.disabled=layoutIsLocked();clearBtn.addEventListener("click",()=>{
+        if(!requireEditableLayout("clear components"))return;
         const c=current(state);if(!c.nodes.length&&!c.edges.length)return;
         checkpoint("Clear graph");c.nodes=[];c.edges=[];selected=null;pendingPort=null;setStatus("Graph cleared.");draw();
       });
-      const saveBtn=btn("▣ Save","mlb-dark-btn");saveBtn.title="Save full project as BIN or JSON";saveBtn.addEventListener("click",saveDesignChoice);
       const loadBtn=btn("⇧ Load","mlb-dark-btn");loadBtn.title="Load .mlbricks.json or .mlbricks.bin";loadBtn.addEventListener("click",loadDesign);
       const exportBtn=btn("⇩ Export","mlb-dark-btn");exportBtn.title="Export model config or workspace data";exportBtn.addEventListener("click",exportWorkspace);
       const shareBtn=btn("⌯ Share","mlb-dark-btn");shareBtn.title="Copy a project summary";shareBtn.addEventListener("click",shareWorkspace);
@@ -3951,7 +4179,7 @@
       const stopBtn=btn("□ Stop","mlb-stop");stopBtn.addEventListener("click",requestStop);
       acts.appendChild(run);
       if(state.active_workspace==="data")acts.appendChild(stopBtn);
-      acts.append(undoBtn,redoBtn,clearBtn,saveBtn,loadBtn,exportBtn,shareBtn,helpBtn,settingsBtn);top.appendChild(acts);
+      acts.append(undoBtn,redoBtn,clearBtn,loadBtn,exportBtn,shareBtn,helpBtn,settingsBtn);top.appendChild(acts);
       root.appendChild(top);
 
       const shell=document.createElement("div");shell.className="mlb-shell";
@@ -4006,7 +4234,7 @@
             const b=document.createElement("button");b.type="button";
             const ico=document.createElement("span");ico.className="mlb-pal-icon";ico.textContent=item.icon||"ML";
             const text=document.createElement("span");text.innerHTML="<strong>"+item.name+'</strong><span class="mlb-pal-sub">'+(item.description||"MLBricks component")+"</span>";
-            b.append(ico,text);b.addEventListener("click",()=>addPrimitive(item));pal.appendChild(b);
+            b.append(ico,text);b.disabled=layoutIsLocked();b.title=layoutIsLocked()?"Layout locked — click Edit Layout first":"Add "+item.name;b.addEventListener("click",()=>addPrimitive(item));pal.appendChild(b);
           });
         }
         side.appendChild(pal);
@@ -4026,7 +4254,7 @@
             const b=document.createElement("button");b.className="mlb-custom-card";b.type="button";
             const emptyLabel=(def.nodes||[]).length===0?" · Empty":" · "+(def.nodes||[]).length+" blocks";
           b.innerHTML='<span class="mlb-pal-icon">MY</span><span><strong>'+def.name+'</strong><span class="mlb-pal-sub">Custom · v'+def.revision+emptyLabel+"</span></span>";
-            b.addEventListener("click",()=>addCustom(def));side.appendChild(b);
+            b.disabled=layoutIsLocked();b.title=layoutIsLocked()?"Layout locked — click Edit Layout first":"Add "+def.name;b.addEventListener("click",()=>addCustom(def));side.appendChild(b);
           });
           const create=btn("+ Create Custom Brick","mlb-create");create.addEventListener("click",createCustom);side.appendChild(create);
         }
@@ -4052,16 +4280,12 @@
         const device=entry?selectedRuntimeDevice(runtimePanel.mode==="train"?entry.training_config:runtimePanel.mode==="generate"?entry.generation_config:entry.serve_config):null;
         if(device){const d=document.createElement("div");d.className="mlb-toolbar-device";d.textContent=device.label;toolbar.appendChild(d);}
       }else{
-        const auto=btn("◎ Auto Layout","mlb-tool");
-        auto.addEventListener("click",()=>{setStatus(workspaceName()+" auto layout applied.");draw();});
-        const add=btn(state.active_workspace==="data"?"+ Add Step":"+ Add Layer","mlb-tool");
-        add.addEventListener("click",()=>{
-          setStatus(selected
-            ?("Choose a "+(state.active_workspace==="data"?"data step":"brick")+" — it will be inserted after the selected "+(state.active_workspace==="data"?"step.":"layer."))
-            :("Choose a "+(state.active_workspace==="data"?"data step":"brick")+" from the library."));
-          draw();
-        });
-        toolbar.append(auto,add);
+        const lockToggle=btn(layoutIsLocked()?"✎ Edit Layout":"🔒 Lock Layout","mlb-tool mlb-layout-toggle"+(layoutIsLocked()?" locked":" editing"));
+        lockToggle.title=layoutIsLocked()?"Unlock structural editing":"Protect component positions, order and connections";
+        lockToggle.addEventListener("click",toggleLayoutLock);
+        const renameLayout=btn("✎ Rename Layout","mlb-tool");renameLayout.addEventListener("click",renameCurrentLayout);
+        const galleryBtn=btn("▦ Gallery","mlb-tool");galleryBtn.addEventListener("click",openGallery);
+        toolbar.append(lockToggle,renameLayout,galleryBtn);
 
         if(state.active_workspace==="model"){
           const demo=btn("★ TinyStories 30M","mlb-tool");demo.addEventListener("click",loadTinyStories);toolbar.appendChild(demo);
@@ -4086,8 +4310,8 @@
         }
         const tsp=document.createElement("div");tsp.className="mlb-toolspacer";toolbar.appendChild(tsp);
         const toggle=document.createElement("label");toggle.className="mlb-toggle";
-        const cb=document.createElement("input");cb.type="checkbox";cb.checked=!!state.auto_connect;
-        cb.addEventListener("change",()=>{checkpoint("Change Auto Connect");state.auto_connect=cb.checked;draw();});
+        const cb=document.createElement("input");cb.type="checkbox";cb.checked=!!state.auto_connect;cb.disabled=layoutIsLocked();
+        cb.addEventListener("change",()=>{if(!requireEditableLayout("change Auto Connect"))return;checkpoint("Change Auto Connect");state.auto_connect=cb.checked;draw();});
         toggle.append(document.createTextNode("Auto Connect"),cb);toolbar.appendChild(toggle);
 
         const z=document.createElement("div");z.className="mlb-zoom";
@@ -4201,8 +4425,8 @@
 
       const detailsSelect=document.createElement("select");detailsSelect.className="mlb-details-select";
       const options=state.active_workspace==="data"
-        ?[["details","Pipeline Details"],["outputs","Output Directory"],["files","Files"],["local","Local / Kaggle Data"],["cloud","Cloud & Repositories"]]
-        :[["details","Model Details"],["outputs","Output Directory"],["files","Files"],["local","Local / Kaggle Models"],["cloud","Cloud & Repositories"]];
+        ?[["details","Pipeline Details"],["outputs","Output Directory"],["gallery","Gallery"],["files","Files"],["local","Local / Kaggle Data"],["cloud","Cloud & Repositories"]]
+        :[["details","Model Details"],["outputs","Output Directory"],["gallery","Gallery"],["files","Files"],["local","Local / Kaggle Models"],["cloud","Cloud & Repositories"]];
       options.forEach(([value,label])=>{
         const o=document.createElement("option");o.value=value;o.textContent=label;
         if(bottomView===value)o.selected=true;
@@ -4227,6 +4451,11 @@
         outputPanel.className="mlb-output-directory"+(bottomExpanded?" expanded":" collapsed");
         if(bottomExpanded)renderOutputDirectory(outputPanel);
         details.appendChild(outputPanel);
+      }else if(bottomView==="gallery"){
+        const galleryPanel=document.createElement("div");
+        galleryPanel.className="mlb-gallery-view"+(bottomExpanded?" expanded":" collapsed");
+        if(bottomExpanded)renderGalleryView(galleryPanel);
+        details.appendChild(galleryPanel);
       }else if(bottomView==="files"){
         const filesPanel=document.createElement("div");
         filesPanel.className="mlb-files-view"+(bottomExpanded?" expanded":" collapsed");
@@ -4298,6 +4527,7 @@
       }else{
         const api=apiInfo(n);const info=n.type==="custom"?{api:[]}:cat(catalog,n.type);
         const sw=document.createElement("div");sw.className="mlb-selected";sw.innerHTML="<strong>"+n.name+"</strong><span class='mlb-pill'>"+(api.public_name||"Custom Layer")+"</span>";body.appendChild(sw);
+        const renameComponentBtn=btn("✎ Rename Component","mlb-ins-rename");renameComponentBtn.addEventListener("click",renameSelectedComponent);body.appendChild(renameComponentBtn);
         const runLive=document.createElement("div");runLive.className="mlb-ins-run-live";
         const rs=execution.nodes?.[n.id];
         if(rs){
@@ -4402,7 +4632,8 @@
             const left=(src?.name||"Node")+" → "+(tgt?.name||"Node")+" · "+laneName;
             const txt=document.createElement("div");txt.className="mlb-connection-text";txt.textContent=left;
             const delBtn=btn("Remove","mlb-conn-remove");
-            delBtn.addEventListener("click",()=>{
+            delBtn.disabled=layoutIsLocked();delBtn.addEventListener("click",()=>{
+              if(!requireEditableLayout("remove connections"))return;
               checkpoint("Remove connection");
               current(state).edges=current(state).edges.filter(x=>x.id!==ed.id);
               setStatus("Connection removed.");
@@ -4416,21 +4647,22 @@
         const moveLeft=btn(state.active_workspace==="data"?"← Move Earlier":"← Move Left");
         const moveRight=btn(state.active_workspace==="data"?"Move Later →":"Move Right →");
         const nodeIndex=current(state).nodes.findIndex(x=>x.id===n.id);
-        moveLeft.disabled=nodeIndex<=0;
-        moveRight.disabled=nodeIndex<0||nodeIndex>=current(state).nodes.length-1;
+        moveLeft.disabled=layoutIsLocked()||nodeIndex<=0;
+        moveRight.disabled=layoutIsLocked()||nodeIndex<0||nodeIndex>=current(state).nodes.length-1;
         moveLeft.addEventListener("click",()=>moveSelected(-1));
         moveRight.addEventListener("click",()=>moveSelected(1));
         moveGrid.append(moveLeft,moveRight);body.appendChild(moveGrid);
 
         const actions=document.createElement("div");actions.className="mlb-action-grid";
         if(n.definition_id){const open=btn("Open Architecture");open.addEventListener("click",()=>openInside(n));actions.appendChild(open);}
-        const dup=btn("Duplicate");dup.addEventListener("click",duplicateSelected);actions.appendChild(dup);
-        const disc=btn("Remove All Links");disc.addEventListener("click",()=>{
+        const dup=btn("Duplicate");dup.disabled=layoutIsLocked();dup.addEventListener("click",duplicateSelected);actions.appendChild(dup);
+        const disc=btn("Remove All Links");disc.disabled=layoutIsLocked();disc.addEventListener("click",()=>{
+          if(!requireEditableLayout("remove connections"))return;
           checkpoint("Remove all links from "+n.name);
           current(state).edges=current(state).edges.filter(e=>e.source!==n.id&&e.target!==n.id);
           setStatus("All connections removed.");draw();
         });actions.appendChild(disc);
-        const del=btn("Delete");del.addEventListener("click",()=>deleteNode(n.id));actions.appendChild(del);body.appendChild(actions);
+        const del=btn("Delete");del.disabled=layoutIsLocked();del.addEventListener("click",()=>deleteNode(n.id));actions.appendChild(del);body.appendChild(actions);
         if(current(state).kind==="custom_edit"){
           const parentCfg=document.createElement("div");
           parentCfg.className="mlb-summary";
