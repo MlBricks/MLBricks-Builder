@@ -155,10 +155,10 @@ class Builder:
 
         suffix = self._instance_id.replace("-", "_")
         hidden = widgets.Layout(
-            width="1px",
-            height="1px",
-            min_width="1px",
-            min_height="1px",
+            width="3px",
+            height="3px",
+            min_width="3px",
+            min_height="3px",
             visibility="hidden",
             overflow="hidden",
         )
@@ -198,8 +198,8 @@ class Builder:
         available = [k for k, v in self.mlbricks_api.items() if v.get("available")]
         unavailable = {k: v.get("error") for k, v in self.mlbricks_api.items() if not v.get("available")}
         return {
-            "builder_version": "0.5.2",
-            "frontend_version": "0.5.2",
+            "builder_version": "0.5.3",
+            "frontend_version": "0.5.3",
             "mlbricks": info,
             "api_components_available": available,
             "api_components_unavailable": unavailable,
@@ -219,7 +219,7 @@ class Builder:
         }).replace("</", "<\\/")
         return f"""
 <style>{css}</style>
-<div id="{html.escape(self._instance_id)}" class="mlb-root" data-mlbricks-builder-version="0.5.2"></div>
+<div id="{html.escape(self._instance_id)}" class="mlb-root" data-mlbricks-builder-version="0.5.3"></div>
 <script>
 try {{ delete window.MLBricksBuilder; }} catch (e) {{ window.MLBricksBuilder = undefined; }}
 {js}
@@ -254,7 +254,16 @@ window.MLBricksBuilder.mount(
                     bridge_widgets["run"],
                     bridge_widgets["stop"],
                     bridge_widgets["progress"],
-                ], layout=widgets.Layout(height="0px", min_height="0px", overflow="hidden"))
+                ], layout=widgets.Layout(
+                    width="3px",
+                    height="3px",
+                    min_height="3px",
+                    max_height="3px",
+                    overflow="hidden",
+                    visibility="hidden",
+                    margin="0",
+                    padding="0",
+                ))
                 display(box)
                 bridge_payload = dict(bridge_widgets["classes"])
             except Exception:

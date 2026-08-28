@@ -39,6 +39,8 @@
     let execution={status:"idle",overall:0,message:"Ready",nodes:{}};
     let lastProgressRaw="";
     let bridgePollTimer=null;
+    let bridgeAwaitTimer=null;
+    let bridgeLastReady=false;
     const workspaceScroll={model:{left:0,top:0},data:{left:0,top:0}};
     let switchingWorkspace=false;
     const undoStack=[],redoStack=[];
@@ -178,26 +180,128 @@
 
     ensureWorkspaces();
 
+    function bridgeDocuments(){
+      const docs=[];
+      const add=doc=>{if(doc && !docs.includes(doc))docs.push(doc);};
+      add(document);
+      try{add(window.parent && window.parent.document);}catch(_){}
+      try{add(window.top && window.top.document);}catch(_){}
+
+      // Kaggle/Jupyter may render output and standard widgets in neighboring
+      // same-origin frames. Search accessible frame documents as a fallback.
+      const parents=[...docs];
+      parents.forEach(doc=>{
+        try{
+          doc.querySelectorAll("iframe").forEach(frame=>{
+            try{add(frame.contentDocument);}catch(_){}
+          });
+        }catch(_){}
+      });
+      return docs;
+    }
+
+    function deepQuery(rootNode,selector){
+      if(!rootNode)return null;
+      try{
+        const direct=rootNode.querySelector(selector);
+        if(direct)return direct;
+        const all=rootNode.querySelectorAll("*");
+        for(const el of all){
+          if(el.shadowRoot){
+            const found=deepQuery(el.shadowRoot,selector);
+            if(found)return found;
+          }
+        }
+      }catch(_){}
+      return null;
+    }
+
     function bridgeRoot(cls){
       if(!cls)return null;
-      return document.querySelector("."+cls);
+      const selector="."+cls;
+      for(const doc of bridgeDocuments()){
+        const found=deepQuery(doc,selector);
+        if(found)return found;
+      }
+      return null;
     }
 
     function bridgeControl(cls,selector){
       const host=bridgeRoot(cls);
       if(!host)return null;
-      return host.querySelector(selector);
+      if(host.matches && host.matches(selector))return host;
+      return deepQuery(host,selector);
+    }
+
+    function setNativeValue(input,value){
+      if(!input)return false;
+      try{
+        const view=input.ownerDocument?.defaultView||window;
+        const proto=view.HTMLTextAreaElement && input instanceof view.HTMLTextAreaElement
+          ? view.HTMLTextAreaElement.prototype
+          : view.HTMLInputElement?.prototype;
+        const descriptor=proto ? Object.getOwnPropertyDescriptor(proto,"value") : null;
+        if(descriptor?.set)descriptor.set.call(input,value);
+        else input.value=value;
+
+        input.dispatchEvent(new view.Event("input",{bubbles:true,composed:true}));
+        input.dispatchEvent(new view.Event("change",{bubbles:true,composed:true}));
+        return true;
+      }catch(_){
+        try{
+          input.value=value;
+          input.dispatchEvent(new Event("input",{bubbles:true}));
+          input.dispatchEvent(new Event("change",{bubbles:true}));
+          return true;
+        }catch(__){return false;}
+      }
+    }
+
+    function clickBridgeButton(button){
+      if(!button)return false;
+      try{
+        button.click();
+        return true;
+      }catch(_){
+        try{
+          const view=button.ownerDocument?.defaultView||window;
+          button.dispatchEvent(new view.MouseEvent("click",{
+            bubbles:true,cancelable:true,view
+          }));
+          return true;
+        }catch(__){return false;}
+      }
+    }
+
+    function bridgeReady(){
+      if(!bridge)return false;
+      return !!(
+        bridgeControl(bridge.state,"textarea") &&
+        bridgeControl(bridge.run,"button") &&
+        bridgeControl(bridge.stop,"button") &&
+        bridgeControl(bridge.progress,"textarea")
+      );
+    }
+
+    function updateKernelBadge(){
+      const badge=root.querySelector(".mlb-kernel-badge");
+      if(!badge)return;
+      const ready=bridgeReady();
+      bridgeLastReady=ready;
+      badge.className="mlb-kernel-badge "+(ready?"connected":"offline");
+      badge.innerHTML=ready
+        ?"<i></i><span>Kernel Connected</span>"
+        :"<i></i><span>Kernel Offline</span>";
+      badge.title=ready
+        ?"Run can execute this data pipeline in the Python kernel."
+        :"Builder cannot currently reach the Python widget bridge.";
     }
 
     function setBridgeState(){
       if(!bridge)return false;
       const input=bridgeControl(bridge.state,"textarea");
       if(!input)return false;
-      const raw=JSON.stringify(state);
-      input.value=raw;
-      input.dispatchEvent(new Event("input",{bubbles:true}));
-      input.dispatchEvent(new Event("change",{bubbles:true}));
-      return true;
+      return setNativeValue(input,JSON.stringify(state));
     }
 
     function markExecutionLocally(kind,message){
@@ -279,27 +383,88 @@
         return;
       }
 
-      if(!bridge || !setBridgeState()){
-        setStatus("Python kernel bridge unavailable. Use builder.run_data_pipeline() in a Python cell.");
-        draw();
+      updateKernelBadge();
+      if(!bridgeReady()){
+        execution={
+          status:"error",
+          overall:0,
+          message:"Kernel bridge is offline. Re-run the Builder cell, then click Run.",
+          nodes:{}
+        };
+        applyExecutionProgress(execution);
+        setStatus(execution.message);
+        return;
+      }
+
+      if(!setBridgeState()){
+        execution={
+          status:"error",overall:0,
+          message:"Could not send the current design to Python.",
+          nodes:{}
+        };
+        applyExecutionProgress(execution);
+        setStatus(execution.message);
         return;
       }
 
       const runButton=bridgeControl(bridge.run,"button");
       if(!runButton){
-        setStatus("Python Run bridge is not ready yet. Try Run again in a moment.");
-        draw();
+        setStatus("Python Run control was not found. Re-run the Builder cell.");
         return;
       }
 
-      const queued={};
-      (current(state).nodes||[]).forEach(n=>queued[n.id]={status:"queued",message:"Waiting"});
-      execution={status:"running",overall:0,message:"Sending pipeline to Python…",nodes:queued};
-      applyExecutionProgress(execution);
+      // Ignore the bridge's old idle payload. The next changed payload must
+      // come from Python after this click.
+      const progressInput=bridgeControl(bridge.progress,"textarea");
+      lastProgressRaw=progressInput?.value||lastProgressRaw;
 
-      // Give the standard Textarea widget enough time to sync the latest design
-      // to the Python kernel before triggering its hidden standard Button.
-      setTimeout(()=>runButton.click(),120);
+      const queued={};
+      (current(state).nodes||[]).forEach(n=>{
+        queued[n.id]={status:"queued",message:"Waiting"};
+      });
+      execution={
+        status:"running",
+        overall:0,
+        message:"Starting Python pipeline…",
+        nodes:queued
+      };
+      applyExecutionProgress(execution);
+      setStatus(execution.message);
+
+      if(bridgeAwaitTimer)clearTimeout(bridgeAwaitTimer);
+
+      // Let the standard textarea comm flush first, then activate the standard
+      // ipywidgets button in whichever notebook document contains it.
+      setTimeout(()=>{
+        const ok=clickBridgeButton(runButton);
+        if(!ok){
+          execution={
+            status:"error",overall:0,
+            message:"Could not activate the Python Run control.",
+            nodes:queued
+          };
+          applyExecutionProgress(execution);
+          return;
+        }
+
+        bridgeAwaitTimer=setTimeout(()=>{
+          if(
+            execution.status==="running" &&
+            (execution.message==="Starting Python pipeline…" ||
+             execution.message==="Sending pipeline to Python…")
+          ){
+            execution={
+              status:"error",
+              overall:0,
+              message:"Python kernel did not acknowledge Run. Re-run the Builder cell and confirm Kernel Connected.",
+              nodes:queued
+            };
+            applyExecutionProgress(execution);
+            setStatus(execution.message);
+            updateKernelBadge();
+          }
+        },3000);
+      },350);
     }
 
     function requestStop(){
@@ -312,9 +477,10 @@
         return;
       }
       const stopButton=bridgeControl(bridge.stop,"button");
-      if(stopButton){
-        stopButton.click();
+      if(stopButton && clickBridgeButton(stopButton)){
         setStatus("Stop requested. The active step will finish, then the pipeline will stop.");
+      }else{
+        setStatus("Python Stop control is unavailable.");
       }
     }
 
@@ -375,12 +541,14 @@
     }
 
     function pollBridgeProgress(){
+      updateKernelBadge();
       if(!bridge)return;
       const input=bridgeControl(bridge.progress,"textarea");
       if(!input)return;
       const raw=input.value||"";
       if(!raw || raw===lastProgressRaw)return;
       lastProgressRaw=raw;
+      if(bridgeAwaitTimer){clearTimeout(bridgeAwaitTimer);bridgeAwaitTimer=null;}
       try{
         const parsed=JSON.parse(raw);
         applyExecutionProgress(parsed);
@@ -389,8 +557,12 @@
     }
 
     function startBridgePolling(){
-      if(!bridge || bridgePollTimer)return;
-      bridgePollTimer=setInterval(pollBridgeProgress,250);
+      updateKernelBadge();
+      if(bridgePollTimer)return;
+      bridgePollTimer=setInterval(()=>{
+        pollBridgeProgress();
+        updateKernelBadge();
+      },250);
     }
 
     function btn(text,cls){const b=document.createElement("button");b.type="button";b.className=cls||"";b.textContent=text;return b;}
@@ -1206,7 +1378,7 @@
 
       // Top bar
       const top=document.createElement("div");top.className="mlb-topbar";
-      const logo=document.createElement("div");logo.className="mlb-logo";logo.innerHTML='<span class="mlb-logo-mark">◇</span>MLBricks Builder <span class="mlb-beta">v0.5.2</span>';top.appendChild(logo);
+      const logo=document.createElement("div");logo.className="mlb-logo";logo.innerHTML='<span class="mlb-logo-mark">◇</span>MLBricks Builder <span class="mlb-beta">v0.5.3</span>';top.appendChild(logo);
       const title=document.createElement("div");title.className="mlb-project-title";title.textContent=state.project?.name||"Untitled";top.appendChild(title);
       const saved=document.createElement("div");saved.className="mlb-save-state";saved.textContent="• Saved";top.appendChild(saved);
       const sp=document.createElement("div");sp.className="mlb-topspacer";top.appendChild(sp);
@@ -1324,9 +1496,12 @@
       }
 
       if(state.active_workspace==="data"){
+        const kernel=document.createElement("div");kernel.className="mlb-kernel-badge";
+        toolbar.appendChild(kernel);
         const live=document.createElement("div");live.className="mlb-run-live "+(execution.status||"idle");
         live.innerHTML="<strong>"+Math.max(0,Math.min(100,Number(execution.overall||0)))+"%</strong><span>"+(execution.message||"Ready")+"</span>";
         toolbar.appendChild(live);
+        requestAnimationFrame(updateKernelBadge);
       }
       const tsp=document.createElement("div");tsp.className="mlb-toolspacer";toolbar.appendChild(tsp);
       const toggle=document.createElement("label");toggle.className="mlb-toggle";
@@ -1388,6 +1563,12 @@
             ?('<div class="mlb-mini-field"><span>Architecture</span><strong>Open</strong></div>'+
               '<div class="mlb-mini-field"><span>Ports</span><strong>Skip / Main / Extra</strong></div>')
             :nodeMiniFields(n,info);
+          card.querySelectorAll(".mlb-mini-field").forEach(row=>{
+            const label=row.querySelector("span");
+            const value=row.querySelector("strong");
+            if(label)label.title=label.textContent||"";
+            if(value)value.title=value.textContent||"";
+          });
           const meta=card.querySelector(".node-meta");
           meta.textContent=n.type==="custom"?"Nested component · 3-lane interface":((apiInfo(n).public_name||n.type)+" · Skip / Main / Extra");
           card.querySelectorAll('.mlb-port').forEach(portEl=>{

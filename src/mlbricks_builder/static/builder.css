@@ -104,11 +104,21 @@
 .mlb-node .node-icon{width:24px;height:24px;border-radius:6px;display:grid;place-items:center;
   background:#6e55d9;color:#fff;font-size:7px;font-weight:900}
 .mlb-node .node-desc{font-size:8px;color:#9aa5b3;line-height:1.35;margin-top:7px;min-height:32px}
-.mlb-node-fields{display:grid;gap:5px;margin-top:9px}
-.mlb-mini-field{display:flex;justify-content:space-between;gap:6px;align-items:center;
+.mlb-node-fields{
+  display:grid;gap:5px;margin-top:9px;min-width:0;max-width:100%;overflow:hidden
+}
+.mlb-mini-field{
+  display:grid;grid-template-columns:minmax(0,44%) minmax(0,56%);
+  gap:5px;align-items:center;min-width:0;max-width:100%;overflow:hidden;
   border:1px solid #344251;background:rgba(10,15,21,.36);border-radius:5px;padding:5px 6px;
-  font-size:7.8px;color:#aeb8c6}
-.mlb-mini-field strong{color:#e4e9ef;font-weight:600}
+  box-sizing:border-box;font-size:7.8px;color:#aeb8c6
+}
+.mlb-mini-field span,.mlb-mini-field strong{
+  display:block;min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap
+}
+.mlb-mini-field strong{
+  color:#e4e9ef;font-weight:600;text-align:right
+}
 .mlb-node .node-meta{font-size:7.5px;color:#8390a0;margin-top:auto;line-height:1.45}
 .mlb-port{
   position:absolute;width:10px;height:10px;border-radius:50%;
@@ -440,3 +450,30 @@
 .mlb-ins-run-live.running{border-color:#806c3e;color:#f0ca70}
 .mlb-ins-run-live.done{border-color:#2d7352;color:#72dba5}
 .mlb-ins-run-live.error{border-color:#7f3b44;color:#ff939e}
+
+.mlb-node .node-head,.mlb-node .node-name,.mlb-node .node-desc,.mlb-node .node-meta{
+  min-width:0;max-width:100%
+}
+.mlb-node .node-name{
+  overflow:hidden;text-overflow:ellipsis
+}
+.mlb-node .node-desc,.mlb-node .node-meta{
+  overflow-wrap:anywhere
+}
+
+.mlb-kernel-badge{
+  display:flex;align-items:center;gap:5px;height:26px;box-sizing:border-box;
+  padding:0 7px;border:1px solid #46515e;border-radius:6px;background:#111a23;
+  color:#8d9aaa;font-size:7px;font-weight:800;white-space:nowrap
+}
+.mlb-kernel-badge i{
+  display:block;width:6px;height:6px;border-radius:50%;background:#7b8794
+}
+.mlb-kernel-badge.connected{
+  color:#84d8aa;border-color:#2f7252;background:#10231a
+}
+.mlb-kernel-badge.connected i{background:#44bd7d}
+.mlb-kernel-badge.offline{
+  color:#f29aa2;border-color:#78414a;background:#271518
+}
+.mlb-kernel-badge.offline i{background:#df6671}

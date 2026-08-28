@@ -551,3 +551,51 @@ Use **Default Data Pipeline** to instantly restore the known-good beginner
 pipeline.
 
 JSON and `.mlbricks.bin` project Save/Load support remains available.
+
+
+## v0.5.3 — Kaggle Run bridge hardening + contained node text
+
+### Node-card overflow fix
+
+Long dataset IDs, URLs and filesystem paths can no longer escape the node card.
+Mini fields use bounded two-column layouts with ellipsis. Hovering a clipped
+label/value shows the full text via a tooltip.
+
+This fixes examples such as:
+
+- `roneneldan/TinyStories`
+- `/kaggle/working/prepared_dataset`
+- long URL dataset links
+
+### Run bridge fix for Kaggle/Jupyter
+
+The Run bridge no longer searches only the HTML output document. It now searches:
+
+- the Builder output document
+- the parent notebook document
+- the top notebook document
+- accessible sibling/child frame documents
+- open shadow roots
+
+This matters in notebook frontends such as Kaggle where raw HTML output and
+standard ipywidgets may be mounted in different document contexts.
+
+Writing the current graph into the hidden standard Textarea now uses the native
+DOM value setter plus `input`/`change` events from the target document. Run and
+Stop activate standard ipywidgets buttons in the document where they are
+actually mounted.
+
+The Data toolbar now shows:
+
+- **Kernel Connected** — visual Run can execute Python
+- **Kernel Offline** — re-run the Builder cell before trying Run
+
+After Run is clicked, Builder waits for a Python acknowledgement. If the kernel
+does not respond within three seconds, it displays a clear error instead of
+silently appearing to do nothing.
+
+The direct Python fallback remains:
+
+```python
+builder.run_data_pipeline()
+```
