@@ -519,11 +519,20 @@ class Builder:
             cors_origin=config.get("cors_origin") or "*",api_key_required=bool(config.get("require_api_key",True)),
             api_key=api_key or None)
         info=server.start()
+
+        # Register the live HTTP server immediately. If a public tunnel later
+        # fails, Stop/Restart must still be able to clean up this server.
+        self._model_servers[model_id]=server
+
         tunnel=str(config.get("public_tunnel") or "off").lower()
+        tunnel_error=None
         if tunnel=="ngrok":
             emit("Opening public HTTPS tunnel…",80)
-            server.start_ngrok(auth_token=ngrok_token or None); info=server.info()
-        self._model_servers[model_id]=server
+            try:
+                server.start_ngrok(auth_token=ngrok_token or None)
+            except Exception as exc:
+                tunnel_error=f"{type(exc).__name__}: {exc}"
+            info=server.info()
 
         safe_config={"host":server.host,"port":info.port,"cors_origin":server.cors_origin,
                      "require_api_key":server.api_key_required,"public_tunnel":tunnel,
@@ -531,24 +540,40 @@ class Builder:
                      "execution_mode":runtime.get("execution_mode","eager"),
                      "compile_mode":runtime.get("compile_mode","reduce-overhead"),
                      "precision":runtime.get("precision","auto")}
-        entry["serve_config"]=safe_config; entry["serve_status"]="running"
+        entry["serve_config"]=safe_config
+        entry["serve_status"]="running"
         entry["serve_urls"]={"local_url":info.local_url,"lan_url":info.lan_url,"public_url":info.public_url}
+        entry["serve_tunnel_error"]=tunnel_error
+
         result=info.to_dict(include_secret=True)
+        result["public_tunnel_error"]=tunnel_error
+        result["running"]=True
+
         message = f'Model API running on port {info.port}.'
         if getattr(info, "used_port_fallback", False):
             message = (
                 f'Port {getattr(info, "requested_port", config.get("port", 8000))} was busy; '
                 f'Builder automatically started the API on port {info.port}.'
             )
-        if progress_callback: progress_callback({"status":"done","runtime_kind":"serve","phase":"running","overall":100,
+        if tunnel_error:
+            message += " Local API is running, but the public ngrok tunnel failed."
+
+        if progress_callback: progress_callback({
+            "status":"done","runtime_kind":"serve","phase":"running","overall":100,
             "message":message,"model_id":model_id,"serve_info":result,
-            "model_update":{"serve_config":safe_config,"serve_status":"running","serve_urls":entry["serve_urls"]}})
+            "model_update":{
+                "serve_config":safe_config,
+                "serve_status":"running",
+                "serve_urls":entry["serve_urls"],
+                "serve_tunnel_error":tunnel_error,
+            }
+        })
         return result
 
     def stop_model_server(self, model_id, *, progress_callback=None):
         entry=self._model_output(model_id); server=self._model_servers.pop(model_id,None)
         if server is not None: server.stop()
-        entry["serve_status"]="stopped"; entry["serve_urls"]={}
+        entry["serve_status"]="stopped"; entry["serve_urls"]={}; entry["serve_tunnel_error"]=None
         payload={"status":"stopped","runtime_kind":"serve","phase":"stopped","overall":100,
                  "message":"Model API server stopped.","model_id":model_id,
                  "serve_info":{"model_id":model_id,"model_name":entry.get("name"),"running":False},
@@ -562,7 +587,11 @@ class Builder:
             info={"model_id":model_id,"model_name":entry.get("name"),"running":False}; message="Model API server is not running."; status="stopped"
         else:
             info=server.info().to_dict(include_secret=False); info["running"]=True
-            message=f'Model API running on port {info["port"]}.'; status="done"
+            info["public_tunnel_error"]=entry.get("serve_tunnel_error")
+            message=f'Model API running on port {info["port"]}.'
+            if info.get("public_tunnel_error"):
+                message += " Public tunnel is unavailable."
+            status="done"
         if progress_callback: progress_callback({"status":status,"runtime_kind":"serve","phase":"status","overall":100,
                                                  "message":message,"model_id":model_id,"serve_info":info})
         return info
@@ -774,7 +803,7 @@ class Builder:
             root.mkdir(parents=True, exist_ok=True)
             manifest = {
                 "format": "mlbricks-cloud-bundle-v1",
-                "builder_version": "0.7.4",
+                "builder_version": "0.7.5",
                 "content_type": content_type,
             }
 
@@ -1851,8 +1880,8 @@ class Builder:
         available = [k for k, v in self.mlbricks_api.items() if v.get("available")]
         unavailable = {k: v.get("error") for k, v in self.mlbricks_api.items() if not v.get("available")}
         return {
-            "builder_version": "0.7.4",
-            "frontend_version": "0.7.4",
+            "builder_version": "0.7.5",
+            "frontend_version": "0.7.5",
             "mlbricks": info,
             "api_components_available": available,
             "api_components_unavailable": unavailable,
@@ -1873,7 +1902,7 @@ class Builder:
         }).replace("</", "<\\/")
         return f"""
 <style>{css}</style>
-<div id="{html.escape(self._instance_id)}" class="mlb-root" data-mlbricks-builder-version="0.7.4"></div>
+<div id="{html.escape(self._instance_id)}" class="mlb-root" data-mlbricks-builder-version="0.7.5"></div>
 <script>
 try {{ delete window.MLBricksBuilder; }} catch (e) {{ window.MLBricksBuilder = undefined; }}
 {js}

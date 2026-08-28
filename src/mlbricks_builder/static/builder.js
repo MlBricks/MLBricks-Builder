@@ -698,6 +698,7 @@
         const entry=builtModelById(next.model_id||runtimePanel?.modelId);
         if(entry&&next.serve_info){
           entry.serve_live=cp(next.serve_info);
+          entry.serve_tunnel_error=next.serve_info.public_tunnel_error||null;
           if(next.serve_info.api_key){
             serveSecrets[entry.id]=serveSecrets[entry.id]||{};
             serveSecrets[entry.id].api_key=next.serve_info.api_key;
@@ -1863,9 +1864,9 @@
       const stop=btn("Stop Generation","mlb-runtime-stop");stop.disabled=!(execution.status==="running"&&execution.runtime_kind==="generate");stop.addEventListener("click",requestStop);side.appendChild(stop);
     }
 
-    function serveUrlCard(label,url,kind){
+    function serveUrlCard(label,url,kind,emptyLabel="Unavailable"){
       const card=document.createElement("div");card.className="mlb-serve-url "+kind;
-      const top=document.createElement("div");top.innerHTML="<strong>"+label+"</strong><span>"+(url||"Unavailable")+"</span>";card.appendChild(top);
+      const top=document.createElement("div");top.innerHTML="<strong>"+label+"</strong><span>"+(url||emptyLabel)+"</span>";card.appendChild(top);
       if(url){const actions=document.createElement("div");
         const open=btn("Open","mlb-serve-mini");open.addEventListener("click",()=>window.open(url,"_blank","noopener"));
         const copyBtn=btn("Copy","mlb-serve-mini");copyBtn.addEventListener("click",async()=>{try{await navigator.clipboard.writeText(url);setStatus(label+" copied.");}catch(_){setStatus(url);}});
@@ -1917,10 +1918,13 @@
       if(tab==="status"){
         const running=entry.serve_status==="running"||!!info.local_url;
         const failed=entry.serve_status==="error"||!!info.error;
+        const tunnelError=info.public_tunnel_error||entry.serve_tunnel_error||null;
         const hero=runtimeSection("API Server Status"),status=document.createElement("div");
         status.className="mlb-serve-status "+(running?"running":failed?"error":"stopped");
-        status.innerHTML="<strong>"+(running?"● RUNNING":failed?"✕ ERROR":"○ STOPPED")+"</strong><span>"+
-          (running?"Model is accepting HTTP inference requests.":failed?(info.error||"API server failed to start."):"Start the server from API Server Setup.")+
+        status.innerHTML="<strong>"+(running?(tunnelError?"● RUNNING · LOCAL":"● RUNNING"):failed?"✕ ERROR":"○ STOPPED")+"</strong><span>"+
+          (running
+            ?(tunnelError?"HTTP server is running, but Public HTTPS failed. Check the ngrok error below.":"Model is accepting HTTP inference requests.")
+            :failed?(info.error||"API server failed to start."):"Start the server from API Server Setup.")+
           "</span>";
         hero.appendChild(status);
         if(running&&info.used_port_fallback){
@@ -1928,11 +1932,21 @@
           portNotice.innerHTML="<strong>Port "+(info.requested_port||config.port)+" was busy.</strong><span>Builder automatically selected port "+info.port+". All links and examples below use the actual port.</span>";
           hero.appendChild(portNotice);
         }
+        if(running&&tunnelError){
+          const tunnelNotice=document.createElement("div");tunnelNotice.className="mlb-serve-tunnel-error";
+          tunnelNotice.innerHTML="<strong>Public HTTPS tunnel failed</strong><span>"+tunnelError+"</span><small>The local HTTP server and API key are still valid. Fix the ngrok token/setup, then Restart API Server.</small>";
+          hero.appendChild(tunnelNotice);
+        }
         main.appendChild(hero);
         const links=runtimeSection("Access Links"),linkGrid=document.createElement("div");linkGrid.className="mlb-serve-links";
         linkGrid.append(serveUrlCard("Localhost",info.local_url||entry.serve_urls?.local_url,"local"),
           serveUrlCard("LAN / Same Wi‑Fi",info.lan_url||entry.serve_urls?.lan_url,"lan"),
-          serveUrlCard("Public HTTPS",info.public_url||entry.serve_urls?.public_url,"public"));links.appendChild(linkGrid);main.appendChild(links);
+          serveUrlCard(
+            "Public HTTPS",
+            info.public_url||entry.serve_urls?.public_url,
+            "public",
+            tunnelError?"Tunnel failed":"Unavailable"
+          ));links.appendChild(linkGrid);main.appendChild(links);
         if(info.remote_notebook&&!info.public_url){const warn=document.createElement("div");warn.className="mlb-serve-warning";
           warn.innerHTML="<strong>"+(info.environment||"Remote notebook")+" detected</strong><span>localhost and LAN belong to the remote kernel. Enable ngrok Public HTTPS in Setup for your phone or local web app.</span>";main.appendChild(warn);}
         const endpoints=runtimeSection("API Endpoints"),ep=document.createElement("div");ep.className="mlb-serve-endpoints";
@@ -2397,7 +2411,7 @@
       if(!model)return;
       const config={
         format:"mlbricks-model-config",
-        builder_version:"0.7.4",
+        builder_version:"0.7.5",
         project:cp(state.project||{}),
         model:cp(model),
         selected_dataset:selectedModelDataset(),
@@ -3647,8 +3661,8 @@
       rememberWorkspaceView();
       return {
         format:"mlbricks-builder-design",
-        format_version:"0.7.4",
-        builder_version:"0.7.4",
+        format_version:"0.7.5",
+        builder_version:"0.7.5",
         saved_at:new Date().toISOString(),
         state:sanitizedProjectState()
       };

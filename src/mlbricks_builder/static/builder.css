@@ -1126,3 +1126,19 @@
 .mlb-serve-port-notice strong,.mlb-serve-port-notice span{display:block}
 .mlb-serve-port-notice strong{font-size:6.8px;color:#e0c270}
 .mlb-serve-port-notice span{margin-top:2px;font-size:6.1px;color:#a99762;line-height:1.3}
+
+/* v0.7.5 partial serve success: local server running, tunnel failed */
+.mlb-serve-tunnel-error{
+  margin-top:6px;padding:7px 8px;border:1px solid #7b4047;border-radius:6px;
+  background:#251619
+}
+.mlb-serve-tunnel-error strong,
+.mlb-serve-tunnel-error span,
+.mlb-serve-tunnel-error small{display:block}
+.mlb-serve-tunnel-error strong{font-size:6.9px;color:#f09aa3}
+.mlb-serve-tunnel-error span{
+  margin-top:3px;font-size:6px;color:#c78f96;line-height:1.3;overflow-wrap:anywhere
+}
+.mlb-serve-tunnel-error small{
+  margin-top:4px;font-size:5.8px;color:#977278;line-height:1.3
+}

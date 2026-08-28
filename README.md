@@ -1307,3 +1307,32 @@ a generic **STOPPED** state.
 
 The Web App Example code block also renders real line breaks instead of literal
 `\n` characters.
+
+
+## v0.7.5 — do not lose the HTTP server when ngrok fails
+
+Previously the serving flow was:
+
+```text
+HTTP server starts
+→ ngrok fails
+→ whole start command reports failure
+→ HTTP server thread may remain alive but Builder loses its handle
+→ next retry finds another occupied port
+```
+
+v0.7.5 registers the HTTP server immediately after it binds.
+
+If ngrok fails:
+
+- API Server Status remains **RUNNING · LOCAL**
+- Localhost/LAN links are shown
+- generated API key is shown
+- the exact ngrok error is displayed separately
+- Stop API Server can clean up the live server
+- Restart API Server closes the previous server before starting again
+
+This prevents orphaned model-server threads from accumulating occupied ports.
+
+On Kaggle the local link still is not externally reachable; fix the displayed
+ngrok error and restart to obtain the Public HTTPS URL.
