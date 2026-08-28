@@ -630,3 +630,12 @@
 .mlb-file-type.config{background:#302815;color:#e2c069}
 .mlb-file-type.design{background:#172837;color:#84b8e7}
 .mlb-file-actions{display:flex;gap:4px;justify-content:flex-end;flex-wrap:wrap}
+
+.mlb-output-list.compact{display:grid;grid-template-columns:repeat(auto-fill,minmax(165px,190px));gap:7px;justify-content:start}
+.mlb-output-entry.compact{width:100%;min-height:76px;max-height:92px;box-sizing:border-box;padding:7px;overflow:hidden}
+.mlb-output-entry.compact .mlb-output-name strong{font-size:8px}.mlb-output-entry.compact .mlb-output-name span{font-size:6px}
+.mlb-output-stats.compact{grid-template-columns:repeat(3,minmax(0,1fr));gap:3px;margin-top:6px}.mlb-output-stats.compact>div{padding:3px 2px}.mlb-output-stats.compact span{font-size:5.7px}.mlb-output-stats.compact strong{font-size:7.5px}
+.mlb-output-compact-foot{display:flex;justify-content:space-between;gap:6px;margin-top:5px;color:#758494;font-size:5.8px;white-space:nowrap}.mlb-output-compact-foot span{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.mlb-dataset-detail-box{display:grid;gap:0;margin:5px 0 8px;border:1px solid #324353;border-radius:7px;background:#101820;overflow:hidden}
+.mlb-dataset-detail-row{display:grid;grid-template-columns:minmax(0,42%) minmax(0,58%);gap:7px;align-items:center;min-width:0;padding:6px 7px;border-bottom:1px solid #263440;font-size:7.5px}.mlb-dataset-detail-row:last-child{border-bottom:0}
+.mlb-dataset-detail-row span{min-width:0;color:#7f8e9f;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.mlb-dataset-detail-row strong{min-width:0;color:#dce4ec;text-align:right;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

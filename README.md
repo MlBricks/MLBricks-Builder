@@ -722,3 +722,10 @@ Files also provides direct actions:
 The schema now reserves `model_outputs` and `project_files` registries so future
 training, checkpoints, weights, tokenizer files, exports and other artifacts can
 appear in the same Files browser without redesigning the UI.
+
+
+## v0.5.6 — compact Output Directory + full dataset Inspector
+
+Prepared dataset cards in Output Directory are now compact, close to the Starter card footprint. Click a card to inspect source, split, cleaning, tokenizer, context and storage settings in the right Inspector.
+
+Also fixes DatasetDict split counting: a three-split DatasetDict no longer appears as `Train = 3`. Re-run the data pipeline once after upgrading to refresh old registry metadata.

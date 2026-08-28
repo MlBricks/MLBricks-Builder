@@ -6,6 +6,7 @@ import uuid
 import threading
 import time
 from datetime import datetime, timezone
+from collections.abc import Mapping
 
 from .graph import new_project, primitive_catalog, tinystories_30m_project
 from .runtime import get_mlbricks_info
@@ -91,11 +92,13 @@ class Builder:
         return {"rows": rows, "columns": columns}
 
     def _summarize_prepared_result(self, result):
-        # DatasetDict-like objects have items() but no column_names.
-        if hasattr(result, "items") and not hasattr(result, "column_names"):
-            splits = {}
-            for name, split in result.items():
-                splits[str(name)] = self._split_summary(split)
+        # DatasetDict is mapping-like and also exposes column_names. Detecting
+        # it as Mapping prevents the old "Train = 3" split-count bug.
+        if isinstance(result, Mapping):
+            splits = {
+                str(name): self._split_summary(split)
+                for name, split in result.items()
+            }
         else:
             splits = {"train": self._split_summary(result)}
 
@@ -113,6 +116,34 @@ class Builder:
             "total_rows": total_rows if known_total else None,
             "default_split": "train" if "train" in splits else next(iter(splits), None),
         }
+
+    def _data_pipeline_snapshot(self):
+        """Snapshot source, processing, split and tokenizer settings."""
+        workspaces = self.state.get("workspaces") or {}
+        data_ws = workspaces.get("data") or {}
+        component = (self.state.get("components") or {}).get(
+            data_ws.get("root_component_id"), {}
+        )
+        snapshot = {
+            "steps": [], "source": None, "text_processing": None,
+            "split": None, "tokenizer": None, "image_processing": None,
+            "audio_processing": None, "batch": None, "output": None,
+        }
+        source_types = {"manual_dataset", "hf_dataset", "kaggle_dataset", "url_dataset", "local_dataset"}
+        for node in component.get("nodes") or []:
+            params = json.loads(json.dumps(node.get("params") or {}))
+            snapshot["steps"].append({"id":node.get("id"),"type":node.get("type"),"name":node.get("name"),"params":params})
+            value = {"type":node.get("type"),"name":node.get("name"),**params}
+            t=node.get("type")
+            if t in source_types: snapshot["source"] = value
+            elif t=="text_process": snapshot["text_processing"] = value
+            elif t=="train_test_split": snapshot["split"] = value
+            elif t=="tokenize_text": snapshot["tokenizer"] = value
+            elif t=="image_process": snapshot["image_processing"] = value
+            elif t=="audio_process": snapshot["audio_processing"] = value
+            elif t=="batch_data": snapshot["batch"] = value
+            elif t=="prepared_dataset": snapshot["output"] = value
+        return snapshot
 
     def _register_prepared_dataset(self, result):
         node = self._prepared_output_node() or {}
@@ -142,6 +173,7 @@ class Builder:
             "output_node_id": node.get("id"),
             "storage": "disk+memory" if save_to_disk else "memory",
             "path": path,
+            "pipeline": self._data_pipeline_snapshot(),
             **summary,
         }
 
@@ -356,8 +388,8 @@ class Builder:
         available = [k for k, v in self.mlbricks_api.items() if v.get("available")]
         unavailable = {k: v.get("error") for k, v in self.mlbricks_api.items() if not v.get("available")}
         return {
-            "builder_version": "0.5.5",
-            "frontend_version": "0.5.5",
+            "builder_version": "0.5.6",
+            "frontend_version": "0.5.6",
             "mlbricks": info,
             "api_components_available": available,
             "api_components_unavailable": unavailable,
@@ -377,7 +409,7 @@ class Builder:
         }).replace("</", "<\\/")
         return f"""
 <style>{css}</style>
-<div id="{html.escape(self._instance_id)}" class="mlb-root" data-mlbricks-builder-version="0.5.5"></div>
+<div id="{html.escape(self._instance_id)}" class="mlb-root" data-mlbricks-builder-version="0.5.6"></div>
 <script>
 try {{ delete window.MLBricksBuilder; }} catch (e) {{ window.MLBricksBuilder = undefined; }}
 {js}

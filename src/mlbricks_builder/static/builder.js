@@ -764,56 +764,10 @@
 
     function renderDataOutputDirectory(container){
       const entries=availablePreparedDatasets();
-      const head=document.createElement("div");head.className="mlb-output-head";
-      head.innerHTML="<div><strong>DATA OUTPUTS</strong><span>"+entries.length+" prepared dataset"+(entries.length===1?"":"s")+"</span></div>";
-      container.appendChild(head);
-
-      if(!entries.length){
-        container.appendChild(makeDirectoryEmpty(
-          "No prepared datasets yet.",
-          "Run a Data Processing pipeline. Completed datasets will appear here automatically."
-        ));
-        return;
-      }
-
-      const list=document.createElement("div");list.className="mlb-output-list";
-      entries.forEach(meta=>{
-        const card=document.createElement("div");
-        card.className="mlb-output-entry"+(outputDirectorySelection===meta.id?" selected":"");
-
-        const top=document.createElement("div");top.className="mlb-output-entry-top";
-        top.innerHTML="<div class='mlb-output-name'><strong>"+meta.name+"</strong><span>Prepared Dataset</span></div>"+
-          "<span class='mlb-output-type data'>DATA</span>";
-        card.appendChild(top);
-
-        const stats=document.createElement("div");stats.className="mlb-output-stats";
-        [["train","Train"],["validation","Validation"],["test","Test"]].forEach(([key,label])=>{
-          if(meta.splits?.[key]){
-            const item=document.createElement("div");
-            item.innerHTML="<span>"+label+"</span><strong>"+splitRows(meta,key)+"</strong>";
-            stats.appendChild(item);
-          }
-        });
-        card.appendChild(stats);
-
-        const metaLine=document.createElement("div");metaLine.className="mlb-output-meta";
-        metaLine.innerHTML="<span>"+dataStorageLabel(meta)+"</span><span>"+(meta.total_rows??"?")+" total rows</span>";
-        card.appendChild(metaLine);
-
-        if(meta.path){
-          const path=document.createElement("div");path.className="mlb-output-path";
-          path.textContent=meta.path;path.title=meta.path;card.appendChild(path);
-        }
-
-        const actions=document.createElement("div");actions.className="mlb-output-actions";
-        const use=btn("Use in Model","mlb-output-btn");
-        use.addEventListener("click",ev=>{ev.stopPropagation();useDatasetInModel(meta);});
-        actions.appendChild(use);card.appendChild(actions);
-
-        card.addEventListener("click",()=>{outputDirectorySelection=meta.id;draw();});
-        list.appendChild(card);
-      });
-      container.appendChild(list);
+      const head=document.createElement("div");head.className="mlb-output-head";head.innerHTML="<div><strong>DATA OUTPUTS</strong><span>"+entries.length+" prepared dataset"+(entries.length===1?"":"s")+" · click one for details</span></div>";container.appendChild(head);
+      if(!entries.length){container.appendChild(makeDirectoryEmpty("No prepared datasets yet.","Run a Data Processing pipeline. Completed datasets will appear here automatically."));return;}
+      const list=document.createElement("div");list.className="mlb-output-list compact";
+      entries.forEach(meta=>{const card=document.createElement("div");card.className="mlb-output-entry compact"+(outputDirectorySelection===meta.id?" selected":"");const top=document.createElement("div");top.className="mlb-output-entry-top";top.innerHTML="<div class='mlb-output-name'><strong>"+meta.name+"</strong><span>"+dataStorageLabel(meta)+"</span></div><span class='mlb-output-type data'>DATA</span>";card.appendChild(top);const stats=document.createElement("div");stats.className="mlb-output-stats compact";[["train","Train"],["validation","Val"],["test","Test"]].forEach(([key,label])=>{if(meta.splits?.[key]){const item=document.createElement("div");item.innerHTML="<span>"+label+"</span><strong>"+splitRows(meta,key)+"</strong>";stats.appendChild(item);}});card.appendChild(stats);const foot=document.createElement("div");foot.className="mlb-output-compact-foot";foot.innerHTML="<span>"+(meta.total_rows??"?")+" rows</span><span>Details →</span>";card.appendChild(foot);card.addEventListener("click",()=>{outputDirectorySelection=meta.id;selected=null;inspectorTab="settings";setStatus(meta.name+" details opened.");draw();});list.appendChild(card);});container.appendChild(list);
     }
 
     function renderModelOutputDirectory(container){
@@ -952,7 +906,7 @@
       if(!model)return;
       const config={
         format:"mlbricks-model-config",
-        builder_version:"0.5.5",
+        builder_version:"0.5.6",
         project:cp(state.project||{}),
         model:cp(model),
         selected_dataset:selectedModelDataset(),
@@ -1022,6 +976,44 @@
       });
       container.appendChild(table);
     }
+
+    function currentDataPipelineSnapshot(){
+      const ws=state.workspaces?.data;
+      const comp=state.components?.[ws?.root_component_id];
+      const snap={source:null,text_processing:null,split:null,tokenizer:null,image_processing:null,audio_processing:null,batch:null,output:null,steps:[]};
+      if(!comp)return snap;
+      const sourceTypes=new Set(["manual_dataset","hf_dataset","kaggle_dataset","url_dataset","local_dataset"]);
+      (comp.nodes||[]).forEach(node=>{
+        const value={type:node.type,name:node.name,...cp(node.params||{})};
+        snap.steps.push({id:node.id,type:node.type,name:node.name,params:cp(node.params||{})});
+        if(sourceTypes.has(node.type))snap.source=value;
+        else if(node.type==="text_process")snap.text_processing=value;
+        else if(node.type==="train_test_split")snap.split=value;
+        else if(node.type==="tokenize_text")snap.tokenizer=value;
+        else if(node.type==="image_process")snap.image_processing=value;
+        else if(node.type==="audio_process")snap.audio_processing=value;
+        else if(node.type==="batch_data")snap.batch=value;
+        else if(node.type==="prepared_dataset")snap.output=value;
+      });
+      return snap;
+    }
+    function datasetPipeline(meta){return meta?.pipeline||currentDataPipelineSnapshot();}
+    function prettyBool(value){if(value===undefined||value===null||value==="")return "—";const v=String(value).toLowerCase();return v==="true"?"Yes":v==="false"?"No":String(value);}
+    function sourceDisplay(source){if(!source)return "—";if(source.type==="hf_dataset")return source.dataset_id||"Hugging Face";if(source.type==="kaggle_dataset")return source.dataset_handle||"Kaggle";if(source.type==="url_dataset")return source.url||"URL";if(source.type==="local_dataset")return source.path||"Local File";if(source.type==="manual_dataset")return "Manual Text Data";return source.name||source.type||"—";}
+    function detailSection(body,title,rows){const st=document.createElement("div");st.className="mlb-section-title";st.textContent=title;body.appendChild(st);const box=document.createElement("div");box.className="mlb-dataset-detail-box";rows.filter(row=>row&&row[1]!==undefined&&row[1]!==null&&row[1]!=="").forEach(([label,value])=>{const r=document.createElement("div");r.className="mlb-dataset-detail-row";const a=document.createElement("span");a.textContent=label;const v=document.createElement("strong");v.textContent=String(value);v.title=String(value);r.append(a,v);box.appendChild(r);});body.appendChild(box);}
+    function renderPreparedDatasetInspector(body,meta){
+      const p=datasetPipeline(meta),source=p.source||{},process=p.text_processing||{},split=p.split||{},tok=p.tokenizer||{},output=p.output||{};
+      const head=document.createElement("div");head.className="mlb-selected";head.innerHTML="<strong>"+meta.name+"</strong><span class='mlb-pill'>Prepared Data</span>";body.appendChild(head);
+      const ready=document.createElement("div");ready.className="mlb-api-status ok";ready.textContent="✓ Dataset ready for Model Builder";body.appendChild(ready);
+      const st=document.createElement("div");st.className="mlb-section-title";st.textContent="SPLITS";body.appendChild(st);body.appendChild(datasetSummaryCard(meta,"DATASET OUTPUT"));
+      detailSection(body,"SOURCE",[["Source Type",source.name||source.type||"—"],["Source",sourceDisplay(source)],["Hub Source Split",source.split],["Text Column",source.text_column],["Max Rows",Number(source.max_rows)===0?"All":source.max_rows]]);
+      detailSection(body,"TRAIN / VALIDATION / TEST",[["Train %",split.train_size!==undefined?split.train_size+"%":"—"],["Validation %",split.validation_size!==undefined?split.validation_size+"%":"—"],["Test %",split.test_size!==undefined?split.test_size+"%":"—"],["Seed",split.seed],["Shuffle",prettyBool(split.shuffle)]]);
+      if(Object.keys(process).length)detailSection(body,"TEXT PROCESSING",[["Text Column",process.text_column],["Lowercase",prettyBool(process.lowercase)],["Trim Spaces",prettyBool(process.strip)],["Normalize Whitespace",prettyBool(process.normalize_whitespace)],["Normalize Unicode",prettyBool(process.unicode_nfkc)],["Remove Empty",prettyBool(process.remove_empty)],["Min Characters",process.min_chars],["Max Characters",!process.max_chars||Number(process.max_chars)===0?"All":process.max_chars]]);
+      if(Object.keys(tok).length)detailSection(body,"TOKENIZER",[["Tokenizer",tok.tokenizer_name],["Text Column",tok.text_column],["Context Length",tok.context_length],["Truncation",prettyBool(tok.truncation)],["Padding",tok.padding],["Special Tokens",prettyBool(tok.add_special_tokens)]]);
+      detailSection(body,"STORAGE",[["Storage",dataStorageLabel(meta)],["Total Rows",meta.total_rows??"—"],["Save To Disk",output.save_to_disk!==undefined?prettyBool(output.save_to_disk):(meta.path?"Yes":"No")],["Path",meta.path||"Python memory"],["Created",meta.created_at||"—"]]);
+      const actions=document.createElement("div");actions.className="mlb-action-grid";const use=btn("Use in Model","mlb-dark-btn");use.addEventListener("click",()=>useDatasetInModel(meta));actions.appendChild(use);body.appendChild(actions);
+    }
+    function selectedOutputDataset(){if(state.active_workspace!=="data"||bottomView!=="outputs"||!outputDirectorySelection)return null;return preparedDatasetById(outputDirectorySelection);}
 
     function normalizedBrickName(name){
       return String(name||"").trim().replace(/\s+/g," ").toLowerCase();
@@ -1787,7 +1779,7 @@
       rememberWorkspaceView();
       return {
         format:"mlbricks-builder-design",
-        format_version:"0.5.5",
+        format_version:"0.5.6",
         builder_version:"0.5.1",
         saved_at:new Date().toISOString(),
         state:cp(state)
@@ -1866,7 +1858,7 @@
 
       // Top bar
       const top=document.createElement("div");top.className="mlb-topbar";
-      const logo=document.createElement("div");logo.className="mlb-logo";logo.innerHTML='<span class="mlb-logo-mark">◇</span>MLBricks Builder <span class="mlb-beta">v0.5.5</span>';top.appendChild(logo);
+      const logo=document.createElement("div");logo.className="mlb-logo";logo.innerHTML='<span class="mlb-logo-mark">◇</span>MLBricks Builder <span class="mlb-beta">v0.5.6</span>';top.appendChild(logo);
       const title=document.createElement("div");title.className="mlb-project-title";title.textContent=state.project?.name||"Untitled";top.appendChild(title);
       const saved=document.createElement("div");saved.className="mlb-save-state";saved.textContent="• Saved";top.appendChild(saved);
       const sp=document.createElement("div");sp.className="mlb-topspacer";top.appendChild(sp);
@@ -2071,7 +2063,7 @@
             if(pendingPort?.nodeId===n.id&&pendingPort.side===side&&pendingPort.portIndex===idx) portEl.classList.add("armed");
             portEl.addEventListener("click",ev=>portClick(n.id,side,idx,ev));
           });
-          card.addEventListener("click",()=>{selected=n.id;draw();});card.addEventListener("dblclick",()=>{if(n.definition_id)openInside(n);});
+          card.addEventListener("click",()=>{outputDirectorySelection=null;selected=n.id;draw();});card.addEventListener("dblclick",()=>{if(n.definition_id)openInside(n);});
           flow.appendChild(card);
         });
       }
@@ -2177,10 +2169,13 @@
       const tabs=document.createElement("div");tabs.className="mlb-ins-tabs";
       [["settings","Inspector"],["info","Node Info"]].forEach(([k,t])=>{const b=btn(t);if(inspectorTab===k)b.className="active";b.addEventListener("click",()=>{inspectorTab=k;draw();});tabs.appendChild(b);});ins.appendChild(tabs);
       const body=document.createElement("div");body.className="mlb-ins-body";
+      const outputDataset=selectedOutputDataset();
       const n=selectedNode();
 
-      if(!n){
-        body.innerHTML='<div class="mlb-section-title">SELECT A NODE</div><div class="mlb-api-path">'+(state.active_workspace==="data"?"Choose a data step to edit its processing API.":"Choose a model component to edit its MLBricks API.")+'</div>';
+      if(outputDataset){
+        renderPreparedDatasetInspector(body,outputDataset);
+      }else if(!n){
+        body.innerHTML='<div class="mlb-section-title">SELECT A NODE</div><div class="mlb-api-path">'+(state.active_workspace==="data"?"Choose a data step, or click a prepared dataset in Output Directory to inspect it.":"Choose a model component to edit its MLBricks API.")+'</div>';
       }else if(inspectorTab==="info"){
         const api=apiInfo(n);body.innerHTML='<div class="mlb-selected"><strong>'+n.name+'</strong><span class="mlb-pill">'+(api.public_name||"Custom")+'</span></div>';
         const s=document.createElement("div");s.className="mlb-summary";[["Type",n.type],["Definition",n.definition_id?"Custom":"Built-in"],["Repeat",n.repeat||1],["API",api.import_path||"custom"],["Status","Valid"]].forEach(([a,b])=>{const r=document.createElement("div");r.className="mlb-summary-row";r.innerHTML="<span>"+a+"</span><strong>"+b+"</strong>";s.appendChild(r);});body.appendChild(s);
