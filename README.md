@@ -1375,3 +1375,23 @@ This release refines the Brick Library card layout introduced in v0.7.7.
 - title still uses one-line clamp
 - description still uses two-line clamp
 - built-in and custom brick cards stay visually consistent
+
+
+## v0.7.9 — toolbar + info + library polish
+
+This release improves the Builder UI and Inspector.
+
+### Updated
+- fixed vertical alignment for library card icons and text
+- made library cards slightly roomier with a more stable fixed height
+- first item under each collapsible section now aligns correctly
+- added bottom spacing for **Create Custom Brick**
+- changed **Batch / DataLoader** icon from `BATCH` to `BTC`
+- renamed **Node Info** tab to **Info**
+- added **Config** guidance in the inspector: what the element does and why it is used
+
+### Toolbar
+- removed the separate **BIN** button
+- **Save** now asks whether to save **BIN** or **JSON**
+- wired **Export**, **Share**, **Help**, and **Settings** actions
+- improved top-toolbar vertical alignment

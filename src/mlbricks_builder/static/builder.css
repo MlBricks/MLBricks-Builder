@@ -1281,3 +1281,35 @@
 .mlb-custom-card .mlb-pal-sub{
   margin:0;
 }
+
+
+/* ------------------------------------------------------------------
+   v0.7.9 — Toolbar actions, aligned library cards, and inspector polish
+   ------------------------------------------------------------------ */
+.mlb-top-actions{display:flex;gap:7px;align-items:center;flex-wrap:nowrap}
+.mlb-dark-btn,.mlb-run,.mlb-stop,.mlb-tool,.mlb-filter-btn,.mlb-file-filter,.mlb-create{
+  display:inline-flex;align-items:center;justify-content:center;min-height:32px;line-height:1;text-align:center;
+}
+.mlb-palette{display:grid;gap:5px;padding:1px}
+.mlb-palette button,.mlb-custom-card{
+  align-items:center;
+  gap:9px;
+  padding:8px;
+  min-height:42px;
+}
+.mlb-palette button > span:last-child,
+.mlb-custom-card > span:last-child{
+  display:flex;
+  flex-direction:column;
+  justify-content:center;
+  align-self:center;
+  min-height:26px;
+}
+.mlb-palette button strong,
+.mlb-custom-card strong{display:block;line-height:1.15;margin:0 0 2px 0}
+.mlb-palette .mlb-pal-sub,
+.mlb-custom-card .mlb-pal-sub{margin:0;line-height:1.15}
+.mlb-palette > button:first-child,
+.mlb-palette > .mlb-custom-card:first-child{margin-top:1px}
+.mlb-create{margin-top:9px;margin-bottom:10px}
+.mlb-ins-tabs button{white-space:nowrap}

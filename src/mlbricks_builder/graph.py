@@ -237,7 +237,7 @@ def primitive_catalog():
             "builder_utility": True,
             "builder_python_api": True,
             "name": "Batch / DataLoader",
-            "icon": "BATCH",
+            "icon": "BTC",
             "category": "Dataset",
             "description": "Create training batches from prepared data",
             "accent": "blue",
@@ -556,7 +556,7 @@ def new_project(name: str = "Untitled Model"):
     now = datetime.now(timezone.utc).isoformat()
     return {
         "format": "mlbricks-builder",
-        "format_version": "0.7.8",
+        "format_version": "0.7.9",
         "project": {
             "name": name,
             "created_at": now,

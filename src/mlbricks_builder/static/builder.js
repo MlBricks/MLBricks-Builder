@@ -868,6 +868,27 @@
     function selectedNode(){return current(state).nodes.find(n=>n.id===selected)||null;}
     function setStatus(s){status=s;}
 
+    function componentExplainer(node,item,api){
+      const description=String(api?.description||item?.description||node?.name||"Builder component.").trim();
+      const type=String(node?.type||"");
+      let why="Use this component when you need its function in your pipeline or model architecture.";
+      if(type==="embedding")why="Use it to turn token IDs into trainable vectors before sequence or language-model layers.";
+      else if(type==="esa")why="Use it when you want MLBricks Entangled State Attention for efficient sequence mixing.";
+      else if(type==="vesa")why="Use it for vision-oriented ESA blocks inside image pipelines or multimodal experiments.";
+      else if(type==="rmsnorm"||type==="layernorm")why="Use normalization to stabilize activations and training across deep stacks.";
+      else if(type==="ffnbrick"||type==="micro_ffn"||type==="virtual_saffn")why="Use feed-forward blocks to expand, transform and refine hidden features after mixing blocks.";
+      else if(type==="lm_head")why="Use it at the end of a language model to convert hidden states into token logits.";
+      else if(type==="classifier")why="Use it when the model should output class labels instead of next-token predictions.";
+      else if(type==="text_input"||type==="image_input"||type==="audio_input")why="Use an input node to define what data enters the pipeline and how the rest of the graph receives it.";
+      else if(type==="train_test_split")why="Use it to create clean train, validation and test splits before model training.";
+      else if(type==="tokenize_text")why="Use it to convert raw text into token IDs compatible with embedding and training steps.";
+      else if(type==="text_processing"||type==="image_processing"||type==="audio_processing")why="Use preprocessing to clean and normalize data so later steps receive consistent inputs.";
+      else if(type==="batch_dataloader")why="Use it to package prepared samples into batches that the training loop can consume efficiently.";
+      else if(type==="text_output"||type==="logits_output")why="Use an output node to define what the graph returns after processing or inference.";
+      else if(type==="custom")why="Use a custom brick to reuse the same internal architecture in multiple places.";
+      return {what:description, why};
+    }
+
     function apiInfo(node){
       if(node.type==="custom") return {public_name:"Custom Layer",parameters:[],available:true};
       const item=cat(catalog,node.type);
@@ -2483,7 +2504,7 @@
       if(!model)return;
       const config={
         format:"mlbricks-model-config",
-        builder_version:"0.7.5",
+        builder_version:"0.7.9",
         project:cp(state.project||{}),
         model:cp(model),
         selected_dataset:selectedModelDataset(),
@@ -3734,7 +3755,7 @@
       return {
         format:"mlbricks-builder-design",
         format_version:"0.7.5",
-        builder_version:"0.7.5",
+        builder_version:"0.7.9",
         saved_at:new Date().toISOString(),
         state:sanitizedProjectState()
       };
@@ -3760,6 +3781,92 @@
       const blob=new Blob([JSON.stringify(designPayload(),null,2)],{type:"application/json"});
       downloadDesignBlob(blob,safeFilename(state.project?.name)+".mlbricks.json");
       setStatus("JSON design saved.");draw();
+    }
+
+    function saveDesignChoice(){
+      const win=(root.ownerDocument&&root.ownerDocument.defaultView)||window;
+      const choice=(win&&typeof win.prompt==="function")
+        ? String(win.prompt('Save project as "bin" or "json":','bin')||"").trim().toLowerCase()
+        : "bin";
+      if(!choice){setStatus("Save cancelled.");return;}
+      if(choice==="bin"||choice==="binary"||choice==="b")return saveDesignBin();
+      if(choice==="json"||choice==="j")return saveDesign();
+      setStatus('Unknown save type: '+choice+' — use "bin" or "json".');
+    }
+
+    function exportWorkspace(){
+      if(state.active_workspace==="model"){
+        const model=modelRootComponent();
+        if(model){downloadModelConfig();return;}
+      }
+      const payload={
+        format:"mlbricks-export",
+        builder_version:"0.7.9",
+        workspace:state.active_workspace,
+        project:cp(state.project||{}),
+        prepared_datasets:cp(state.prepared_datasets||[]),
+        model_outputs:cp(state.model_outputs||[]),
+        project_files:cp(state.project_files||[]),
+        current_component:cp(current(state))
+      };
+      const blob=new Blob([JSON.stringify(payload,null,2)],{type:"application/json"});
+      downloadDesignBlob(blob,safeFilename(state.project?.name||workspaceName())+"."+state.active_workspace+".export.json");
+      setStatus((state.active_workspace==="model"?"Model":"Data")+" export downloaded.");
+      draw();
+    }
+
+    async function shareWorkspace(){
+      let text="MLBricks Builder — "+(state.project?.name||workspaceName())+"
+";
+      text+="Version: 0.7.9
+Workspace: "+workspaceName()+"
+";
+      text+="Nodes: "+(current(state).nodes||[]).length+"
+Connections: "+(current(state).edges||[]).length+"
+";
+      const activeModel=selectedOutputModel()||builtModelById(outputDirectorySelection)||((state.model_outputs||[]).slice(-1)[0]||null);
+      const serve=activeModel?.serve_runtime||{};
+      const url=serve.public_url||serve.local_url||activeModel?.serve_urls?.public_url||activeModel?.serve_urls?.local_url||"";
+      if(url)text+="Access URL: "+url+"
+";
+      text+="Tip: use Save to send the full .mlbricks project file.";
+      await copyTextRobust(text,"share summary");
+    }
+
+    function showQuickHelp(){
+      const win=(root.ownerDocument&&root.ownerDocument.defaultView)||window;
+      const help=[
+        'MLBricks Builder v0.7.9',
+        '',
+        '• Add bricks or data steps from the left library.',
+        '• Save now asks whether to save BIN or JSON.',
+        '• Export downloads a model config or workspace export file.',
+        '• Load opens .mlbricks.json or .mlbricks.bin files.',
+        '• Share copies a short project summary to the clipboard.',
+        '• Select a node to edit config and read what it does in Inspector.',
+      ].join('\n');
+      if(win&&typeof win.alert==="function")win.alert(help);
+      setStatus("Help opened.");
+    }
+
+    function openBuilderSettings(){
+      const win=(root.ownerDocument&&root.ownerDocument.defaultView)||window;
+      const currentName=state.project?.name||"Untitled Model";
+      const nextName=win&&typeof win.prompt==="function"
+        ? win.prompt("Project name:",currentName)
+        : currentName;
+      if(nextName===null){setStatus("Settings unchanged.");return;}
+      const cleaned=String(nextName||"").trim();
+      if(!cleaned){setStatus("Project name cannot be empty.");return;}
+      checkpoint("Update project settings");
+      state.project=state.project||{};
+      state.project.name=cleaned;
+      const modelId=state.workspaces?.model?.root_component_id||state.root_component_id;
+      if(modelId&&state.components?.[modelId]&&!state.components[modelId].name)state.components[modelId].name=cleaned;
+      if(Array.isArray(state.breadcrumbs)&&state.breadcrumbs.length)state.breadcrumbs[0].name=cleaned;
+      if(state.workspaces?.model?.breadcrumbs?.length)state.workspaces.model.breadcrumbs[0].name=cleaned;
+      setStatus("Project settings updated.");
+      draw();
     }
 
     function loadDesign(){
@@ -3837,13 +3944,16 @@
         const c=current(state);if(!c.nodes.length&&!c.edges.length)return;
         checkpoint("Clear graph");c.nodes=[];c.edges=[];selected=null;pendingPort=null;setStatus("Graph cleared.");draw();
       });
-      const saveBtn=btn("▣ Save","mlb-dark-btn");saveBtn.title="Save full project as readable .mlbricks.json";saveBtn.addEventListener("click",saveDesign);
-      const saveBinBtn=btn("BIN","mlb-dark-btn");saveBinBtn.title="Save full project as .mlbricks.bin";saveBinBtn.addEventListener("click",saveDesignBin);
+      const saveBtn=btn("▣ Save","mlb-dark-btn");saveBtn.title="Save full project as BIN or JSON";saveBtn.addEventListener("click",saveDesignChoice);
       const loadBtn=btn("⇧ Load","mlb-dark-btn");loadBtn.title="Load .mlbricks.json or .mlbricks.bin";loadBtn.addEventListener("click",loadDesign);
+      const exportBtn=btn("⇩ Export","mlb-dark-btn");exportBtn.title="Export model config or workspace data";exportBtn.addEventListener("click",exportWorkspace);
+      const shareBtn=btn("⌯ Share","mlb-dark-btn");shareBtn.title="Copy a project summary";shareBtn.addEventListener("click",shareWorkspace);
+      const helpBtn=btn("?","mlb-dark-btn");helpBtn.title="Quick help";helpBtn.addEventListener("click",showQuickHelp);
+      const settingsBtn=btn("⚙","mlb-dark-btn");settingsBtn.title="Project settings";settingsBtn.addEventListener("click",openBuilderSettings);
       const stopBtn=btn("□ Stop","mlb-stop");stopBtn.addEventListener("click",requestStop);
       acts.appendChild(run);
       if(state.active_workspace==="data")acts.appendChild(stopBtn);
-      acts.append(undoBtn,redoBtn,clearBtn,saveBtn,saveBinBtn,loadBtn,btn("⇩ Export","mlb-dark-btn"),btn("⌯ Share","mlb-dark-btn"),btn("?","mlb-dark-btn"),btn("⚙","mlb-dark-btn"));top.appendChild(acts);
+      acts.append(undoBtn,redoBtn,clearBtn,saveBtn,loadBtn,exportBtn,shareBtn,helpBtn,settingsBtn);top.appendChild(acts);
       root.appendChild(top);
 
       const shell=document.createElement("div");shell.className="mlb-shell";
@@ -4166,7 +4276,7 @@
       // Inspector
       const ins=document.createElement("aside");ins.className="mlb-inspector";
       const tabs=document.createElement("div");tabs.className="mlb-ins-tabs";
-      [["settings","Inspector"],["info","Node Info"]].forEach(([k,t])=>{const b=btn(t);if(inspectorTab===k)b.className="active";b.addEventListener("click",()=>{inspectorTab=k;draw();});tabs.appendChild(b);});ins.appendChild(tabs);
+      [["settings","Inspector"],["info","Info"]].forEach(([k,t])=>{const b=btn(t);if(inspectorTab===k)b.className="active";b.addEventListener("click",()=>{inspectorTab=k;draw();});tabs.appendChild(b);});ins.appendChild(tabs);
       const body=document.createElement("div");body.className="mlb-ins-body";
       const outputDataset=selectedOutputDataset();
       const outputModel=selectedOutputModel();
@@ -4179,8 +4289,10 @@
       }else if(!n){
         body.innerHTML='<div class="mlb-section-title">SELECT A NODE</div><div class="mlb-api-path">'+(state.active_workspace==="data"?"Choose a data step, or click a prepared dataset in Output Directory to inspect it.":"Choose a model component to edit its MLBricks API.")+'</div>';
       }else if(inspectorTab==="info"){
-        const api=apiInfo(n);body.innerHTML='<div class="mlb-selected"><strong>'+n.name+'</strong><span class="mlb-pill">'+(api.public_name||"Custom")+'</span></div>';
-        const s=document.createElement("div");s.className="mlb-summary";[["Type",n.type],["Definition",n.definition_id?"Custom":"Built-in"],["Repeat",n.repeat||1],["API",api.import_path||"custom"],["Status","Valid"]].forEach(([a,b])=>{const r=document.createElement("div");r.className="mlb-summary-row";r.innerHTML="<span>"+a+"</span><strong>"+b+"</strong>";s.appendChild(r);});body.appendChild(s);
+        const api=apiInfo(n);const item=n.type==="custom"?{category:"My Bricks",description:"Reusable custom brick."}:cat(catalog,n.type);const expl=componentExplainer(n,item,api);
+        body.innerHTML='<div class="mlb-selected"><strong>'+n.name+'</strong><span class="mlb-pill">'+(api.public_name||"Custom")+'</span></div>';
+        const s=document.createElement("div");s.className="mlb-summary";[["Type",n.type],["Definition",n.definition_id?"Custom":"Built-in"],["Category",item.category||"General"],["Repeat",n.repeat||1],["API",api.import_path||"custom"],["Status","Valid"]].forEach(([a,b])=>{const r=document.createElement("div");r.className="mlb-summary-row";r.innerHTML="<span>"+a+"</span><strong>"+b+"</strong>";s.appendChild(r);});body.appendChild(s);
+        const infoBox=document.createElement("div");infoBox.className="mlb-api-path";infoBox.innerHTML="<strong style='display:block;margin-bottom:4px;color:#e9eef6'>What it does</strong>"+expl.what+"<br><br><strong style='display:block;margin:0 0 4px;color:#e9eef6'>Why use it</strong>"+expl.why;body.appendChild(infoBox);
       }else{
         const api=apiInfo(n);const info=n.type==="custom"?{api:[]}:cat(catalog,n.type);
         const sw=document.createElement("div");sw.className="mlb-selected";sw.innerHTML="<strong>"+n.name+"</strong><span class='mlb-pill'>"+(api.public_name||"Custom Layer")+"</span>";body.appendChild(sw);
@@ -4245,7 +4357,11 @@
             body.appendChild(presets);
           }
 
-          const st=document.createElement("div");st.className="mlb-section-title";st.textContent=state.active_workspace==="data"?"DATA SETTINGS":"PARAMETERS";body.appendChild(st);
+          const st=document.createElement("div");st.className="mlb-section-title";st.textContent="CONFIG";body.appendChild(st);
+          const expl=componentExplainer(n,info,api);
+          const configInfo=document.createElement("div");configInfo.className="mlb-api-path";
+          configInfo.innerHTML="<strong style='display:block;margin-bottom:4px;color:#e9eef6'>What it does</strong>"+expl.what+"<br><br><strong style='display:block;margin:0 0 4px;color:#e9eef6'>Why use it</strong>"+expl.why;
+          body.appendChild(configInfo);
           const fields=(api.parameters||info.api||[]);
           if(fields.some(f=>f.group)) renderGroupedFields(body,n,fields);
           else fields.forEach(f=>renderField(body,n,f));
