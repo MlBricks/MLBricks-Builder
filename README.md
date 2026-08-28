@@ -1523,3 +1523,26 @@ v0.7.17 makes the notebook tab explicitly own the popout and transfers a dedicat
   hide another working route
 - state sync, Run, Stop, Train, Generate, Serve, local import, and cloud commands
   all use the same dedicated transport back to the notebook Python bridge
+
+
+## v0.7.18 — kernel-safe Full Screen
+
+Some sandboxed notebook hosts can open a detached Builder tab but intentionally
+isolate that tab from the notebook output iframe. In that case v0.7.17 could
+render correctly while Python-backed actions still reported **Kernel bridge is
+offline**.
+
+v0.7.18 removes the detached-tab requirement from the primary full-size workflow.
+The top bar now uses **⛶ Full Screen**, which expands the *same live Builder
+instance* instead of cloning it into another tab. This means the standard
+ipywidgets/Python bridge never changes browsing context.
+
+Full Screen uses three levels in order:
+
+1. browser Fullscreen API when the notebook grants fullscreen permission;
+2. same-origin notebook-output iframe expansion to `100vw × 100vh` when available;
+3. a full-output focus mode as a safe fallback.
+
+Press **Esc** or **↙ Exit Full Screen** to return to the notebook layout. Run Data,
+Build, Train, Generate, Serve, Local Environment, Cloud and Stop continue to use
+the original kernel bridge while Full Screen is active.

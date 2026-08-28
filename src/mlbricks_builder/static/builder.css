@@ -1339,6 +1339,29 @@
 .mlb-local-scan-actions .mlb-local-load.secondary{background:#121b24!important;border-color:#3a4c5c!important;color:#9fb0bf!important}
 .mlb-local-badge{max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
-/* v0.7.17 Full Window launcher */
+/* v0.7.18 same-context Full Screen */
 .mlb-full-window-btn{border-color:#4b5f79;background:#162230;color:#cfe4ff;font-weight:800;white-space:nowrap;text-decoration:none;cursor:pointer}
 .mlb-full-window-btn:hover{background:#1b2b3b;border-color:#6282a8}
+
+
+/* v0.7.18 kernel-safe same-context Full Screen. */
+.mlb-root:fullscreen,
+.mlb-root:-webkit-full-screen,
+.mlb-root.mlb-fullscreen-active{
+  width:100vw!important;
+  height:100vh!important;
+  min-width:0!important;
+  min-height:100vh!important;
+  max-width:none!important;
+  max-height:none!important;
+  margin:0!important;
+  border:0!important;
+  border-radius:0!important;
+  box-shadow:none!important;
+  background:#0b1118!important;
+}
+.mlb-root:fullscreen .mlb-shell,
+.mlb-root:-webkit-full-screen .mlb-shell,
+.mlb-root.mlb-fullscreen-active .mlb-shell{
+  min-height:0!important;
+}

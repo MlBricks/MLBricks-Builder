@@ -48,6 +48,8 @@
     let pendingBroadcastCommand=null;
     let popoutSyncTimer=null;
     let fullWindowObjectUrl=null;
+    let fullscreenRestore=null;
+    let fullscreenFallbackActive=false;
     const runtimeCaps=cp(payload.runtime_capabilities||{devices:[{id:"auto",label:"Auto"},{id:"cpu",label:"CPU"}]});
     const localEnvironment=cp(payload.local_environment||{kind:"python",name:"Python / Jupyter Environment",roots:["."],default_root:"."});
     const localDefaultRoot=localEnvironment.default_root||(localEnvironment.roots||[])[0]||".";
@@ -1316,7 +1318,7 @@
       // Build the closing script tag by concatenation so builder.js itself never
       // contains a raw script end tag while generated HTML receives a real one.
       const closeScript="</"+"script>";
-      return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MLBricks Builder · '+String(state.project?.name||"Full Window")+'</title><style>'+cssText+'</style><style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#0b1118}body{padding:0}.mlb-root{width:100vw!important;height:100vh!important;min-height:0!important;max-height:none!important;min-width:0!important;border-radius:0!important;border:0!important;box-shadow:none!important}</style></head><body><div id="'+targetId+'" class="mlb-root" data-mlbricks-builder-version="0.7.17"></div><script>'+jsText+closeScript+'<script>window.MLBricksBuilder.mount(document.getElementById('+JSON.stringify(targetId)+'),'+safePayload+');'+closeScript+'</body></html>';
+      return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MLBricks Builder · '+String(state.project?.name||"Full Window")+'</title><style>'+cssText+'</style><style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#0b1118}body{padding:0}.mlb-root{width:100vw!important;height:100vh!important;min-height:0!important;max-height:none!important;min-width:0!important;border-radius:0!important;border:0!important;box-shadow:none!important}</style></head><body><div id="'+targetId+'" class="mlb-root" data-mlbricks-builder-version="0.7.18"></div><script>'+jsText+closeScript+'<script>window.MLBricksBuilder.mount(document.getElementById('+JSON.stringify(targetId)+'),'+safePayload+');'+closeScript+'</body></html>';
     }
 
     function openFullWindow(){
@@ -1371,6 +1373,169 @@
       event.preventDefault();
       openFullWindow();
     }
+
+    function builderFullscreenActive(){
+      try{
+        if(document.fullscreenElement===root || document.webkitFullscreenElement===root)return true;
+      }catch(_){}
+      return !!fullscreenRestore || fullscreenFallbackActive || root.classList.contains("mlb-fullscreen-active");
+    }
+
+    function restoreFrameFullscreen(){
+      if(!fullscreenRestore)return false;
+      const restore=fullscreenRestore;
+      fullscreenRestore=null;
+      try{restore();}catch(_){}
+      fullscreenFallbackActive=false;
+      root.classList.remove("mlb-fullscreen-active");
+      return true;
+    }
+
+    function maximizeOwningFrame(){
+      try{
+        const frame=window.frameElement;
+        if(!frame || !frame.ownerDocument)return false;
+        const parentDoc=frame.ownerDocument;
+        const parentHtml=parentDoc.documentElement;
+        const parentBody=parentDoc.body;
+        if(!parentHtml || !parentBody)return false;
+
+        const previousStyle=frame.getAttribute("style");
+        const previousHtmlOverflow=parentHtml.style.overflow;
+        const previousBodyOverflow=parentBody.style.overflow;
+        const previousBodyOverscroll=parentBody.style.overscrollBehavior;
+
+        frame.style.setProperty("position","fixed","important");
+        frame.style.setProperty("inset","0","important");
+        frame.style.setProperty("left","0","important");
+        frame.style.setProperty("top","0","important");
+        frame.style.setProperty("width","100vw","important");
+        frame.style.setProperty("height","100vh","important");
+        frame.style.setProperty("min-width","100vw","important");
+        frame.style.setProperty("min-height","100vh","important");
+        frame.style.setProperty("max-width","none","important");
+        frame.style.setProperty("max-height","none","important");
+        frame.style.setProperty("margin","0","important");
+        frame.style.setProperty("padding","0","important");
+        frame.style.setProperty("border","0","important");
+        frame.style.setProperty("z-index","2147483647","important");
+        frame.style.setProperty("background","#0b1118","important");
+        parentHtml.style.overflow="hidden";
+        parentBody.style.overflow="hidden";
+        parentBody.style.overscrollBehavior="none";
+
+        fullscreenRestore=()=>{
+          try{
+            if(previousStyle===null)frame.removeAttribute("style");
+            else frame.setAttribute("style",previousStyle);
+            parentHtml.style.overflow=previousHtmlOverflow;
+            parentBody.style.overflow=previousBodyOverflow;
+            parentBody.style.overscrollBehavior=previousBodyOverscroll;
+          }catch(_){}
+        };
+        root.classList.add("mlb-fullscreen-active");
+        return true;
+      }catch(_){return false;}
+    }
+
+    function applyLocalFullscreenFallback(){
+      if(fullscreenFallbackActive)return true;
+      fullscreenFallbackActive=true;
+      root.classList.add("mlb-fullscreen-active");
+      return true;
+    }
+
+    async function enterBuilderFullscreen(){
+      // First choice: the browser Fullscreen API. Because this runs directly
+      // from the user's click it keeps the existing notebook/Python bridge and
+      // does not create a second browsing context.
+      try{
+        if(root.requestFullscreen){
+          await root.requestFullscreen({navigationUI:"hide"});
+          root.classList.add("mlb-fullscreen-active");
+          setStatus("Full Screen active · Python kernel stays connected.");
+          draw();
+          return true;
+        }
+        if(root.webkitRequestFullscreen){
+          root.webkitRequestFullscreen();
+          root.classList.add("mlb-fullscreen-active");
+          setStatus("Full Screen active · Python kernel stays connected.");
+          draw();
+          return true;
+        }
+      }catch(_){}
+
+      // Some notebook hosts do not grant the iframe the Fullscreen permission.
+      // If the parent document is reachable, maximize the notebook output iframe
+      // itself to the browser viewport while keeping this exact Builder instance.
+      if(maximizeOwningFrame()){
+        setStatus("Full Screen active · notebook output expanded to the browser viewport.");
+        draw();
+        return true;
+      }
+
+      // Last-resort focus mode. This still keeps the live kernel bridge and fills
+      // the complete notebook output frame, even when the host blocks fullscreen.
+      applyLocalFullscreenFallback();
+      setStatus("Builder expanded inside the notebook output. The notebook host blocked browser-level Full Screen.");
+      draw();
+      return true;
+    }
+
+    async function exitBuilderFullscreen(){
+      try{
+        if(document.fullscreenElement){
+          await document.exitFullscreen();
+          root.classList.remove("mlb-fullscreen-active");
+          setStatus("Exited Full Screen.");
+          draw();
+          return true;
+        }
+        if(document.webkitFullscreenElement && document.webkitExitFullscreen){
+          document.webkitExitFullscreen();
+          root.classList.remove("mlb-fullscreen-active");
+          setStatus("Exited Full Screen.");
+          draw();
+          return true;
+        }
+      }catch(_){}
+
+      if(restoreFrameFullscreen()){
+        setStatus("Exited Full Screen.");
+        draw();
+        return true;
+      }
+      if(fullscreenFallbackActive || root.classList.contains("mlb-fullscreen-active")){
+        fullscreenFallbackActive=false;
+        root.classList.remove("mlb-fullscreen-active");
+        setStatus("Exited Full Screen.");
+        draw();
+        return true;
+      }
+      return false;
+    }
+
+    function toggleBuilderFullscreen(event){
+      if(event)event.preventDefault();
+      if(builderFullscreenActive())exitBuilderFullscreen();
+      else enterBuilderFullscreen();
+    }
+
+    function handleFullscreenChange(){
+      let active=false;
+      try{active=document.fullscreenElement===root || document.webkitFullscreenElement===root;}catch(_){}
+      if(active){
+        root.classList.add("mlb-fullscreen-active");
+        setStatus("Full Screen active · Python kernel stays connected.");
+      }else if(!fullscreenRestore && !fullscreenFallbackActive){
+        root.classList.remove("mlb-fullscreen-active");
+      }
+      draw();
+    }
+
+    try{document.addEventListener("fullscreenchange",handleFullscreenChange);}catch(_){}
+    try{document.addEventListener("webkitfullscreenchange",handleFullscreenChange);}catch(_){}
 
     function btn(text,cls){const b=document.createElement("button");b.type="button";b.className=cls||"";b.textContent=text;return b;}
     function portLabel(side,index){
@@ -2996,7 +3161,7 @@
       if(!model)return;
       const config={
         format:"mlbricks-model-config",
-        builder_version:"0.7.17",
+        builder_version:"0.7.18",
         project:cp(state.project||{}),
         model:cp(model),
         selected_dataset:selectedModelDataset(),
@@ -4287,7 +4452,7 @@
       return {
         format:"mlbricks-builder-design",
         format_version:"0.7.5",
-        builder_version:"0.7.17",
+        builder_version:"0.7.18",
         saved_at:new Date().toISOString(),
         state:sanitizedProjectState()
       };
@@ -4333,7 +4498,7 @@
       }
       const payload={
         format:"mlbricks-export",
-        builder_version:"0.7.17",
+        builder_version:"0.7.18",
         workspace:state.active_workspace,
         project:cp(state.project||{}),
         prepared_datasets:cp(state.prepared_datasets||[]),
@@ -4350,7 +4515,7 @@
     async function shareWorkspace(){
       const lines=[
         "MLBricks Builder — "+(state.project?.name||workspaceName()),
-        "Version: 0.7.17",
+        "Version: 0.7.18",
         "Workspace: "+workspaceName(),
         "Nodes: "+(current(state).nodes||[]).length,
         "Connections: "+(current(state).edges||[]).length
@@ -4366,7 +4531,7 @@
     function showQuickHelp(){
       const win=(root.ownerDocument&&root.ownerDocument.defaultView)||window;
       const help=[
-        'MLBricks Builder v0.7.17',
+        'MLBricks Builder v0.7.18',
         '',
         '• Add bricks or data steps from the left library.',
         '• Export downloads a model config or workspace export file.',
@@ -4481,13 +4646,15 @@
       const loadBtn=btn("⇧ Load","mlb-dark-btn");loadBtn.title="Load .mlbricks.json or .mlbricks.bin";loadBtn.addEventListener("click",loadDesign);
       const exportBtn=btn("⇩ Export","mlb-dark-btn");exportBtn.title="Export model config or workspace data";exportBtn.addEventListener("click",exportWorkspace);
       const shareBtn=btn("⌯ Share","mlb-dark-btn");shareBtn.title="Copy a project summary";shareBtn.addEventListener("click",shareWorkspace);
-      const fullBtn=!isPopout?document.createElement("a"):null;
+      const fullBtn=!isPopout?document.createElement("button"):null;
       if(fullBtn){
+        fullBtn.type="button";
         fullBtn.className="mlb-dark-btn mlb-full-window-btn";
-        fullBtn.textContent="↗ Full Window";
-        fullBtn.href="#";
-        fullBtn.title="Open MLBricks Builder in a separate full-window browser tab";
-        fullBtn.addEventListener("click",activateFullWindowLink);
+        fullBtn.textContent=builderFullscreenActive()?"↙ Exit Full Screen":"⛶ Full Screen";
+        fullBtn.title=builderFullscreenActive()
+          ?"Return Builder to the normal notebook layout"
+          :"Use the whole browser screen without disconnecting from the Python kernel";
+        fullBtn.addEventListener("click",toggleBuilderFullscreen);
       }
       const helpBtn=btn("?","mlb-dark-btn");helpBtn.title="Quick help";helpBtn.addEventListener("click",showQuickHelp);
       const settingsBtn=btn("⚙","mlb-dark-btn");settingsBtn.title="Project settings";settingsBtn.addEventListener("click",openBuilderSettings);
