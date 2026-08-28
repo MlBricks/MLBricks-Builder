@@ -1246,3 +1246,38 @@
   display:grid;
   gap:6px;
 }
+
+
+/* ------------------------------------------------------------------
+   v0.7.8 — Vertical alignment polish for Brick Library cards
+   Icons and text are centered vertically inside the fixed-height cards.
+   ------------------------------------------------------------------ */
+
+.mlb-palette button,
+.mlb-custom-card{
+  align-items:center;
+}
+
+.mlb-palette .mlb-pal-icon,
+.mlb-custom-card .mlb-pal-icon{
+  align-self:center;
+}
+
+.mlb-palette button > span:last-child,
+.mlb-custom-card > span:last-child{
+  display:flex;
+  flex-direction:column;
+  justify-content:center;
+  align-self:center;
+  padding-top:0;
+}
+
+.mlb-palette button strong,
+.mlb-custom-card strong{
+  margin:0 0 2px 0;
+}
+
+.mlb-palette .mlb-pal-sub,
+.mlb-custom-card .mlb-pal-sub{
+  margin:0;
+}

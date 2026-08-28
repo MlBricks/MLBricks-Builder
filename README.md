@@ -1363,3 +1363,15 @@ The left Brick Library now uses one universal card size for every component.
 
 This prevents descriptions such as Embedding/ESA/VESA/FFN/Residual text from
 leaking below the card boundary and keeps the complete library visually aligned.
+
+
+## v0.7.8 — vertical alignment cleanup
+
+This release refines the Brick Library card layout introduced in v0.7.7.
+
+- icon and text block are vertically centered inside each component card
+- title and description now align visually in the middle of the card
+- fixed-height card system remains unchanged
+- title still uses one-line clamp
+- description still uses two-line clamp
+- built-in and custom brick cards stay visually consistent
