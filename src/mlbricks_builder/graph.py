@@ -17,10 +17,17 @@ def primitive_catalog():
             "name": "Text Input",
             "icon": "TXT",
             "category": "Inputs",
-            "description": "Prompt or text entering the model",
+            "description": "Prompt text or a prepared dataset entering the model",
             "accent": "green",
             "api": [
-                {"key": "prompt", "label": "Prompt / Text", "type": "textarea", "value": "Once upon a time"},
+                {"key": "input_mode", "label": "Input Source", "type": "select", "value": "prompt",
+                 "options": ["prompt", "prepared_dataset"]},
+                {"key": "prompt", "label": "Prompt / Text", "type": "textarea", "value": "Once upon a time",
+                 "show_when": {"input_mode": "prompt"}},
+                {"key": "dataset_id", "label": "Available Dataset", "type": "dataset_select", "value": "",
+                 "show_when": {"input_mode": "prepared_dataset"}},
+                {"key": "dataset_split", "label": "Use Split", "type": "dataset_split_select", "value": "train",
+                 "show_when": {"input_mode": "prepared_dataset"}}
             ],
         },
         {
@@ -248,9 +255,11 @@ def primitive_catalog():
             "name": "Prepared Dataset",
             "icon": "DATA",
             "category": "Output",
-            "description": "Final processed dataset ready for training",
+            "description": "Register final processed data for use by models",
             "accent": "green",
             "api": [
+                {"key": "dataset_name", "label": "Dataset Name", "type": "text", "value": "Prepared Dataset",
+                 "help": "Use different names to keep multiple prepared datasets."},
                 {"key": "save_to_disk", "label": "Save To Disk", "type": "select", "value": "false", "options": ["false", "true"]},
                 {"key": "path", "label": "Save Path", "type": "text", "value": "/kaggle/working/prepared_dataset"}
             ],
@@ -528,6 +537,7 @@ def _default_data_processing_graph():
         "add_special_tokens": "true",
     })
     output = _node("prepared_dataset", "Prepared Dataset", {
+        "dataset_name": "TinyStories Prepared",
         "save_to_disk": "false",
         "path": "/kaggle/working/prepared_dataset",
     })
@@ -546,7 +556,7 @@ def new_project(name: str = "Untitled Model"):
     now = datetime.now(timezone.utc).isoformat()
     return {
         "format": "mlbricks-builder",
-        "format_version": "0.5.2",
+        "format_version": "0.5.4",
         "project": {
             "name": name,
             "created_at": now,
@@ -590,6 +600,7 @@ def new_project(name: str = "Untitled Model"):
             },
         },
         "active_workspace": "model",
+        "prepared_datasets": [],
         "custom_components": {},
         "view_component_id": root_id,
         "breadcrumbs": [{"id": root_id, "name": name}],

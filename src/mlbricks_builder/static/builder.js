@@ -81,6 +81,7 @@
     if(state.auto_connect===undefined) state.auto_connect=true;
 
     function ensureWorkspaces(){
+      if(!Array.isArray(state.prepared_datasets))state.prepared_datasets=[];
       if(!state.workspaces){
         const modelRoot=state.root_component_id;
         const dataRoot=uid("component");
@@ -493,6 +494,16 @@
       if(!next||typeof next!=="object")return;
       execution=next;
 
+      if(next.prepared_dataset){
+        const changed=upsertPreparedDataset(next.prepared_dataset);
+        if(changed){
+          if(next.prepared_dataset.output_node_id)selected=next.prepared_dataset.output_node_id;
+          setStatus("Data ready: "+next.prepared_dataset.name+" · "+compactDatasetSummary(next.prepared_dataset));
+          draw();
+          return;
+        }
+      }
+
       root.querySelectorAll(".mlb-node").forEach(card=>{
         const nodeState=execution.nodes?.[card.dataset.nodeId];
         card.classList.remove("run-queued","run-running","run-done","run-error","run-stopped");
@@ -590,6 +601,100 @@
         };
       }
       return mlapi[node.type] || item.real_api || {};
+    }
+
+    function availablePreparedDatasets(){
+      return Array.isArray(state.prepared_datasets) ? state.prepared_datasets : [];
+    }
+
+    function preparedDatasetById(id){
+      return availablePreparedDatasets().find(d=>d.id===id)||null;
+    }
+
+    function latestPreparedDataset(){
+      const all=availablePreparedDatasets();
+      return all.length ? all[all.length-1] : null;
+    }
+
+    function splitRows(meta,name){
+      const rows=meta?.splits?.[name]?.rows;
+      return rows===null||rows===undefined ? "?" : Number(rows).toLocaleString();
+    }
+
+    function datasetSplitLabel(name,meta){
+      const pretty=name==="validation"?"Validation":name.charAt(0).toUpperCase()+name.slice(1);
+      return pretty+" — "+splitRows(meta,name)+" rows";
+    }
+
+    function compactDatasetSummary(meta){
+      if(!meta)return "No prepared data";
+      const parts=[];
+      ["train","validation","test"].forEach(name=>{
+        if(meta.splits?.[name]){
+          const label=name==="validation"?"Val":name.charAt(0).toUpperCase()+name.slice(1);
+          parts.push(label+" "+splitRows(meta,name));
+        }
+      });
+      return parts.join(" · ") || ((meta.total_rows??"?")+" rows");
+    }
+
+    function configureTextInputForDataset(node,meta){
+      if(!node||node.type!=="text_input"||!meta)return;
+      node.params=node.params||{};
+      node.params.input_mode="prepared_dataset";
+      node.params.dataset_id=meta.id;
+      node.params.dataset_split=meta.default_split || (meta.splits?.train?"train":Object.keys(meta.splits||{})[0]||"train");
+    }
+
+    function configureTextInputForLatest(node){
+      const latest=latestPreparedDataset();
+      if(latest)configureTextInputForDataset(node,latest);
+      return node;
+    }
+
+    function autoBindDatasetToModel(meta){
+      const modelRoot=state.workspaces?.model?.root_component_id;
+      const model=state.components?.[modelRoot];
+      if(!model)return;
+      (model.nodes||[]).filter(n=>n.type==="text_input").forEach(n=>configureTextInputForDataset(n,meta));
+      state.project=state.project||{};
+      state.project.dataset=meta.name;
+    }
+
+    function upsertPreparedDataset(meta){
+      if(!meta||!meta.id)return false;
+      state.prepared_datasets=availablePreparedDatasets();
+      const idx=state.prepared_datasets.findIndex(d=>d.id===meta.id);
+      const raw=JSON.stringify(meta);
+      if(idx>=0){
+        if(JSON.stringify(state.prepared_datasets[idx])===raw)return false;
+        state.prepared_datasets[idx]=cp(meta);
+      }else{
+        state.prepared_datasets.push(cp(meta));
+      }
+      autoBindDatasetToModel(meta);
+      return true;
+    }
+
+    function datasetSummaryCard(meta,titleText){
+      const card=document.createElement("div");card.className="mlb-dataset-result";
+      const title=document.createElement("div");title.className="mlb-dataset-result-title";
+      title.innerHTML="<strong>"+(titleText||"DATA READY")+"</strong><span>"+meta.name+"</span>";
+      card.appendChild(title);
+      const grid=document.createElement("div");grid.className="mlb-dataset-splits";
+      const names=["train","validation","test"].filter(name=>meta.splits?.[name]);
+      (names.length?names:Object.keys(meta.splits||{})).forEach(name=>{
+        const item=document.createElement("div");
+        item.innerHTML="<span>"+(name==="validation"?"Validation":name.charAt(0).toUpperCase()+name.slice(1))+"</span><strong>"+splitRows(meta,name)+"</strong>";
+        grid.appendChild(item);
+      });
+      card.appendChild(grid);
+      const foot=document.createElement("div");foot.className="mlb-dataset-result-foot";
+      foot.textContent=meta.storage==="disk+memory"
+        ?("Saved + in memory · "+(meta.path||""))
+        :"Available in Python memory";
+      card.appendChild(foot);
+      return card;
     }
 
     function normalizedBrickName(name){
@@ -723,7 +828,8 @@
           "    num_workers="+arg("num_workers",2)+", drop_last="+arg("drop_last","false")+",\n)";
       }
       if(node.type==="prepared_dataset"){
-        return "from mlbricks_builder.data import prepared_dataset_output\n\n"+
+        return "# Registered in Builder as: "+String(p.dataset_name||"Prepared Dataset")+"\n"+
+          "from mlbricks_builder.data import prepared_dataset_output\n\n"+
           "prepared = prepared_dataset_output(\n"+
           "    dataset, save_to_disk="+arg("save_to_disk","false")+", path="+arg("path","/kaggle/working/prepared_dataset")+",\n)";
       }
@@ -798,6 +904,7 @@
     function addPrimitive(item){
       checkpoint("Add "+item.name);
       const n=makeNode(item);
+      if(n.type==="text_input")configureTextInputForLatest(n);
       const pos=insertAfterSelection(n);
       setStatus(item.name+" inserted at layer "+(pos+1)+".");
       draw();
@@ -1023,6 +1130,15 @@
         checkpoint("Edit "+node.name+"."+f.key);
         node.params=node.params||{};
         node.params[f.key]=f.type==="number"||f.type==="percent"?Number(value):value;
+        if(node.type==="text_input" && f.key==="dataset_id"){
+          const meta=preparedDatasetById(value);
+          if(meta){
+            const available=Object.keys(meta.splits||{});
+            if(!available.includes(node.params.dataset_split)){
+              node.params.dataset_split=meta.default_split||available[0]||"train";
+            }
+          }
+        }
         if(node.type==="train_test_split"){
           const total=splitTotal(node);
           setStatus(splitIsValid(node)
@@ -1034,7 +1150,43 @@
         draw();
       };
 
-      if(f.type==="percent"){
+      if(f.type==="dataset_select"){
+        input=document.createElement("select");
+        const datasets=availablePreparedDatasets();
+        if(!datasets.length){
+          const o=document.createElement("option");o.value="";o.textContent="No prepared datasets yet";
+          input.appendChild(o);input.disabled=true;
+        }else{
+          datasets.forEach(meta=>{
+            const o=document.createElement("option");o.value=meta.id;
+            o.textContent=meta.name+" — "+compactDatasetSummary(meta);
+            if(String(node.params?.[f.key]||"")===String(meta.id))o.selected=true;
+            input.appendChild(o);
+          });
+          if(!node.params?.[f.key]){
+            const latest=latestPreparedDataset();
+            if(latest){node.params=node.params||{};node.params[f.key]=latest.id;input.value=latest.id;}
+          }
+          input.addEventListener("change",()=>{
+            commit(input.value);
+          });
+        }
+      }else if(f.type==="dataset_split_select"){
+        input=document.createElement("select");
+        const meta=preparedDatasetById(node.params?.dataset_id)||latestPreparedDataset();
+        const splits=meta?Object.keys(meta.splits||{}):[];
+        if(!splits.length){
+          const o=document.createElement("option");o.value="";o.textContent="No splits available";
+          input.appendChild(o);input.disabled=true;
+        }else{
+          splits.forEach(name=>{
+            const o=document.createElement("option");o.value=name;o.textContent=datasetSplitLabel(name,meta);
+            if(String(node.params?.[f.key]||meta.default_split||"train")===name)o.selected=true;
+            input.appendChild(o);
+          });
+          input.addEventListener("change",()=>commit(input.value));
+        }
+      }else if(f.type==="percent"){
         const row=document.createElement("div");row.className="mlb-percent-row";
         const range=document.createElement("input");range.type="range";range.min=f.min??0;range.max=f.max??100;range.step=f.step??1;
         const number=document.createElement("input");number.type="number";number.min=f.min??0;number.max=f.max??100;number.step=f.step??1;
@@ -1155,6 +1307,16 @@
       return html;
     }
     function nodeMiniFields(node,info){
+      if(node.type==="text_input"){
+        const mode=String(fieldCurrentValue(node,"input_mode")||"prompt");
+        if(mode==="prepared_dataset"){
+          const meta=preparedDatasetById(node.params?.dataset_id)||latestPreparedDataset();
+          const split=node.params?.dataset_split||meta?.default_split||"train";
+          return '<div class="mlb-mini-field"><span>Dataset</span><strong>'+(meta?.name||"No data")+'</strong></div>'+
+                 '<div class="mlb-mini-field"><span>Split</span><strong>'+split+'</strong></div>';
+        }
+        return '<div class="mlb-mini-field"><span>Prompt</span><strong>'+String(node.params?.prompt||"Once upon a time")+'</strong></div>';
+      }
       if(node.type==="train_test_split"){
         const s=splitPercentages(node),total=s.train+s.validation+s.test;
         return '<div class="mlb-mini-field"><span>Train</span><strong>'+s.train+'%</strong></div>'+ 
@@ -1281,7 +1443,7 @@
         ]
       };
       const nodes=[];
-      const input=makeNode(cat(catalog,"text_input"));nodes.push(input);
+      const input=makeNode(cat(catalog,"text_input"));configureTextInputForLatest(input);nodes.push(input);
       const emb=makeNode(cat(catalog,"embedding"));nodes.push(emb);
       for(let i=1;i<=6;i++)nodes.push({id:uid("node"),type:"custom",name:"Layer "+i,definition_id:defId,repeat:1,params:{},input_count:3,output_count:3,position:{x:0,y:0}});
       const head=makeNode(cat(catalog,"lm_head")),out=makeNode(cat(catalog,"text_output"));nodes.push(head,out);
@@ -1299,7 +1461,7 @@
       rememberWorkspaceView();
       return {
         format:"mlbricks-builder-design",
-        format_version:"0.5.1",
+        format_version:"0.5.4",
         builder_version:"0.5.1",
         saved_at:new Date().toISOString(),
         state:cp(state)
@@ -1378,7 +1540,7 @@
 
       // Top bar
       const top=document.createElement("div");top.className="mlb-topbar";
-      const logo=document.createElement("div");logo.className="mlb-logo";logo.innerHTML='<span class="mlb-logo-mark">◇</span>MLBricks Builder <span class="mlb-beta">v0.5.3</span>';top.appendChild(logo);
+      const logo=document.createElement("div");logo.className="mlb-logo";logo.innerHTML='<span class="mlb-logo-mark">◇</span>MLBricks Builder <span class="mlb-beta">v0.5.4</span>';top.appendChild(logo);
       const title=document.createElement("div");title.className="mlb-project-title";title.textContent=state.project?.name||"Untitled";top.appendChild(title);
       const saved=document.createElement("div");saved.className="mlb-save-state";saved.textContent="• Saved";top.appendChild(saved);
       const sp=document.createElement("div");sp.className="mlb-topspacer";top.appendChild(sp);
@@ -1501,6 +1663,13 @@
         const live=document.createElement("div");live.className="mlb-run-live "+(execution.status||"idle");
         live.innerHTML="<strong>"+Math.max(0,Math.min(100,Number(execution.overall||0)))+"%</strong><span>"+(execution.message||"Ready")+"</span>";
         toolbar.appendChild(live);
+        const latest=latestPreparedDataset();
+        if(latest){
+          const ready=document.createElement("div");ready.className="mlb-data-ready-chip";
+          ready.innerHTML="<strong>"+latest.name+"</strong><span>"+compactDatasetSummary(latest)+"</span>";
+          ready.title="Latest prepared dataset available to Model Builder Text Input";
+          toolbar.appendChild(ready);
+        }
         requestAnimationFrame(updateKernelBadge);
       }
       const tsp=document.createElement("div");tsp.className="mlb-toolspacer";toolbar.appendChild(tsp);
@@ -1620,7 +1789,14 @@
         p1.innerHTML='<div class="mlb-bottom-title">STARTER</div><div class="mlb-preset-card"><strong>★ Default Data Pipeline</strong>Hugging Face → Clean → Train/Val/Test → Tokenize → Output</div>';
         p1.querySelector(".mlb-preset-card").addEventListener("click",loadTextDataStarter);
         p2.innerHTML='<div class="mlb-bottom-title">PIPELINE INFO</div><div class="mlb-stat-row"><span>Steps</span><strong>'+current(state).nodes.length+'</strong></div><div class="mlb-stat-row"><span>Connections</span><strong>'+(current(state).edges||[]).length+'</strong></div><div class="mlb-stat-row"><span>Workspace</span><strong>Data</strong></div><div class="mlb-stat-row"><span>Status</span><strong class="mlb-good">✓ Designed</strong></div>';
-        p3.innerHTML='<div class="mlb-bottom-title">PROCESSING</div><div class="mlb-stat-row"><span>Text</span><strong>Clean / Tokenize</strong></div><div class="mlb-stat-row"><span>Image</span><strong>Resize / Crop</strong></div><div class="mlb-stat-row"><span>Audio</span><strong>Resample / Normalize</strong></div><div class="mlb-stat-row"><span>Split</span><strong>Train / Val / Test</strong></div>';
+        const latestData=latestPreparedDataset();
+        p3.innerHTML=latestData
+          ?('<div class="mlb-bottom-title">LATEST DATA</div>'+
+            '<div class="mlb-stat-row"><span>Name</span><strong>'+latestData.name+'</strong></div>'+
+            '<div class="mlb-stat-row"><span>Train</span><strong>'+splitRows(latestData,"train")+'</strong></div>'+
+            '<div class="mlb-stat-row"><span>Validation</span><strong>'+splitRows(latestData,"validation")+'</strong></div>'+
+            '<div class="mlb-stat-row"><span>Test</span><strong>'+splitRows(latestData,"test")+'</strong></div>')
+          :'<div class="mlb-bottom-title">PROCESSING</div><div class="mlb-stat-row"><span>Text</span><strong>Clean / Tokenize</strong></div><div class="mlb-stat-row"><span>Image</span><strong>Resize / Crop</strong></div><div class="mlb-stat-row"><span>Audio</span><strong>Resample / Normalize</strong></div><div class="mlb-stat-row"><span>Split</span><strong>Train / Val / Test</strong></div>';
         p4.innerHTML='<div class="mlb-bottom-title">FLOW</div><div class="mlb-stat-row"><span>Main</span><strong>Processing order</strong></div><div class="mlb-stat-row"><span>Skip</span><strong>Optional branch</strong></div><div class="mlb-stat-row"><span>Extra</span><strong>Aux data</strong></div>';
       }else{
         p1.innerHTML='<div class="mlb-bottom-title">PRESETS</div><div class="mlb-preset-card"><strong>★ TinyStories 30M (6L)</strong>Context 512 · Batch 16<br>~30M parameters</div>';
@@ -1713,6 +1889,21 @@
           const fields=(api.parameters||info.api||[]);
           if(fields.some(f=>f.group)) renderGroupedFields(body,n,fields);
           else fields.forEach(f=>renderField(body,n,f));
+
+          if(n.type==="prepared_dataset"){
+            const meta=availablePreparedDatasets().find(d=>d.output_node_id===n.id) || latestPreparedDataset();
+            if(meta){
+              const dt=document.createElement("div");dt.className="mlb-section-title";dt.textContent="DATA READY";body.appendChild(dt);
+              body.appendChild(datasetSummaryCard(meta,"COMPLETED DATA"));
+            }
+          }else if(n.type==="text_input" && String(n.params?.input_mode||"prompt")==="prepared_dataset"){
+            const meta=preparedDatasetById(n.params?.dataset_id)||latestPreparedDataset();
+            if(meta){
+              const dt=document.createElement("div");dt.className="mlb-section-title";dt.textContent="SELECTED DATA";body.appendChild(dt);
+              body.appendChild(datasetSummaryCard(meta,"MODEL INPUT"));
+            }
+          }
+
           const preview=constructorPreview(n);
           if(preview){
             const ct=document.createElement("div");ct.className="mlb-section-title";

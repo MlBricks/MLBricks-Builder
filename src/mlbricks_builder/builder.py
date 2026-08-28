@@ -5,6 +5,7 @@ from pathlib import Path
 import uuid
 import threading
 import time
+from datetime import datetime, timezone
 
 from .graph import new_project, primitive_catalog, tinystories_30m_project
 from .runtime import get_mlbricks_info
@@ -43,6 +44,10 @@ class Builder:
         self._bridge_widgets = None
         self.last_data_result = None
         self.last_run_error = None
+        # Actual Dataset/DatasetDict objects stay in Python memory. The serializable
+        # metadata lives in state["prepared_datasets"] and is saved with the design.
+        self.prepared_datasets = {}
+        self.state.setdefault("prepared_datasets", [])
 
     def to_dict(self):
         return json.loads(json.dumps(self.state))
@@ -63,20 +68,175 @@ class Builder:
             return self.mlbricks_api
         return self.mlbricks_api.get(component_type)
 
+    def _prepared_output_node(self):
+        workspaces = self.state.get("workspaces") or {}
+        data_ws = workspaces.get("data") or {}
+        component = (self.state.get("components") or {}).get(data_ws.get("root_component_id"), {})
+        for node in component.get("nodes") or []:
+            if node.get("type") == "prepared_dataset":
+                return node
+        return None
+
+    @staticmethod
+    def _split_summary(value):
+        target = value
+        # DataLoader-like objects expose their underlying dataset.
+        if not hasattr(target, "column_names") and hasattr(target, "dataset"):
+            target = target.dataset
+        try:
+            rows = len(target)
+        except Exception:
+            rows = None
+        columns = list(getattr(target, "column_names", []) or [])
+        return {"rows": rows, "columns": columns}
+
+    def _summarize_prepared_result(self, result):
+        # DatasetDict-like objects have items() but no column_names.
+        if hasattr(result, "items") and not hasattr(result, "column_names"):
+            splits = {}
+            for name, split in result.items():
+                splits[str(name)] = self._split_summary(split)
+        else:
+            splits = {"train": self._split_summary(result)}
+
+        total_rows = 0
+        known_total = True
+        for info in splits.values():
+            rows = info.get("rows")
+            if rows is None:
+                known_total = False
+            else:
+                total_rows += int(rows)
+
+        return {
+            "splits": splits,
+            "total_rows": total_rows if known_total else None,
+            "default_split": "train" if "train" in splits else next(iter(splits), None),
+        }
+
+    def _register_prepared_dataset(self, result):
+        node = self._prepared_output_node() or {}
+        params = node.get("params") or {}
+        requested_name = str(params.get("dataset_name") or "Prepared Dataset").strip() or "Prepared Dataset"
+
+        existing_meta = None
+        for item in self.state.setdefault("prepared_datasets", []):
+            if str(item.get("name", "")).strip().lower() == requested_name.lower():
+                existing_meta = item
+                break
+
+        dataset_id = (
+            existing_meta.get("id")
+            if existing_meta
+            else f"dataset_{uuid.uuid4().hex[:12]}"
+        )
+
+        summary = self._summarize_prepared_result(result)
+        save_to_disk = str(params.get("save_to_disk", "false")).lower() == "true"
+        path = str(params.get("path") or "") if save_to_disk else None
+
+        metadata = {
+            "id": dataset_id,
+            "name": requested_name,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "output_node_id": node.get("id"),
+            "storage": "disk+memory" if save_to_disk else "memory",
+            "path": path,
+            **summary,
+        }
+
+        registry = self.state.setdefault("prepared_datasets", [])
+        if existing_meta:
+            index = registry.index(existing_meta)
+            registry[index] = metadata
+        else:
+            registry.append(metadata)
+
+        self.prepared_datasets[dataset_id] = result
+        self.state.setdefault("project", {})["dataset"] = requested_name
+        return metadata
+
+    def available_datasets(self):
+        """Return serializable metadata for every prepared dataset in this project."""
+        return json.loads(json.dumps(self.state.get("prepared_datasets") or []))
+
+    def get_prepared_dataset(self, dataset_id_or_name, split=None):
+        """Return a prepared Dataset/DatasetDict by registry id or display name."""
+        wanted = str(dataset_id_or_name)
+        metadata = None
+        for item in self.state.get("prepared_datasets") or []:
+            if item.get("id") == wanted or str(item.get("name", "")).lower() == wanted.lower():
+                metadata = item
+                break
+        if metadata is None:
+            raise KeyError(f"Prepared dataset not found: {dataset_id_or_name!r}")
+
+        dataset_id = metadata["id"]
+        result = self.prepared_datasets.get(dataset_id)
+
+        if result is None and metadata.get("path"):
+            try:
+                from datasets import load_from_disk
+                result = load_from_disk(metadata["path"])
+                self.prepared_datasets[dataset_id] = result
+            except Exception as exc:
+                raise RuntimeError(
+                    f'{metadata["name"]!r} is not in memory and could not be loaded '
+                    f'from {metadata.get("path")!r}: {exc}'
+                ) from exc
+
+        if result is None:
+            raise RuntimeError(
+                f'{metadata["name"]!r} is listed in the design but its actual data is '
+                "not in this Python session. Re-run its Data Processing pipeline, or "
+                "enable Save To Disk before saving the design."
+            )
+
+        if split:
+            try:
+                return result[split]
+            except Exception as exc:
+                available = list((metadata.get("splits") or {}).keys())
+                raise KeyError(
+                    f"Split {split!r} is unavailable. Available splits: {available}"
+                ) from exc
+        return result
+
     def validate_data_pipeline(self):
         """Return (ordered_nodes, errors) for the current Data Processing graph."""
         return validate_data_pipeline(self.state)
 
     def run_data_pipeline(self, progress_callback=None):
-        """Execute the current Data Processing graph in Python."""
+        """Execute Data Processing, register the result, and publish split metadata."""
         self._stop_event.clear()
         self.last_run_error = None
+        last_progress = {}
+
+        def relay(payload):
+            last_progress.clear()
+            last_progress.update(payload or {})
+            if progress_callback:
+                progress_callback(payload)
+
         try:
             self.last_data_result = execute_data_pipeline(
                 self.state,
-                progress_callback=progress_callback,
+                progress_callback=relay,
                 stop_event=self._stop_event,
             )
+            metadata = self._register_prepared_dataset(self.last_data_result)
+
+            final_payload = dict(last_progress or {})
+            final_payload.update({
+                "status": "done",
+                "overall": 100,
+                "message": f'Data ready: {metadata["name"]}',
+                "prepared_dataset": metadata,
+                "available_datasets": self.available_datasets(),
+            })
+            if progress_callback:
+                progress_callback(final_payload)
+
             return self.last_data_result
         except Exception as exc:
             self.last_run_error = exc
@@ -129,10 +289,8 @@ class Builder:
 
         def worker():
             try:
-                self.last_data_result = execute_data_pipeline(
-                    self.state,
+                self.last_data_result = self.run_data_pipeline(
                     progress_callback=self._publish_bridge_progress,
-                    stop_event=self._stop_event,
                 )
             except PipelineStopped:
                 pass
@@ -198,8 +356,8 @@ class Builder:
         available = [k for k, v in self.mlbricks_api.items() if v.get("available")]
         unavailable = {k: v.get("error") for k, v in self.mlbricks_api.items() if not v.get("available")}
         return {
-            "builder_version": "0.5.3",
-            "frontend_version": "0.5.3",
+            "builder_version": "0.5.4",
+            "frontend_version": "0.5.4",
             "mlbricks": info,
             "api_components_available": available,
             "api_components_unavailable": unavailable,
@@ -219,7 +377,7 @@ class Builder:
         }).replace("</", "<\\/")
         return f"""
 <style>{css}</style>
-<div id="{html.escape(self._instance_id)}" class="mlb-root" data-mlbricks-builder-version="0.5.3"></div>
+<div id="{html.escape(self._instance_id)}" class="mlb-root" data-mlbricks-builder-version="0.5.4"></div>
 <script>
 try {{ delete window.MLBricksBuilder; }} catch (e) {{ window.MLBricksBuilder = undefined; }}
 {js}

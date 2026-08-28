@@ -599,3 +599,61 @@ The direct Python fallback remains:
 ```python
 builder.run_data_pipeline()
 ```
+
+
+## v0.5.4 — Dataset Registry + automatic Model Text Input binding
+
+A successful Data Processing run now creates a reusable **Prepared Dataset**
+entry in the project.
+
+### Completion result
+
+After the pipeline reaches `DONE`, Builder reports real split row counts, e.g.:
+
+- Train: 9,000
+- Validation: 500
+- Test: 500
+
+The Prepared Dataset Inspector shows these counts and whether the data is in
+memory or also saved to disk.
+
+### Multiple datasets
+
+Prepared Dataset now has a **Dataset Name** setting.
+
+Runs with different names are kept as separate datasets in the project-level
+Dataset Registry. Re-running the same name refreshes that registry entry rather
+than creating duplicate names.
+
+### Model Builder integration
+
+Text Input now supports:
+
+- **Prompt**
+- **Prepared Dataset**
+
+When Prepared Dataset is selected it shows:
+
+- **Available Dataset** — dropdown of every completed dataset
+- **Use Split** — dropdown populated from that dataset's actual splits
+
+After a Data Processing run completes, the newest dataset is automatically
+selected by existing Text Input nodes in the Model Builder. A Text Input added
+later also defaults to the newest prepared dataset.
+
+The Text Input Inspector shows the selected dataset's Train / Validation / Test
+counts.
+
+### Python access
+
+Actual Dataset/DatasetDict objects remain in the Builder's Python registry:
+
+```python
+builder.available_datasets()
+dataset = builder.get_prepared_dataset("TinyStories Prepared")
+train = builder.get_prepared_dataset("TinyStories Prepared", split="train")
+```
+
+Dataset metadata is saved in the project design. Actual data stays in memory
+unless **Save To Disk** is enabled on Prepared Dataset. If a design is loaded
+in a new Python session, re-run the pipeline or load the disk-backed dataset.
