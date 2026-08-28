@@ -2504,7 +2504,7 @@
       if(!model)return;
       const config={
         format:"mlbricks-model-config",
-        builder_version:"0.7.9",
+        builder_version:"0.7.10",
         project:cp(state.project||{}),
         model:cp(model),
         selected_dataset:selectedModelDataset(),
@@ -3755,7 +3755,7 @@
       return {
         format:"mlbricks-builder-design",
         format_version:"0.7.5",
-        builder_version:"0.7.9",
+        builder_version:"0.7.10",
         saved_at:new Date().toISOString(),
         state:sanitizedProjectState()
       };
@@ -3801,7 +3801,7 @@
       }
       const payload={
         format:"mlbricks-export",
-        builder_version:"0.7.9",
+        builder_version:"0.7.10",
         workspace:state.active_workspace,
         project:cp(state.project||{}),
         prepared_datasets:cp(state.prepared_datasets||[]),
@@ -3816,27 +3816,25 @@
     }
 
     async function shareWorkspace(){
-      let text="MLBricks Builder — "+(state.project?.name||workspaceName())+"
-";
-      text+="Version: 0.7.9
-Workspace: "+workspaceName()+"
-";
-      text+="Nodes: "+(current(state).nodes||[]).length+"
-Connections: "+(current(state).edges||[]).length+"
-";
+      const lines=[
+        "MLBricks Builder — "+(state.project?.name||workspaceName()),
+        "Version: 0.7.10",
+        "Workspace: "+workspaceName(),
+        "Nodes: "+(current(state).nodes||[]).length,
+        "Connections: "+(current(state).edges||[]).length
+      ];
       const activeModel=selectedOutputModel()||builtModelById(outputDirectorySelection)||((state.model_outputs||[]).slice(-1)[0]||null);
       const serve=activeModel?.serve_runtime||{};
       const url=serve.public_url||serve.local_url||activeModel?.serve_urls?.public_url||activeModel?.serve_urls?.local_url||"";
-      if(url)text+="Access URL: "+url+"
-";
-      text+="Tip: use Save to send the full .mlbricks project file.";
-      await copyTextRobust(text,"share summary");
+      if(url)lines.push("Access URL: "+url);
+      lines.push("Tip: use Save to send the full .mlbricks project file.");
+      await copyTextRobust(lines.join("\n"),"share summary");
     }
 
     function showQuickHelp(){
       const win=(root.ownerDocument&&root.ownerDocument.defaultView)||window;
       const help=[
-        'MLBricks Builder v0.7.9',
+        'MLBricks Builder v0.7.10',
         '',
         '• Add bricks or data steps from the left library.',
         '• Save now asks whether to save BIN or JSON.',

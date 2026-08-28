@@ -1395,3 +1395,13 @@ This release improves the Builder UI and Inspector.
 - **Save** now asks whether to save **BIN** or **JSON**
 - wired **Export**, **Share**, **Help**, and **Settings** actions
 - improved top-toolbar vertical alignment
+
+
+## v0.7.10 — blank Builder screen fix
+
+v0.7.9 introduced a JavaScript syntax error in the new Share action because
+multiline text was emitted as literal newlines inside a quoted JavaScript string.
+That prevented the frontend from mounting and produced a blank dark Builder panel.
+
+v0.7.10 rebuilds the Share summary using an array of lines joined with `\n` and
+passes JavaScript syntax validation before packaging.
