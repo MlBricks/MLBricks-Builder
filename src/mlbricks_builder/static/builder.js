@@ -1121,10 +1121,20 @@
       };
     }
 
+    function mergeRuntimeDefaults(defaults,saved){
+      const out={...defaults};
+      Object.entries(saved||{}).forEach(([key,value])=>{
+        if(value!==null && value!==undefined && !(typeof value==="string" && value.trim()==="")){
+          out[key]=value;
+        }
+      });
+      return out;
+    }
+
     function ensureRuntimeConfigs(entry){
       const dataset=preparedDatasetById(entry?.selected_dataset_id)||null;
-      entry.training_config={...defaultTrainingConfig(entry,dataset),...(entry.training_config||{})};
-      entry.generation_config={...defaultGenerationConfig(entry),...(entry.generation_config||{})};
+      entry.training_config=mergeRuntimeDefaults(defaultTrainingConfig(entry,dataset),entry.training_config);
+      entry.generation_config=mergeRuntimeDefaults(defaultGenerationConfig(entry),entry.generation_config);
     }
 
     function openRuntimePanel(mode,entry){
@@ -1176,7 +1186,12 @@
         input=document.createElement("input");input.type=type||"text";input.value=value??"";
         if(type==="number")input.step="any";
       }
-      const commit=()=>onChange(type==="checkbox"?input.checked:(type==="number"?Number(input.value):input.value));
+      const commit=()=>{
+        const value=type==="checkbox"
+          ?input.checked
+          :(type==="number"?(input.value.trim()===""?null:Number(input.value)):input.value);
+        onChange(value);
+      };
       input.addEventListener("change",commit);
       wrap.appendChild(input);return wrap;
     }
@@ -1208,11 +1223,12 @@
       const compat=runtimeCompatibilitySummary(entry);
       const errors=[];
       if(!compat.ok)errors.push("Training data is not compatible.");
-      if(config.budget_type==="steps"&&Number(config.max_steps)<=0)errors.push("Training steps must be greater than 0.");
-      if(config.budget_type==="tokens"&&Number(config.max_tokens)<=0)errors.push("Token budget must be greater than 0.");
-      if(config.budget_type==="epochs"&&Number(config.epochs)<=0)errors.push("Epochs must be greater than 0.");
-      if(Number(config.batch_size)<=0)errors.push("Batch size must be greater than 0.");
-      if(Number(config.learning_rate)<=0)errors.push("Learning rate must be greater than 0.");
+      const positive=(value)=>value!==null&&value!==undefined&&value!==""&&Number.isFinite(Number(value))&&Number(value)>0;
+      if(config.budget_type==="steps"&&!positive(config.max_steps))errors.push("Training steps must be a number greater than 0.");
+      if(config.budget_type==="tokens"&&!positive(config.max_tokens))errors.push("Token budget must be a number greater than 0.");
+      if(config.budget_type==="epochs"&&!positive(config.epochs))errors.push("Epochs must be a number greater than 0.");
+      if(!positive(config.batch_size))errors.push("Batch size must be a number greater than 0.");
+      if(!positive(config.learning_rate))errors.push("Learning rate must be a number greater than 0.");
       return {ok:errors.length===0,errors,compat};
     }
 
@@ -1516,6 +1532,16 @@
         stop.addEventListener("click",requestStop);side.appendChild(stop);
       }
 
+      const reset=btn("Reset Runtime Defaults","mlb-dark-btn");
+      reset.addEventListener("click",()=>{
+        const dataset=preparedDatasetById(entry?.selected_dataset_id)||null;
+        if(mode==="train")entry.training_config=defaultTrainingConfig(entry,dataset);
+        else entry.generation_config=defaultGenerationConfig(entry);
+        setStatus((mode==="train"?"Training":"Generation")+" runtime settings reset to safe defaults.");
+        draw();
+      });
+      side.appendChild(reset);
+
       const live=document.createElement("div");live.className="mlb-runtime-live "+(execution.status||"idle");
       live.innerHTML="<div class='mlb-runtime-live-head'><strong>RUNTIME</strong><span>"+Math.round(Number(execution.overall||0))+"%</span></div><div class='mlb-runtime-live-message'>"+(execution.runtime_kind===mode?(execution.message||"Ready"):"Ready")+"</div><div class='mlb-runtime-progress'><i style='width:"+(execution.runtime_kind===mode?Number(execution.overall||0):0)+"%'></i></div>";
       side.appendChild(live);
@@ -1780,7 +1806,7 @@
       if(!model)return;
       const config={
         format:"mlbricks-model-config",
-        builder_version:"0.6.3",
+        builder_version:"0.6.4",
         project:cp(state.project||{}),
         model:cp(model),
         selected_dataset:selectedModelDataset(),
@@ -2653,8 +2679,8 @@
       rememberWorkspaceView();
       return {
         format:"mlbricks-builder-design",
-        format_version:"0.6.3",
-        builder_version:"0.6.3",
+        format_version:"0.6.4",
+        builder_version:"0.6.4",
         saved_at:new Date().toISOString(),
         state:cp(state)
       };
@@ -2732,7 +2758,7 @@
 
       // Top bar
       const top=document.createElement("div");top.className="mlb-topbar";
-      const logo=document.createElement("div");logo.className="mlb-logo";logo.innerHTML='<span class="mlb-logo-mark">◇</span>MLBricks Builder <span class="mlb-beta">v0.6.3</span>';top.appendChild(logo);
+      const logo=document.createElement("div");logo.className="mlb-logo";logo.innerHTML='<span class="mlb-logo-mark">◇</span>MLBricks Builder <span class="mlb-beta">v0.6.4</span>';top.appendChild(logo);
       const title=document.createElement("div");title.className="mlb-project-title";title.textContent=state.project?.name||"Untitled";top.appendChild(title);
       const saved=document.createElement("div");saved.className="mlb-save-state";saved.textContent="• Saved";top.appendChild(saved);
       const sp=document.createElement("div");sp.className="mlb-topspacer";top.appendChild(sp);

@@ -429,15 +429,21 @@ class Builder:
                 checkpoint_path=entry.get("checkpoint_path"), progress=emit,
             )
             self.trained_models[model_id] = {"compiled":compiled,"tokenizer":tokenizer,"runtime":dict(config)}
-        context = int(entry.get("context_length") or self.state.get("project",{}).get("context_length") or 512)
+        from .model_runtime import runtime_int, runtime_float
+        context = runtime_int(
+            entry.get("context_length") or self.state.get("project",{}).get("context_length"),
+            512, "Model Context", minimum=2,
+        )
         text, count = generate_text(
-            compiled.model, tokenizer, config.get("prompt", "Once upon a time"),
-            max_new_tokens=int(config.get("max_new_tokens",128)), context=context,
+            compiled.model, tokenizer, config.get("prompt") or "Once upon a time",
+            max_new_tokens=runtime_int(config.get("max_new_tokens"),128,"New Token Count",minimum=1),
+            context=context,
             device=compiled.device, precision=compiled.precision,
-            temperature=float(config.get("temperature",0.8)),
-            top_k=int(config.get("top_k",50)) if config.get("top_k") is not None else None,
-            top_p=float(config.get("top_p",0.95)) if config.get("top_p") is not None else None,
-            seed=int(config.get("seed",42)), progress=emit, stop_event=self._stop_event,
+            temperature=runtime_float(config.get("temperature"),0.8,"Temperature",minimum=0.00001),
+            top_k=runtime_int(config.get("top_k"),50,"Top K",minimum=0),
+            top_p=runtime_float(config.get("top_p"),0.95,"Top P",minimum=0.0,maximum=1.0),
+            seed=runtime_int(config.get("seed"),42,"Seed"),
+            progress=emit, stop_event=self._stop_event,
         )
         entry["last_generation"] = text
         entry["generated_at"] = datetime.now(timezone.utc).isoformat()
@@ -580,8 +586,8 @@ class Builder:
         available = [k for k, v in self.mlbricks_api.items() if v.get("available")]
         unavailable = {k: v.get("error") for k, v in self.mlbricks_api.items() if not v.get("available")}
         return {
-            "builder_version": "0.6.3",
-            "frontend_version": "0.6.3",
+            "builder_version": "0.6.4",
+            "frontend_version": "0.6.4",
             "mlbricks": info,
             "api_components_available": available,
             "api_components_unavailable": unavailable,
@@ -602,7 +608,7 @@ class Builder:
         }).replace("</", "<\\/")
         return f"""
 <style>{css}</style>
-<div id="{html.escape(self._instance_id)}" class="mlb-root" data-mlbricks-builder-version="0.6.3"></div>
+<div id="{html.escape(self._instance_id)}" class="mlb-root" data-mlbricks-builder-version="0.6.4"></div>
 <script>
 try {{ delete window.MLBricksBuilder; }} catch (e) {{ window.MLBricksBuilder = undefined; }}
 {js}

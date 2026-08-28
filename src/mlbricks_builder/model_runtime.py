@@ -35,6 +35,60 @@ def _none(v: Any):
     return v
 
 
+def _missing_number(value: Any) -> bool:
+    return value is None or (isinstance(value, str) and not value.strip())
+
+
+def runtime_int(
+    value: Any,
+    default: int | None,
+    label: str,
+    *,
+    minimum: int | None = None,
+    maximum: int | None = None,
+) -> int:
+    """Convert runtime/UI values without leaking int(None) to the user."""
+    if _missing_number(value):
+        if default is None:
+            raise ValueError(f"{label} is required.")
+        value = default
+    try:
+        number = int(float(value))
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(f"{label} must be a number; received {value!r}.") from exc
+    if minimum is not None and number < minimum:
+        raise ValueError(f"{label} must be at least {minimum}; received {number}.")
+    if maximum is not None and number > maximum:
+        raise ValueError(f"{label} must be at most {maximum}; received {number}.")
+    return number
+
+
+def runtime_float(
+    value: Any,
+    default: float | None,
+    label: str,
+    *,
+    minimum: float | None = None,
+    maximum: float | None = None,
+) -> float:
+    """Float counterpart to runtime_int with field-specific errors."""
+    if _missing_number(value):
+        if default is None:
+            raise ValueError(f"{label} is required.")
+        value = default
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(f"{label} must be a number; received {value!r}.") from exc
+    if not math.isfinite(number):
+        raise ValueError(f"{label} must be finite; received {value!r}.")
+    if minimum is not None and number < minimum:
+        raise ValueError(f"{label} must be at least {minimum}; received {number}.")
+    if maximum is not None and number > maximum:
+        raise ValueError(f"{label} must be at most {maximum}; received {number}.")
+    return number
+
+
 def _safe_name(value: str) -> str:
     value = re.sub(r"[^A-Za-z0-9._-]+", "-", str(value or "model")).strip("-.")
     return value or "model"
@@ -135,29 +189,41 @@ class TensorGraph(nn.Module):
             return LMHead(hidden,vocab,bias=_bool(p.get("bias",False)))
         if t=="esa":
             return ESA(
-                embd=int(p.get("embd",384)), head=int(p.get("head",4)),
+                embd=runtime_int(p.get("embd"),384,f"{node.get('name','ESA')} embedding size",minimum=1),
+                head=runtime_int(p.get("head"),4,f"{node.get('name','ESA')} head count",minimum=1),
                 batch=_none(p.get("batch")), block=_none(p.get("block")),
                 backend=backend, precision=precision, compass=p.get("compass","auto"),
-                dropout=float(p.get("dropout",0.0)), gate_min=float(p.get("gate_min",0.8)),
-                gate_max=float(p.get("gate_max",0.995)), eps=float(p.get("eps",1e-5)),
+                dropout=runtime_float(p.get("dropout"),0.0,f"{node.get('name','ESA')} dropout",minimum=0.0),
+                gate_min=runtime_float(p.get("gate_min"),0.8,f"{node.get('name','ESA')} gate min"),
+                gate_max=runtime_float(p.get("gate_max"),0.995,f"{node.get('name','ESA')} gate max"),
+                eps=runtime_float(p.get("eps"),1e-5,f"{node.get('name','ESA')} epsilon",minimum=0.0),
                 device=device, auto_compile=False, auto_move_input=True,
                 strict_checks=_bool(p.get("strict_checks",False)),
             )
         if t=="rmsnorm":
             shape=p.get("normalized_shape",p.get("hidden_size",384))
-            return RMSNorm(shape,eps=float(p.get("eps",1e-6)),elementwise_affine=_bool(p.get("elementwise_affine",True)))
+            shape=runtime_int(shape,384,f"{node.get('name','RMSNorm')} normalized shape",minimum=1)
+            return RMSNorm(shape,eps=runtime_float(p.get("eps"),1e-6,f"{node.get('name','RMSNorm')} epsilon",minimum=0.0),elementwise_affine=_bool(p.get("elementwise_affine",True)))
         if t=="layernorm":
             shape=p.get("normalized_shape",p.get("hidden_size",p.get("dim",384)))
-            return LayerNorm(shape,eps=float(p.get("eps",1e-5)),elementwise_affine=_bool(p.get("elementwise_affine",True)),bias=_bool(p.get("bias",True)))
+            shape=runtime_int(shape,384,f"{node.get('name','LayerNorm')} normalized shape",minimum=1)
+            return LayerNorm(shape,eps=runtime_float(p.get("eps"),1e-5,f"{node.get('name','LayerNorm')} epsilon",minimum=0.0),elementwise_affine=_bool(p.get("elementwise_affine",True)),bias=_bool(p.get("bias",True)))
         if t=="ffn":
             return FFN(
-                int(p.get("hidden_size",384)),
-                int(p.get("intermediate_size",4*int(p.get("hidden_size",384)))),
-                activation=p.get("activation","gelu"), dropout=float(p.get("dropout",0.0)),
+                runtime_int(p.get("hidden_size"),384,f"{node.get('name','FFN')} hidden size",minimum=1),
+                runtime_int(
+                    p.get("intermediate_size"),
+                    4*runtime_int(p.get("hidden_size"),384,f"{node.get('name','FFN')} hidden size",minimum=1),
+                    f"{node.get('name','FFN')} intermediate size",minimum=1,
+                ),
+                activation=p.get("activation") or "gelu",
+                dropout=runtime_float(p.get("dropout"),0.0,f"{node.get('name','FFN')} dropout",minimum=0.0),
                 bias=_bool(p.get("bias",True)), gated=_bool(p.get("gated",False)),
             )
-        if t=="residual": return Residual(dropout=float(p.get("dropout",0.0)))
-        if t=="dropout": return nn.Dropout(float(p.get("p",p.get("dropout",0.1))))
+        if t=="residual": return Residual(dropout=runtime_float(p.get("dropout"),0.0,f"{node.get('name','Residual')} dropout",minimum=0.0))
+        if t=="dropout":
+            probability=p.get("p") if p.get("p") is not None else p.get("dropout")
+            return nn.Dropout(runtime_float(probability,0.1,f"{node.get('name','Dropout')} probability",minimum=0.0,maximum=1.0))
         if t=="custom":
             did=node.get("definition_id"); definition=deepcopy(self.custom_components.get(did) or {})
             if not definition: raise ModelCompileError(f"Custom component definition not found for {node.get('name')}.")
@@ -312,7 +378,9 @@ def _autocast_context(device,precision):
 
 
 def _optimizer(model,config):
-    name=str(config.get("optimizer","adamw")).lower(); lr=float(config.get("learning_rate",3e-4));wd=float(config.get("weight_decay",0.1))
+    name=str(config.get("optimizer") or "adamw").lower()
+    lr=runtime_float(config.get("learning_rate"),3e-4,"Learning Rate",minimum=0.0)
+    wd=runtime_float(config.get("weight_decay"),0.1,"Weight Decay",minimum=0.0)
     if name=="adamw": return torch.optim.AdamW(model.parameters(),lr=lr,weight_decay=wd)
     if name=="adam": return torch.optim.Adam(model.parameters(),lr=lr,weight_decay=wd)
     if name=="sgd": return torch.optim.SGD(model.parameters(),lr=lr,weight_decay=wd,momentum=0.9)
@@ -332,10 +400,12 @@ def _evaluate(model,dataset,*,steps,batch_size,context,pad_id,device,precision,r
 
 
 def _sample_next(logits,temperature,top_k,top_p,generator=None):
-    temperature=max(float(temperature),1e-5); logits=logits/temperature
-    if top_k and int(top_k)>0:
-        k=min(int(top_k),logits.size(-1));v,_=torch.topk(logits,k);cut=v[...,[-1]];logits=torch.where(logits<cut,torch.full_like(logits,float('-inf')),logits)
-    if top_p is not None and 0<float(top_p)<1:
+    temperature=max(runtime_float(temperature,0.8,"Temperature",minimum=1e-5),1e-5); logits=logits/temperature
+    top_k=runtime_int(top_k,50,"Top K",minimum=0)
+    if top_k>0:
+        k=min(top_k,logits.size(-1));v,_=torch.topk(logits,k);cut=v[...,[-1]];logits=torch.where(logits<cut,torch.full_like(logits,float('-inf')),logits)
+    top_p=runtime_float(top_p,0.95,"Top P",minimum=0.0,maximum=1.0)
+    if 0<top_p<1:
         sorted_logits,idx=torch.sort(logits,descending=True);probs=torch.softmax(sorted_logits,dim=-1);cum=torch.cumsum(probs,dim=-1);mask=cum>float(top_p);mask[...,1:]=mask[...,:-1].clone();mask[...,0]=False;sorted_logits=sorted_logits.masked_fill(mask,float('-inf'));logits=torch.full_like(logits,float('-inf')).scatter(-1,idx,sorted_logits)
     probs=torch.softmax(logits,dim=-1);return torch.multinomial(probs,1,generator=generator)
 
@@ -348,14 +418,17 @@ def generate_text(model,tokenizer,prompt,*,max_new_tokens,context,device,precisi
     model.eval()
     try:
         generator_device=device if device.type in {"cpu","cuda"} else torch.device("cpu")
-        gen=torch.Generator(device=generator_device);gen.manual_seed(int(seed))
-        for i in range(int(max_new_tokens)):
+        seed=runtime_int(seed,42,"Seed")
+        max_new_tokens=runtime_int(max_new_tokens,128,"New Token Count",minimum=1)
+        context=runtime_int(context,512,"Model Context",minimum=2)
+        gen=torch.Generator(device=generator_device);gen.manual_seed(seed)
+        for i in range(max_new_tokens):
             if stop_event is not None and stop_event.is_set(): raise TrainingStopped("Generation stopped.")
-            x=torch.tensor([generated[-int(context):]],dtype=torch.long,device=device)
+            x=torch.tensor([generated[-context:]],dtype=torch.long,device=device)
             with torch.no_grad(),_autocast_context(device,precision): logits=model(x)
             next_id=int(_sample_next(logits[:,-1,:].float(),temperature,top_k,top_p,generator=gen).item());generated.append(next_id)
-            if progress and (i==0 or (i+1)%10==0 or i+1==int(max_new_tokens)):
-                progress({"status":"running","runtime_kind":"generate","phase":"generate","overall":round((i+1)/max(1,int(max_new_tokens))*100),"generated_tokens":i+1,"message":f"Generated {i+1}/{max_new_tokens} tokens…","generated_text":tokenizer.decode(generated,skip_special_tokens=True)})
+            if progress and (i==0 or (i+1)%10==0 or i+1==max_new_tokens):
+                progress({"status":"running","runtime_kind":"generate","phase":"generate","overall":round((i+1)/max_new_tokens*100),"generated_tokens":i+1,"message":f"Generated {i+1}/{max_new_tokens} tokens…","generated_text":tokenizer.decode(generated,skip_special_tokens=True)})
             if tokenizer.eos_token_id is not None and next_id==tokenizer.eos_token_id:break
         return tokenizer.decode(generated,skip_special_tokens=True),len(generated)-len(ids)
     finally:
@@ -363,19 +436,40 @@ def generate_text(model,tokenizer,prompt,*,max_new_tokens,context,device,precisi
 
 
 def train_builder_model(*,state,model_entry,dataset,dataset_meta,config,progress,stop_event):
-    seed=int(config.get("seed",42));random.seed(seed);torch.manual_seed(seed)
+    # Old saved projects may contain explicit JSON null values. Normalize all
+    # numeric runtime settings before compilation/training.
+    seed=runtime_int(config.get("seed"),42,"Seed")
+    random.seed(seed);torch.manual_seed(seed)
     if torch.cuda.is_available():torch.cuda.manual_seed_all(seed)
+
     compiled,tokenizer=compile_builder_model(state,model_entry,dataset_meta,config,progress=progress)
     device=compiled.device; model=compiled.model;raw=compiled.raw_model;precision=compiled.precision
     train=dataset["train"] if isinstance(dataset,dict) or hasattr(dataset,"keys") else dataset
     val_name=str(config.get("validation_split") or "validation"); val=dataset.get(val_name) if hasattr(dataset,"get") else None
-    context=int(model_entry.get("context_length") or state.get("project",{}).get("context_length") or 512)
-    batch=max(1,int(config.get("batch_size",16)));accum=max(1,int(config.get("gradient_accumulation",1)));pad=int(tokenizer.pad_token_id or 0)
-    opt=_optimizer(raw,config);warm=max(0,int(config.get("warmup_steps",0)))
+
+    context=runtime_int(
+        model_entry.get("context_length") or state.get("project",{}).get("context_length"),
+        512,"Model Context",minimum=2,
+    )
+    batch=runtime_int(config.get("batch_size"),16,"Batch Size",minimum=1)
+    accum=runtime_int(config.get("gradient_accumulation"),1,"Gradient Accumulation",minimum=1)
+    pad=runtime_int(tokenizer.pad_token_id,0,"Tokenizer Pad Token ID",minimum=0)
+    opt=_optimizer(raw,config)
+    warm=runtime_int(config.get("warmup_steps"),0,"Warmup Steps",minimum=0)
     scaler=torch.amp.GradScaler("cuda",enabled=(device.type=="cuda" and precision=="fp16")) if hasattr(torch,"amp") else None
-    budget=str(config.get("budget_type","steps"));max_steps=max(1,int(config.get("max_steps",1000)));max_tokens=max(1,int(config.get("max_tokens",1000000)));epochs=max(1,float(config.get("epochs",1)))
-    if budget=="epochs":max_steps=max(1,math.ceil(len(train)/batch*epochs))
-    validate_every=max(0,int(config.get("validate_every",100)));val_steps=max(1,int(config.get("validation_steps",20)));checkpoint_every=max(0,int(config.get("checkpoint_every",500)))
+
+    budget=str(config.get("budget_type") or "steps").lower()
+    max_steps=runtime_int(config.get("max_steps"),1000,"Training Steps",minimum=1)
+    max_tokens=runtime_int(config.get("max_tokens"),1000000,"Token Budget",minimum=1)
+    epochs=runtime_float(config.get("epochs"),1.0,"Epochs",minimum=0.000001)
+    if budget not in {"steps","tokens","epochs"}:
+        raise ValueError(f"Budget By must be steps, tokens, or epochs; received {budget!r}.")
+    if budget=="epochs":
+        max_steps=max(1,math.ceil(len(train)/batch*epochs))
+
+    validate_every=runtime_int(config.get("validate_every"),100,"Validate Every N Steps",minimum=0)
+    val_steps=runtime_int(config.get("validation_steps"),20,"Validation Steps",minimum=1)
+    checkpoint_every=runtime_int(config.get("checkpoint_every"),500,"Checkpoint Every N Steps",minimum=0)
     output=Path(str(config.get("output_dir") or "/kaggle/working/mlbricks_training"))/_safe_name(model_entry.get("name","model"));output.mkdir(parents=True,exist_ok=True);(output/'checkpoints').mkdir(exist_ok=True)
     rng=random.Random(seed);tokens_seen=0;best_val=float('inf');last_val=None;start=time.perf_counter();model.train()
     progress({"status":"running","runtime_kind":"train","phase":"train","overall":2,"step":0,"max_steps":max_steps,"tokens_seen":0,"loss":None,"val_loss":None,"message":f"Training started on {device} · {compiled.parameter_count:,} parameters"+(" · compiled" if compiled.compile_used else " · eager"),"compile_warning":compiled.compile_error})
@@ -397,7 +491,7 @@ def train_builder_model(*,state,model_entry,dataset,dataset_meta,config,progress
         else:torch.nn.utils.clip_grad_norm_(raw.parameters(),1.0);opt.step()
         if warm>0 and step<=warm:
             factor=step/warm
-            for group in opt.param_groups:group['lr']=float(config.get('learning_rate',3e-4))*factor
+            for group in opt.param_groups:group['lr']=runtime_float(config.get('learning_rate'),3e-4,'Learning Rate',minimum=0.0)*factor
         tokens_seen+=step_tokens
         do_val=validate_every>0 and (step%validate_every==0 or (budget=="steps" and step==max_steps))
         sample=None
@@ -406,7 +500,7 @@ def train_builder_model(*,state,model_entry,dataset,dataset_meta,config,progress
             last_val=_evaluate(model,val,steps=val_steps,batch_size=batch,context=context,pad_id=pad,device=device,precision=precision,rng=rng);best_val=min(best_val,last_val)
             if _bool(config.get("generate_on_validation",True)):
                 try:
-                    sample,_=generate_text(model,tokenizer,config.get("validation_prompt","Once upon a time"),max_new_tokens=int(config.get("validation_generate_tokens",64)),context=context,device=device,precision=precision,temperature=.8,top_k=50,top_p=.95,seed=seed+step,stop_event=stop_event)
+                    sample,_=generate_text(model,tokenizer,config.get("validation_prompt","Once upon a time"),max_new_tokens=runtime_int(config.get("validation_generate_tokens"),64,"Validation Sample Tokens",minimum=1),context=context,device=device,precision=precision,temperature=.8,top_k=50,top_p=.95,seed=seed+step,stop_event=stop_event)
                 except Exception as exc: sample=f"[sample generation skipped: {exc}]"
             progress({"status":"running","runtime_kind":"train","phase":"validation_done","overall":min(99,round(step/max_steps*100)) if budget!="tokens" else min(99,round(tokens_seen/max_tokens*100)),"step":step,"max_steps":max_steps,"tokens_seen":tokens_seen,"loss":loss_value,"val_loss":last_val,"best_val_loss":None if best_val==float('inf') else best_val,"sample_text":sample,"elapsed_seconds":time.perf_counter()-start,"message":f"Validation complete at step {step} · val {last_val:.4f}"})
         if checkpoint_every>0 and step%checkpoint_every==0:

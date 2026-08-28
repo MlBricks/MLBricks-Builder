@@ -950,3 +950,26 @@ Uses the same pattern and shows:
 
 Runtime progress events now carry the built model id so status/history is kept
 on the correct model even when multiple built models exist.
+
+
+## v0.6.4 — training/generation null-safety
+
+Fixes the step-0 runtime failure:
+
+`TypeError: int() argument must be a string, a bytes-like object or a real number, not 'NoneType'`
+
+Older saved runtime configurations could contain explicit JSON `null` values.
+Those values previously overwrote safe defaults and later reached Python
+`int(...)`/`float(...)` conversions.
+
+v0.6.4:
+
+- ignores null/blank legacy values while merging runtime defaults
+- safely normalizes all numeric training fields
+- safely normalizes generation numeric fields
+- makes supported model-component numeric parameters null-safe
+- reports field-specific errors such as `Batch Size must be a number`
+- adds **Reset Runtime Defaults** to both Training Setup and Generation Setup
+- keeps blank required fields blocked before Start Training
+
+Opening Training Setup after upgrading automatically repairs old null settings.
