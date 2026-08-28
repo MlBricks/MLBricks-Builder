@@ -37,11 +37,13 @@
     let selected=null,pendingPort=null,filter="All",search="",inspectorTab="settings",zoom=1,status="Ready";
     const bridge=payload.bridge||null;
     const runtimeCaps=cp(payload.runtime_capabilities||{devices:[{id:"auto",label:"Auto"},{id:"cpu",label:"CPU"}]});
+    const localEnvironment=cp(payload.local_environment||{kind:"python",name:"Python / Jupyter Environment",roots:["."],default_root:"."});
+    const localDefaultRoot=localEnvironment.default_root||(localEnvironment.roots||[])[0]||".";
     let runtimePanel=null;
     let execution={status:"idle",overall:0,message:"Ready",nodes:{}};
     let localFiles={roots:[],entries:[],truncated:false};
     let localImportReports={model:null,data:null};
-    let localForm={model_path:"/kaggle/working",data_path:"/kaggle/working"};
+    let localForm={model_path:localDefaultRoot,data_path:localDefaultRoot};
     let serveSecrets={};
     let cloudStatus={};
     let cloudSecrets={
@@ -72,6 +74,7 @@
     let runtimeStatusRedrawTimer=null;
     let modelBuildTimer=null;
     const workspaceScroll={model:{left:0,top:0},data:{left:0,top:0}};
+    const sidebarScroll={model:{left:0,top:0},data:{left:0,top:0}};
     let switchingWorkspace=false;
     const undoStack=[],redoStack=[];
     const historyLimit=60;
@@ -176,6 +179,10 @@
       if(oldCanvas){
         workspaceScroll[oldKey]={left:oldCanvas.scrollLeft,top:oldCanvas.scrollTop};
       }
+      const oldSidebar=root.querySelector(".mlb-sidebar");
+      if(oldSidebar){
+        sidebarScroll[oldKey]={left:oldSidebar.scrollLeft,top:oldSidebar.scrollTop};
+      }
       rememberWorkspaceView();
       runtimePanel=null;
       state.active_workspace=next;
@@ -257,6 +264,25 @@
       return clean+" "+i;
     }
 
+    function nodeDisplayName(node){
+      if(!node)return "Component";
+      if(node.display_name)return String(node.display_name);
+      let base="";
+      if(node.definition_id&&state.custom_components?.[node.definition_id]){
+        base=String(state.custom_components[node.definition_id].name||"").trim();
+      }else{
+        base=String(cat(catalog,node.type)?.name||"").trim();
+      }
+      const actual=String(node.name||base||"Component").trim();
+      if(!base)return actual;
+      if(actual===base)return base;
+      if(actual.startsWith(base+" ")){
+        const suffix=actual.slice(base.length+1);
+        if(/^\d+$/.test(suffix) || /^Copy(?: \d+)?$/i.test(suffix))return base;
+      }
+      return actual;
+    }
+
     function layoutNameExists(name,exceptId=null){
       const wanted=normalizedUserName(name);
       if(!wanted)return false;
@@ -299,7 +325,7 @@
         }
         const def=state.custom_components[c.definition_id];
         def.name=name;
-        Object.values(state.components||{}).forEach(comp=>(comp.nodes||[]).forEach(n=>{if(n.definition_id===def.id)n.name=uniqueNodeName(name,comp,n.id);}));
+        Object.values(state.components||{}).forEach(comp=>(comp.nodes||[]).forEach(n=>{if(n.definition_id===def.id){n.name=uniqueNodeName(name,comp,n.id);n.display_name=name;}}));
       }
       setStatus('Layout renamed to "'+name+'".');draw();
     }
@@ -312,7 +338,7 @@
       const name=String(proposed||"").trim().replace(/\s+/g," ");
       if(!name){setStatus("Component name cannot be empty.");return;}
       if(nodeNameExists(name,current(state),n.id)){setStatus('Another component in this layout is already named "'+name+'".');return;}
-      checkpoint("Rename component");n.name=name;setStatus('Component renamed to "'+name+'".');draw();
+      checkpoint("Rename component");n.name=name;n.display_name=name;setStatus('Component renamed to "'+name+'".');draw();
     }
 
     const galleryStorageKey="mlbricks-builder-gallery-v1";
@@ -1060,27 +1086,6 @@
 
     function selectedNode(){return current(state).nodes.find(n=>n.id===selected)||null;}
     function setStatus(s){status=s;}
-
-    function componentExplainer(node,item,api){
-      const description=String(api?.description||item?.description||node?.name||"Builder component.").trim();
-      const type=String(node?.type||"");
-      let why="Use this component when you need its function in your pipeline or model architecture.";
-      if(type==="embedding")why="Use it to turn token IDs into trainable vectors before sequence or language-model layers.";
-      else if(type==="esa")why="Use it when you want MLBricks Entangled State Attention for efficient sequence mixing.";
-      else if(type==="vesa")why="Use it for vision-oriented ESA blocks inside image pipelines or multimodal experiments.";
-      else if(type==="rmsnorm"||type==="layernorm")why="Use normalization to stabilize activations and training across deep stacks.";
-      else if(type==="ffnbrick"||type==="micro_ffn"||type==="virtual_saffn")why="Use feed-forward blocks to expand, transform and refine hidden features after mixing blocks.";
-      else if(type==="lm_head")why="Use it at the end of a language model to convert hidden states into token logits.";
-      else if(type==="classifier")why="Use it when the model should output class labels instead of next-token predictions.";
-      else if(type==="text_input"||type==="image_input"||type==="audio_input")why="Use an input node to define what data enters the pipeline and how the rest of the graph receives it.";
-      else if(type==="train_test_split")why="Use it to create clean train, validation and test splits before model training.";
-      else if(type==="tokenize_text")why="Use it to convert raw text into token IDs compatible with embedding and training steps.";
-      else if(type==="text_processing"||type==="image_processing"||type==="audio_processing")why="Use preprocessing to clean and normalize data so later steps receive consistent inputs.";
-      else if(type==="batch_dataloader")why="Use it to package prepared samples into batches that the training loop can consume efficiently.";
-      else if(type==="text_output"||type==="logits_output")why="Use an output node to define what the graph returns after processing or inference.";
-      else if(type==="custom")why="Use a custom brick to reuse the same internal architecture in multiple places.";
-      return {what:description, why};
-    }
 
     function apiInfo(node){
       if(node.type==="custom") return {public_name:"Custom Layer",parameters:[],available:true};
@@ -2565,7 +2570,7 @@
       const head=document.createElement("div");head.className="mlb-output-head";head.innerHTML="<div><strong>DATA REPOSITORY</strong><span>"+entries.length+" dataset"+(entries.length===1?"":"s")+" · processed, loaded and imported data</span></div>";container.appendChild(head);
       if(!entries.length){container.appendChild(makeDirectoryEmpty("No prepared datasets yet.","Run a Data Processing pipeline. Completed datasets will appear here automatically."));return;}
       const list=document.createElement("div");list.className="mlb-output-list compact";
-      entries.forEach(meta=>{const card=document.createElement("div");card.className="mlb-output-entry compact"+(outputDirectorySelection===meta.id?" selected":"");const top=document.createElement("div");top.className="mlb-output-entry-top";const sourceLabel=meta.local_source?"Local / Kaggle Data":dataStorageLabel(meta);top.innerHTML="<div class='mlb-output-name'><strong>"+meta.name+"</strong><span>"+sourceLabel+"</span></div><span class='mlb-output-type data'>DATA</span>";card.appendChild(top);const stats=document.createElement("div");stats.className="mlb-output-stats compact";[["train","Train"],["validation","Val"],["test","Test"]].forEach(([key,label])=>{if(meta.splits?.[key]){const item=document.createElement("div");item.innerHTML="<span>"+label+"</span><strong>"+splitRows(meta,key)+"</strong>";stats.appendChild(item);}});card.appendChild(stats);const foot=document.createElement("div");foot.className="mlb-output-compact-foot";foot.innerHTML="<span>"+(meta.total_rows??"?")+" rows</span><span>Details →</span>";card.appendChild(foot);card.addEventListener("click",()=>{outputDirectorySelection=meta.id;selected=null;inspectorTab="settings";setStatus(meta.name+" details opened.");draw();});list.appendChild(card);});container.appendChild(list);
+      entries.forEach(meta=>{const card=document.createElement("div");card.className="mlb-output-entry compact"+(outputDirectorySelection===meta.id?" selected":"");const top=document.createElement("div");top.className="mlb-output-entry-top";const sourceLabel=meta.local_source?"Local Environment Data":dataStorageLabel(meta);top.innerHTML="<div class='mlb-output-name'><strong>"+meta.name+"</strong><span>"+sourceLabel+"</span></div><span class='mlb-output-type data'>DATA</span>";card.appendChild(top);const stats=document.createElement("div");stats.className="mlb-output-stats compact";[["train","Train"],["validation","Val"],["test","Test"]].forEach(([key,label])=>{if(meta.splits?.[key]){const item=document.createElement("div");item.innerHTML="<span>"+label+"</span><strong>"+splitRows(meta,key)+"</strong>";stats.appendChild(item);}});card.appendChild(stats);const foot=document.createElement("div");foot.className="mlb-output-compact-foot";foot.innerHTML="<span>"+(meta.total_rows??"?")+" rows</span><span>Details →</span>";card.appendChild(foot);card.addEventListener("click",()=>{outputDirectorySelection=meta.id;selected=null;inspectorTab="settings";setStatus(meta.name+" details opened.");draw();});list.appendChild(card);});container.appendChild(list);
     }
 
     function renderModelOutputDirectory(container){
@@ -2590,7 +2595,7 @@
         const top=document.createElement("div");top.className="mlb-output-entry-top";
         const sourceLabel=entry.legacy_recovered
           ?"Recovered Legacy Checkpoint"
-          :(entry.local_source?"Local / Kaggle Model":"Built Model · r"+(entry.revision||1));
+          :(entry.local_source?"Local Environment Model":"Built Model · r"+(entry.revision||1));
         top.innerHTML="<div class='mlb-output-name'><strong>"+entry.name+"</strong><span>"+sourceLabel+"</span></div>"+
           "<span class='mlb-output-type model'>"+(entry.legacy_recovered?"RECOVERED":"MODEL")+"</span>";
         card.appendChild(top);
@@ -2697,7 +2702,7 @@
       if(!model)return;
       const config={
         format:"mlbricks-model-config",
-        builder_version:"0.7.12",
+        builder_version:"0.7.14",
         project:cp(state.project||{}),
         model:cp(model),
         selected_dataset:selectedModelDataset(),
@@ -2751,32 +2756,35 @@
       const head=document.createElement("div");head.className="mlb-local-head";
       const copyHead=document.createElement("div");
       copyHead.innerHTML=importingData
-        ?"<strong>LOCAL / KAGGLE DATA IMPORT</strong><span>Enter one directory. Builder scans all subdirectories and imports compatible datasets automatically.</span>"
-        :"<strong>LOCAL / KAGGLE MODEL IMPORT</strong><span>Enter one directory. Builder scans all subdirectories and imports compatible models automatically.</span>";
-      const badge=document.createElement("span");badge.className="mlb-local-badge";badge.textContent="AUTO";
+        ?"<strong>LOCAL ENVIRONMENT DATA IMPORT</strong><span>Detected "+localEnvironment.name+". Builder scans its available filesystem roots and imports compatible datasets automatically.</span>"
+        :"<strong>LOCAL ENVIRONMENT MODEL IMPORT</strong><span>Detected "+localEnvironment.name+". Builder scans its available filesystem roots and imports compatible models automatically.</span>";
+      const badge=document.createElement("span");badge.className="mlb-local-badge";badge.textContent=String(localEnvironment.name||"AUTO").toUpperCase();
       head.append(copyHead,badge);container.appendChild(head);
 
       const box=document.createElement("div");box.className="mlb-local-auto-box";
       const field=document.createElement("div");field.className="mlb-local-field";
       const label=document.createElement("label");label.textContent="Base Path";field.appendChild(label);
       const input=document.createElement("input");
-      input.value=localForm[pathKey]||"/kaggle/working";
-      input.placeholder="/kaggle/working";
+      input.value=localForm[pathKey]||localDefaultRoot;
+      input.placeholder=localDefaultRoot;
       input.addEventListener("input",()=>localForm[pathKey]=input.value);
       field.appendChild(input);
 
-      const button=btn(importingData?"Scan & Import Data":"Scan & Import Models","mlb-local-load");
+      const button=btn(importingData?"Scan Environment Data":"Scan Environment Models","mlb-local-load");
       button.addEventListener("click",()=>{
+        requestLocalCommand(action,{environment_scan:true,roots:cp(localEnvironment.roots||[]),max_depth:12,max_entries:1000});
+      });
+      const pathButton=btn("Scan This Path","mlb-local-load secondary");
+      pathButton.addEventListener("click",()=>{
         const path=String(localForm[pathKey]||"").trim();
-        if(!path){setStatus("Enter a Kaggle/local directory path.");return;}
+        if(!path){setStatus("Enter a local environment directory path.");return;}
         requestLocalCommand(action,{path,max_depth:12,max_entries:1000});
       });
-      box.append(field,button);container.appendChild(box);
+      const buttons=document.createElement("div");buttons.className="mlb-local-scan-actions";buttons.append(button,pathButton);
+      box.append(field,buttons);container.appendChild(box);
 
       const examples=document.createElement("div");examples.className="mlb-local-path-examples";
-      const quickPaths=importingData
-        ?["/kaggle/working","/kaggle/input","/content/data"]
-        :["/kaggle/working","/kaggle/input","/content/models"];
+      const quickPaths=(localEnvironment.roots||[]);
       quickPaths.forEach(value=>{
         const chip=document.createElement("button");chip.textContent=value;
         chip.addEventListener("click",()=>{localForm[pathKey]=value;draw();});
@@ -2833,8 +2841,8 @@
 
       const note=document.createElement("div");note.className="mlb-local-note";
       note.innerHTML=importingData
-        ?"<strong>Path only.</strong> Builder recursively detects Hugging Face <code>save_to_disk()</code> folders, <code>.txt</code>, <code>.csv</code>, <code>.json</code>, <code>.jsonl</code>, <code>.parquet</code>, <code>.arrow</code> and MLBricks dataset bundles. Duplicate paths are ignored. Imported datasets are added automatically to <strong>Data Repository</strong>."
-        :"<strong>Path only.</strong> Builder recursively detects <code>last.pt</code>, <code>.pt</code>, <code>.pth</code>, <code>.ckpt</code> and MLBricks model bundles. Duplicate paths are ignored. Imported models are added automatically to <strong>Model Repository</strong>.";
+        ?"<strong>Environment-aware.</strong> Builder recursively detects Hugging Face <code>save_to_disk()</code> folders, <code>.txt</code>, <code>.csv</code>, <code>.json</code>, <code>.jsonl</code>, <code>.parquet</code>, <code>.arrow</code> and MLBricks dataset bundles. Duplicate paths are ignored. Imported datasets are added automatically to <strong>Data Repository</strong>."
+        :"<strong>Environment-aware.</strong> Builder recursively detects <code>last.pt</code>, <code>.pt</code>, <code>.pth</code>, <code>.ckpt</code> and MLBricks model bundles. Duplicate paths are ignored. Imported models are added automatically to <strong>Model Repository</strong>.";
       container.appendChild(note);
     }
 
@@ -3397,7 +3405,7 @@
     function addPrimitive(item){
       if(!requireEditableLayout("add components"))return;
       checkpoint("Add "+item.name);
-      const n=makeNode(item);n.name=uniqueNodeName(item.name);
+      const n=makeNode(item);n.name=uniqueNodeName(item.name);n.display_name=item.name;
       if(n.type==="text_input")configureTextInputForLatest(n);
       const pos=insertAfterSelection(n);
       setStatus(n.name+" inserted at layer "+(pos+1)+".");
@@ -3453,6 +3461,7 @@
         id:uid("node"),
         type:"custom",
         name:uniqueNodeName(def.name),
+        display_name:def.name,
         definition_id:def.id,
         repeat:1,
         params:{},
@@ -3527,7 +3536,7 @@
       const n=selectedNode();if(!n)return;
       if(!requireEditableLayout("duplicate components"))return;
       checkpoint("Duplicate "+n.name);
-      const c=current(state),d=cp(n);d.id=uid("node");d.name=uniqueNodeName(n.name+" Copy",c);
+      const c=current(state),d=cp(n);d.id=uid("node");d.name=uniqueNodeName(n.name+" Copy",c);d.display_name=nodeDisplayName(n);
       const idx=c.nodes.findIndex(x=>x.id===n.id);
       c.nodes.splice(idx+1,0,d);
       rebuildMainFlow();
@@ -3984,7 +3993,7 @@
       return {
         format:"mlbricks-builder-design",
         format_version:"0.7.5",
-        builder_version:"0.7.12",
+        builder_version:"0.7.14",
         saved_at:new Date().toISOString(),
         state:sanitizedProjectState()
       };
@@ -4030,7 +4039,7 @@
       }
       const payload={
         format:"mlbricks-export",
-        builder_version:"0.7.12",
+        builder_version:"0.7.14",
         workspace:state.active_workspace,
         project:cp(state.project||{}),
         prepared_datasets:cp(state.prepared_datasets||[]),
@@ -4063,7 +4072,7 @@
     function showQuickHelp(){
       const win=(root.ownerDocument&&root.ownerDocument.defaultView)||window;
       const help=[
-        'MLBricks Builder v0.7.12',
+        'MLBricks Builder v0.7.14',
         '',
         '• Add bricks or data steps from the left library.',
         '• Export downloads a model config or workspace export file.',
@@ -4139,6 +4148,10 @@
       const oldCanvas=root.querySelector(".mlb-canvas");
       if(oldCanvas && !switchingWorkspace){
         workspaceScroll[wsKey]={left:oldCanvas.scrollLeft,top:oldCanvas.scrollTop};
+      }
+      const oldSidebar=root.querySelector(".mlb-sidebar");
+      if(oldSidebar){
+        sidebarScroll[wsKey]={left:oldSidebar.scrollLeft,top:oldSidebar.scrollTop};
       }
       switchingWorkspace=false;
       rememberWorkspaceView();
@@ -4260,6 +4273,12 @@
         }
       }
 
+      const sidePos=sidebarScroll[state.active_workspace]||{left:0,top:0};
+      requestAnimationFrame(()=>{
+        side.scrollLeft=sidePos.left||0;
+        side.scrollTop=sidePos.top||0;
+      });
+
       // Main
       const main=document.createElement("main");main.className="mlb-main";
       const toolbar=document.createElement("div");toolbar.className="mlb-toolbar";
@@ -4369,7 +4388,7 @@
             const rb=document.createElement("div");rb.className="mlb-run-badge";rb.textContent=runLabel(runState.status);rb.title=runState.message||"";card.appendChild(rb);
             if(runState.status==="running"){const rt=document.createElement("div");rt.className="mlb-run-track";rt.innerHTML="<i></i>";card.appendChild(rt);}
           }
-          card.querySelector(".node-name").textContent=n.name;card.querySelector(".node-icon").textContent=info.icon||"ML";card.querySelector(".node-desc").textContent=info.description||"MLBricks layer";
+          card.querySelector(".node-name").textContent=nodeDisplayName(n);card.querySelector(".node-icon").textContent=info.icon||"ML";card.querySelector(".node-desc").textContent=info.description||"MLBricks layer";
           card.querySelector(".mlb-node-fields").innerHTML=n.type==="custom"
             ?('<div class="mlb-mini-field"><span>Architecture</span><strong>Open</strong></div>'+
               '<div class="mlb-mini-field"><span>Ports</span><strong>Skip / Main / Extra</strong></div>')
@@ -4425,8 +4444,8 @@
 
       const detailsSelect=document.createElement("select");detailsSelect.className="mlb-details-select";
       const options=state.active_workspace==="data"
-        ?[["details","Pipeline Details"],["outputs","Output Directory"],["gallery","Gallery"],["files","Files"],["local","Local / Kaggle Data"],["cloud","Cloud & Repositories"]]
-        :[["details","Model Details"],["outputs","Output Directory"],["gallery","Gallery"],["files","Files"],["local","Local / Kaggle Models"],["cloud","Cloud & Repositories"]];
+        ?[["details","Pipeline Details"],["outputs","Output Directory"],["gallery","Gallery"],["files","Files"],["local","Local Environment"],["cloud","Cloud & Repositories"]]
+        :[["details","Model Details"],["outputs","Output Directory"],["gallery","Gallery"],["files","Files"],["local","Local Environment"],["cloud","Cloud & Repositories"]];
       options.forEach(([value,label])=>{
         const o=document.createElement("option");o.value=value;o.textContent=label;
         if(bottomView===value)o.selected=true;
@@ -4520,13 +4539,12 @@
       }else if(!n){
         body.innerHTML='<div class="mlb-section-title">SELECT A NODE</div><div class="mlb-api-path">'+(state.active_workspace==="data"?"Choose a data step, or click a prepared dataset in Output Directory to inspect it.":"Choose a model component to edit its MLBricks API.")+'</div>';
       }else if(inspectorTab==="info"){
-        const api=apiInfo(n);const item=n.type==="custom"?{category:"My Bricks",description:"Reusable custom brick."}:cat(catalog,n.type);const expl=componentExplainer(n,item,api);
-        body.innerHTML='<div class="mlb-selected"><strong>'+n.name+'</strong><span class="mlb-pill">'+(api.public_name||"Custom")+'</span></div>';
+        const api=apiInfo(n);const item=n.type==="custom"?{category:"My Bricks",description:"Reusable custom brick."}:cat(catalog,n.type);
+        body.innerHTML='<div class="mlb-selected"><strong>'+nodeDisplayName(n)+'</strong><span class="mlb-pill">'+(api.public_name||"Custom")+'</span></div>';
         const s=document.createElement("div");s.className="mlb-summary";[["Type",n.type],["Definition",n.definition_id?"Custom":"Built-in"],["Category",item.category||"General"],["Repeat",n.repeat||1],["API",api.import_path||"custom"],["Status","Valid"]].forEach(([a,b])=>{const r=document.createElement("div");r.className="mlb-summary-row";r.innerHTML="<span>"+a+"</span><strong>"+b+"</strong>";s.appendChild(r);});body.appendChild(s);
-        const infoBox=document.createElement("div");infoBox.className="mlb-api-path";infoBox.innerHTML="<strong style='display:block;margin-bottom:4px;color:#e9eef6'>What it does</strong>"+expl.what+"<br><br><strong style='display:block;margin:0 0 4px;color:#e9eef6'>Why use it</strong>"+expl.why;body.appendChild(infoBox);
       }else{
         const api=apiInfo(n);const info=n.type==="custom"?{api:[]}:cat(catalog,n.type);
-        const sw=document.createElement("div");sw.className="mlb-selected";sw.innerHTML="<strong>"+n.name+"</strong><span class='mlb-pill'>"+(api.public_name||"Custom Layer")+"</span>";body.appendChild(sw);
+        const sw=document.createElement("div");sw.className="mlb-selected";sw.innerHTML="<strong>"+nodeDisplayName(n)+"</strong><span class='mlb-pill'>"+(api.public_name||"Custom Layer")+"</span>";body.appendChild(sw);
         const renameComponentBtn=btn("✎ Rename Component","mlb-ins-rename");renameComponentBtn.addEventListener("click",renameSelectedComponent);body.appendChild(renameComponentBtn);
         const runLive=document.createElement("div");runLive.className="mlb-ins-run-live";
         const rs=execution.nodes?.[n.id];
@@ -4590,10 +4608,6 @@
           }
 
           const st=document.createElement("div");st.className="mlb-section-title";st.textContent="CONFIG";body.appendChild(st);
-          const expl=componentExplainer(n,info,api);
-          const configInfo=document.createElement("div");configInfo.className="mlb-api-path";
-          configInfo.innerHTML="<strong style='display:block;margin-bottom:4px;color:#e9eef6'>What it does</strong>"+expl.what+"<br><br><strong style='display:block;margin:0 0 4px;color:#e9eef6'>Why use it</strong>"+expl.why;
-          body.appendChild(configInfo);
           const fields=(api.parameters||info.api||[]);
           if(fields.some(f=>f.group)) renderGroupedFields(body,n,fields);
           else fields.forEach(f=>renderField(body,n,f));
@@ -4629,7 +4643,7 @@
             const row=document.createElement("div");row.className="mlb-connection-row";
             const src=current(state).nodes.find(x=>x.id===ed.source), tgt=current(state).nodes.find(x=>x.id===ed.target);
             const laneName=ed.kind==="residual"?"Skip":(ed.kind==="aux"?"Extra":"Main");
-            const left=(src?.name||"Node")+" → "+(tgt?.name||"Node")+" · "+laneName;
+            const left=(src?nodeDisplayName(src):"Node")+" → "+(tgt?nodeDisplayName(tgt):"Node")+" · "+laneName;
             const txt=document.createElement("div");txt.className="mlb-connection-text";txt.textContent=left;
             const delBtn=btn("Remove","mlb-conn-remove");
             delBtn.disabled=layoutIsLocked();delBtn.addEventListener("click",()=>{

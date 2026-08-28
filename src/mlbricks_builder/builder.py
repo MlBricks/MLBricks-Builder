@@ -64,6 +64,8 @@ class Builder:
         self.prepared_datasets = {}
         self.state.setdefault("prepared_datasets", [])
         self.runtime_capabilities = self._detect_runtime_capabilities()
+        from .local_runtime import detect_local_environment
+        self.local_environment = detect_local_environment()
 
     def _detect_runtime_capabilities(self):
         """Detect devices/runtime choices available in this Python session."""
@@ -803,7 +805,7 @@ class Builder:
             root.mkdir(parents=True, exist_ok=True)
             manifest = {
                 "format": "mlbricks-cloud-bundle-v1",
-                "builder_version": "0.7.12",
+                "builder_version": "0.7.14",
                 "content_type": content_type,
             }
 
@@ -1256,7 +1258,7 @@ class Builder:
             import datasets  # noqa: F401
         except ImportError as exc:
             raise RuntimeError(
-                "Local / Kaggle Data import requires the `datasets` package. "
+                "Local environment data import requires the `datasets` package. "
                 "In Kaggle run: %pip install -q datasets pyarrow pandas, then restart the kernel."
             ) from exc
 
@@ -1325,7 +1327,7 @@ class Builder:
                 meta = result.get("dataset") or {}
                 meta["local_path"] = path
                 meta["source_root"] = scan.get("root")
-                meta["repository_source"] = "Local / Kaggle"
+                meta["repository_source"] = "Local Environment"
                 meta["local_source"] = True
 
                 # Keep the registered state entry synchronized with the metadata
@@ -1420,7 +1422,7 @@ class Builder:
                 model = result.get("model") or {}
                 model["local_path"] = path
                 model["source_root"] = scan.get("root")
-                model["repository_source"] = "Local / Kaggle"
+                model["repository_source"] = "Local Environment"
                 imported.append(copy.deepcopy(model))
                 existing.add(path)
             except Exception as exc:
@@ -1441,6 +1443,39 @@ class Builder:
             "truncated": bool(scan.get("truncated")),
         }
 
+    @staticmethod
+    def _merge_local_import_results(results, *, environment=None):
+        merged = {
+            "root": None,
+            "roots": [],
+            "found": 0,
+            "imported": [],
+            "imported_count": 0,
+            "skipped": [],
+            "skipped_count": 0,
+            "errors": [],
+            "error_count": 0,
+            "truncated": False,
+            "environment": copy.deepcopy(environment or {}),
+        }
+        for result in results:
+            if not result:
+                continue
+            root = result.get("root")
+            if root and root not in merged["roots"]:
+                merged["roots"].append(root)
+            merged["found"] += int(result.get("found") or 0)
+            merged["imported"].extend(copy.deepcopy(result.get("imported") or []))
+            merged["skipped"].extend(copy.deepcopy(result.get("skipped") or []))
+            merged["errors"].extend(copy.deepcopy(result.get("errors") or []))
+            merged["truncated"] = merged["truncated"] or bool(result.get("truncated"))
+        merged["imported_count"] = len(merged["imported"])
+        merged["skipped_count"] = len(merged["skipped"])
+        merged["error_count"] = len(merged["errors"])
+        env_name = (environment or {}).get("name") or "Local Environment"
+        merged["root"] = env_name + (" · " + ", ".join(merged["roots"]) if merged["roots"] else "")
+        return merged
+
     def _execute_local_command(self, command, progress_callback=None):
         local = command.get("local") or {}; action = str(command.get("action") or "")
         def emit(payload):
@@ -1452,13 +1487,22 @@ class Builder:
             return scan
 
         if action == "local_import_models":
-            emit({"status":"running","runtime_kind":"local","phase":"import_models","overall":2,"message":"Scanning directory and subdirectories for models…"})
-            result = self.import_models_from_local_path(
-                local.get("path"),
-                max_depth=local.get("max_depth") or 12,
-                max_entries=local.get("max_entries") or 1000,
-                progress_callback=emit,
-            )
+            environment = copy.deepcopy(self.local_environment)
+            environment_scan = bool(local.get("environment_scan"))
+            roots = list(local.get("roots") or environment.get("roots") or []) if environment_scan else []
+            if not roots:
+                roots = [local.get("path")]
+            roots = [root for root in roots if root]
+            emit({"status":"running","runtime_kind":"local","phase":"import_models","overall":2,"message":f'Scanning {environment.get("name") or "local environment"} for models…'})
+            parts=[]
+            for root in roots:
+                parts.append(self.import_models_from_local_path(
+                    root,
+                    max_depth=local.get("max_depth") or 12,
+                    max_entries=local.get("max_entries") or 1000,
+                    progress_callback=emit,
+                ))
+            result = self._merge_local_import_results(parts, environment=environment) if environment_scan else parts[0]
             message = f'Imported {result["imported_count"]} model{"s" if result["imported_count"] != 1 else ""} from {result["root"]}.'
             if result["skipped_count"]:
                 message += f' {result["skipped_count"]} duplicate/non-model item(s) skipped.'
@@ -1471,13 +1515,22 @@ class Builder:
             return result
 
         if action == "local_import_data":
-            emit({"status":"running","runtime_kind":"local","phase":"import_data","overall":2,"message":"Scanning directory and subdirectories for datasets…"})
-            result = self.import_data_from_local_path(
-                local.get("path"),
-                max_depth=local.get("max_depth") or 12,
-                max_entries=local.get("max_entries") or 1000,
-                progress_callback=emit,
-            )
+            environment = copy.deepcopy(self.local_environment)
+            environment_scan = bool(local.get("environment_scan"))
+            roots = list(local.get("roots") or environment.get("roots") or []) if environment_scan else []
+            if not roots:
+                roots = [local.get("path")]
+            roots = [root for root in roots if root]
+            emit({"status":"running","runtime_kind":"local","phase":"import_data","overall":2,"message":f'Scanning {environment.get("name") or "local environment"} for datasets…'})
+            parts=[]
+            for root in roots:
+                parts.append(self.import_data_from_local_path(
+                    root,
+                    max_depth=local.get("max_depth") or 12,
+                    max_entries=local.get("max_entries") or 1000,
+                    progress_callback=emit,
+                ))
+            result = self._merge_local_import_results(parts, environment=environment) if environment_scan else parts[0]
             message = f'Imported {result["imported_count"]} dataset{"s" if result["imported_count"] != 1 else ""} from {result["root"]}.'
             if result["skipped_count"]:
                 message += f' {result["skipped_count"]} duplicate/non-data item(s) skipped.'
@@ -1908,8 +1961,8 @@ class Builder:
         available = [k for k, v in self.mlbricks_api.items() if v.get("available")]
         unavailable = {k: v.get("error") for k, v in self.mlbricks_api.items() if not v.get("available")}
         return {
-            "builder_version": "0.7.12",
-            "frontend_version": "0.7.12",
+            "builder_version": "0.7.14",
+            "frontend_version": "0.7.14",
             "mlbricks": info,
             "api_components_available": available,
             "api_components_unavailable": unavailable,
@@ -1927,10 +1980,11 @@ class Builder:
             "mlbricks_api": self.mlbricks_api,
             "bridge": bridge,
             "runtime_capabilities": self.runtime_capabilities,
+            "local_environment": self.local_environment,
         }).replace("</", "<\\/")
         return f"""
 <style>{css}</style>
-<div id="{html.escape(self._instance_id)}" class="mlb-root" data-mlbricks-builder-version="0.7.12"></div>
+<div id="{html.escape(self._instance_id)}" class="mlb-root" data-mlbricks-builder-version="0.7.14"></div>
 <script>
 try {{ delete window.MLBricksBuilder; }} catch (e) {{ window.MLBricksBuilder = undefined; }}
 {js}

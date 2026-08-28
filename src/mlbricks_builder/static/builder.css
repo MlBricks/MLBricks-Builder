@@ -1331,3 +1331,10 @@
 .mlb-gallery-action{border:1px solid #3b5061;border-radius:5px;background:#17232d;color:#aebdca;padding:4px 6px;font-size:5.8px;cursor:pointer}.mlb-gallery-action.danger{border-color:#624047;color:#c89198;background:#20171a}
 .mlb-gallery-empty{padding:9px;border:1px dashed #344653;border-radius:6px;color:#718292;font-size:6.2px;text-align:center}.mlb-gallery-note{margin-top:7px;color:#667786;font-size:5.8px}
 @media(max-width:900px){.mlb-gallery-grid{grid-template-columns:1fr}}
+
+
+/* v0.7.14 — environment-aware local filesystem import */
+.mlb-local-scan-actions{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.mlb-local-scan-actions .mlb-local-load{min-width:118px!important}
+.mlb-local-scan-actions .mlb-local-load.secondary{background:#121b24!important;border-color:#3a4c5c!important;color:#9fb0bf!important}
+.mlb-local-badge{max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

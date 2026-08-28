@@ -71,20 +71,85 @@ def detect_local_kind(path: str | Path) -> dict[str, Any]:
     return {'kind': 'file', 'label': 'File'}
 
 
-def _root_candidates() -> list[Path]:
-    candidates = [Path('/kaggle/working'), Path('/kaggle/input'), Path('/content'), Path.cwd()]
-    result, seen = [], set()
+def _existing_unique_paths(candidates: list[Path]) -> list[Path]:
+    result: list[Path] = []
+    seen: set[str] = set()
     for p in candidates:
+        try:
+            p = p.expanduser()
+        except Exception:
+            pass
         if not p.exists():
             continue
         try:
             resolved = str(p.resolve())
         except Exception:
             resolved = str(p)
-        if resolved not in seen:
-            seen.add(resolved)
-            result.append(p)
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        result.append(p)
     return result
+
+
+def detect_local_environment() -> dict[str, Any]:
+    """Describe the notebook/Python filesystem that Builder can actually scan."""
+    cwd = Path.cwd()
+
+    if os.environ.get("KAGGLE_KERNEL_RUN_TYPE") or Path("/kaggle").exists():
+        kind, name = "kaggle", "Kaggle"
+        candidates = [Path("/kaggle/working"), Path("/kaggle/input")]
+    elif os.environ.get("COLAB_RELEASE_TAG") or os.environ.get("COLAB_GPU") or "google.colab" in os.sys.modules:
+        kind, name = "colab", "Google Colab"
+        candidates = [Path("/content"), Path("/content/drive/MyDrive")]
+    elif os.environ.get("LIGHTNING_CLOUD_URL") or Path("/teamspace").exists():
+        kind, name = "lightning", "Lightning AI"
+        candidates = [cwd, Path("/teamspace/studios/this_studio"), Path("/teamspace")]
+    elif os.environ.get("CODESPACES"):
+        kind, name = "codespaces", "GitHub Codespaces"
+        candidates = [cwd, Path("/workspaces")]
+    elif os.environ.get("SAGEMAKER_REGION") or Path("/home/ec2-user/SageMaker").exists():
+        kind, name = "sagemaker", "Amazon SageMaker"
+        candidates = [cwd, Path("/home/ec2-user/SageMaker")]
+    elif Path("/workspace").exists() and cwd != Path("/"):
+        kind, name = "cloud_workspace", "Cloud Workspace"
+        candidates = [cwd, Path("/workspace")]
+    else:
+        kind, name = "python", "Python / Jupyter Environment"
+        # The current working directory is the safest generic root. Include the
+        # user's home only when cwd is not already the home directory.
+        home = Path.home()
+        # Some notebook kernels start with cwd="/". Scanning the whole root
+        # filesystem would be noisy and expensive, so use the user home instead.
+        candidates = [home] if str(cwd) == "/" else [cwd]
+        try:
+            if cwd.resolve() != home.resolve() and str(cwd) != "/":
+                candidates.append(home)
+        except Exception:
+            if str(cwd) != "/":
+                candidates.append(home)
+
+    roots = _existing_unique_paths(candidates)
+    if not roots:
+        roots = [cwd]
+    resolved_roots = []
+    for p in roots:
+        try:
+            resolved_roots.append(str(p.resolve()))
+        except Exception:
+            resolved_roots.append(str(p))
+
+    return {
+        "kind": kind,
+        "name": name,
+        "roots": resolved_roots,
+        "default_root": resolved_roots[0] if resolved_roots else str(cwd),
+        "cwd": str(cwd),
+    }
+
+
+def _root_candidates() -> list[Path]:
+    return [Path(x) for x in detect_local_environment().get("roots") or [str(Path.cwd())]]
 
 
 def scan_local_files(roots: list[str] | None = None, *, max_entries: int = 300, max_depth: int = 5) -> dict[str, Any]:
@@ -132,7 +197,7 @@ def scan_local_files(roots: list[str] | None = None, *, max_entries: int = 300, 
                 add(current_path / filename, root)
 
     priority = {'model_checkpoint': 0, 'dataset_dir': 1, 'bundle': 2, 'project_json': 3, 'project_bin': 4, 'data_file': 5}
-    entries.sort(key=lambda x: (0 if x['root'] == '/kaggle/working' else 1, priority.get(x['kind'], 99), x['path'].lower()))
+    entries.sort(key=lambda x: (priority.get(x['kind'], 99), x['root'].lower(), x['path'].lower()))
     return {'roots': [str(x.resolve()) for x in root_paths], 'entries': entries, 'truncated': len(entries) >= max_entries}
 
 
@@ -145,7 +210,7 @@ def scan_model_candidates(
     """Recursively find model checkpoints/bundles beneath one base path."""
     base = Path(base_path).expanduser()
     if not base.exists():
-        raise FileNotFoundError(f"Local / Kaggle path was not found: {base}")
+        raise FileNotFoundError(f"Local environment path was not found: {base}")
     base = base.resolve()
 
     if base.is_file():
@@ -186,7 +251,7 @@ def scan_data_candidates(
     """Recursively find prepared/raw datasets and MLBricks bundles."""
     base = Path(base_path).expanduser()
     if not base.exists():
-        raise FileNotFoundError(f"Local / Kaggle path was not found: {base}")
+        raise FileNotFoundError(f"Local environment path was not found: {base}")
     base = base.resolve()
 
     if base.is_file():

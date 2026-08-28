@@ -1443,3 +1443,34 @@ The new Gallery stores reusable user-created assets:
 
 Gallery data is part of Builder state and is also mirrored to browser local
 storage when the notebook/browser environment permits it.
+
+
+## v0.7.13 — clean component labels + stable library scroll
+
+- repeated components keep unique internal names/IDs but display clean labels such as
+  `ESA` and `Text Input` instead of `ESA 2`, `ESA 3`, `Text Input 2`
+- manual component renames remain unique within a layout
+- the Brick/Data Library preserves both vertical and horizontal scroll position
+  when adding a component or expanding/collapsing a category
+- switching workspaces preserves each workspace's sidebar position independently
+- removed the **What it does / Why use it** information card from Inspector/Config
+
+
+## v0.7.14 — environment-aware local import
+
+The bottom drawer no longer says **Local / Kaggle Models/Data**. It now uses
+**Local Environment** and detects the Python notebook environment on the backend.
+
+Examples:
+
+- Kaggle → `/kaggle/working`, `/kaggle/input`
+- Google Colab → `/content` and mounted Drive when available
+- Lightning AI → current workspace / Teamspace roots
+- GitHub Codespaces → current workspace / `/workspaces`
+- Amazon SageMaker → current notebook/SageMaker roots
+- other Python/Jupyter environments → current working directory and user home
+
+**Scan Environment Models/Data** scans all detected roots recursively. A
+secondary **Scan This Path** action remains available for a specific directory.
+No browser-side filesystem guessing is used; detection comes from the Python
+runtime that actually owns the files.
