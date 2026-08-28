@@ -1487,3 +1487,26 @@ Stop between the Full Window tab and the notebook's standard-ipywidgets bridge.
 Visual edits in Full Window synchronize back to the notebook Builder. Keep the
 notebook tab/session open for Python-backed actions. No ngrok or public server is
 required simply to use Full Window mode.
+
+## v0.7.16 — Full Window reliability fix
+
+v0.7.15 could open a new tab but leave the generated Builder page unmounted. The
+popout HTML used an escaped `<\/script>` sequence as the generated script closing
+tag, so the browser treated the rest of the page as part of the first script.
+
+v0.7.16 fixes the generated HTML and hardens Full Window for notebook sandboxes:
+
+- **Full Window** is now a real user-initiated link backed by a self-contained
+  Blob URL instead of `window.open("about:blank")` + `document.write`
+- the generated page now receives real script closing tags and mounts normally
+- notebook ↔ Full Window communication primarily uses `window.postMessage`
+  through the opener and falls back to `BroadcastChannel`
+- Run and Stop have distinct proxy bridge identifiers in the popout
+- repeated hello/handshake attempts make the kernel-host connection more robust
+  when the new tab loads slowly
+- Full Window remains 100vw × 100vh and keeps the notebook tab as the Python host
+- local scan status text is environment-neutral instead of Kaggle-specific
+
+The popout path was tested in a Chromium sandboxed iframe with `allow-scripts`
+and `allow-popups`, including successful rendering and message forwarding back
+to the host frame.

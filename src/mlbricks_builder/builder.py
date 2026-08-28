@@ -805,7 +805,7 @@ class Builder:
             root.mkdir(parents=True, exist_ok=True)
             manifest = {
                 "format": "mlbricks-cloud-bundle-v1",
-                "builder_version": "0.7.15",
+                "builder_version": "0.7.16",
                 "content_type": content_type,
             }
 
@@ -1961,8 +1961,8 @@ class Builder:
         available = [k for k, v in self.mlbricks_api.items() if v.get("available")]
         unavailable = {k: v.get("error") for k, v in self.mlbricks_api.items() if not v.get("available")}
         return {
-            "builder_version": "0.7.15",
-            "frontend_version": "0.7.15",
+            "builder_version": "0.7.16",
+            "frontend_version": "0.7.16",
             "mlbricks": info,
             "api_components_available": available,
             "api_components_unavailable": unavailable,
@@ -1986,7 +1986,7 @@ class Builder:
         }).replace("</", "<\\/")
         return f"""
 <style>{css}</style>
-<div id="{html.escape(self._instance_id)}" class="mlb-root" data-mlbricks-builder-version="0.7.15"></div>
+<div id="{html.escape(self._instance_id)}" class="mlb-root" data-mlbricks-builder-version="0.7.16"></div>
 <script>
 try {{ delete window.MLBricksBuilder; }} catch (e) {{ window.MLBricksBuilder = undefined; }}
 {js}
