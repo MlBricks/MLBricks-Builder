@@ -493,14 +493,14 @@ def _edge(source, target, source_port="out", target_port="in", kind="main"):
 
 
 def _default_data_processing_graph():
-    """Beginner-ready text pipeline shown in every new project."""
+    """Beginner-ready, executable text pipeline shown in every new project."""
     source = _node("hf_dataset", "Hugging Face Dataset", {
         "dataset_id": "roneneldan/TinyStories",
         "config": "",
         "split": "train",
         "text_column": "text",
         "streaming": "false",
-        "max_rows": 0,
+        "max_rows": 10000,
     })
     clean = _node("text_process", "Text Processing", {
         "text_column": "text",
@@ -527,17 +527,11 @@ def _default_data_processing_graph():
         "padding": "false",
         "add_special_tokens": "true",
     })
-    batch = _node("batch_data", "Batch / DataLoader", {
-        "batch_size": 16,
-        "shuffle": "true",
-        "num_workers": 2,
-        "drop_last": "false",
-    })
     output = _node("prepared_dataset", "Prepared Dataset", {
         "save_to_disk": "false",
         "path": "/kaggle/working/prepared_dataset",
     })
-    nodes = [source, clean, split, tokenize, batch, output]
+    nodes = [source, clean, split, tokenize, output]
     edges = [
         _edge(left["id"], right["id"], "main_out", "main_in", "main")
         for left, right in zip(nodes[:-1], nodes[1:])
@@ -552,7 +546,7 @@ def new_project(name: str = "Untitled Model"):
     now = datetime.now(timezone.utc).isoformat()
     return {
         "format": "mlbricks-builder",
-        "format_version": "0.5.1",
+        "format_version": "0.5.2",
         "project": {
             "name": name,
             "created_at": now,

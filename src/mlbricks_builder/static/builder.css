@@ -384,3 +384,59 @@
 .mlb-split-bar i:nth-child(1){background:#6d5bd0}.mlb-split-bar i:nth-child(2){background:#4b83a8}.mlb-split-bar i:nth-child(3){background:#4b9b86}
 .mlb-split-total{font-size:8px;color:#9eabb9}.mlb-split-preview.valid .mlb-split-total{color:#77c89c}.mlb-split-preview.invalid .mlb-split-total{color:#e59ca4}
 .mlb-split-presets{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin:0 0 10px}.mlb-split-presets button{font-size:7.5px;padding:6px 4px}
+
+.mlb-run-live{
+  display:flex;align-items:center;gap:7px;max-width:235px;height:26px;
+  padding:0 8px;border:1px solid #344453;border-radius:6px;background:#111a23;
+  font-size:8px;color:#9eabb9;overflow:hidden
+}
+.mlb-run-live strong{color:#dbe5ee;min-width:27px}
+.mlb-run-live span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mlb-run-live.running{border-color:#8a6be9}
+.mlb-run-live.done{border-color:#2c8b62}
+.mlb-run-live.error{border-color:#a64e59}
+
+.mlb-node.run-queued{opacity:.72}
+.mlb-node.run-running{
+  border-color:#c19b4a!important;
+  box-shadow:0 0 0 2px rgba(193,155,74,.16)
+}
+.mlb-node.run-done{
+  border-color:#39a875!important;
+  box-shadow:0 0 0 1px rgba(57,168,117,.13)
+}
+.mlb-node.run-error{
+  border-color:#d35d69!important;
+  box-shadow:0 0 0 2px rgba(211,93,105,.16)
+}
+.mlb-node.run-stopped{border-color:#788695!important}
+
+.mlb-run-badge{
+  position:absolute;right:7px;bottom:7px;z-index:8;
+  padding:3px 5px;border-radius:5px;border:1px solid #465462;
+  background:#101820;color:#aab6c4;font-size:6.5px;font-weight:900;letter-spacing:.06em
+}
+.run-running .mlb-run-badge{color:#f1cf7b;border-color:#806c3e;background:#231e13}
+.run-done .mlb-run-badge{color:#70dca5;border-color:#2d7352;background:#10241b}
+.run-error .mlb-run-badge{color:#ff919c;border-color:#7f3b44;background:#291316}
+.run-stopped .mlb-run-badge{color:#c0c8d1}
+
+.mlb-run-track{
+  position:absolute;left:8px;right:8px;bottom:1px;height:3px;
+  overflow:hidden;border-radius:4px;background:#1d2630;z-index:7
+}
+.mlb-run-track i{
+  display:block;width:34%;height:100%;border-radius:4px;background:#c19b4a;
+  animation:mlb-run-slide 1s ease-in-out infinite alternate
+}
+@keyframes mlb-run-slide{from{transform:translateX(0)}to{transform:translateX(190%)}}
+
+.mlb-ins-run-live{
+  display:flex;flex-direction:column;gap:3px;margin:7px 0;
+  border:1px solid #394958;border-radius:7px;background:#111a23;padding:7px 8px;
+  font-size:8px;color:#aeb9c5
+}
+.mlb-ins-run-live strong{font-size:7px;letter-spacing:.06em}
+.mlb-ins-run-live.running{border-color:#806c3e;color:#f0ca70}
+.mlb-ins-run-live.done{border-color:#2d7352;color:#72dba5}
+.mlb-ins-run-live.error{border-color:#7f3b44;color:#ff939e}

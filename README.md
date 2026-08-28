@@ -490,3 +490,64 @@ The top toolbar now includes **BIN** next to Save.
 
 The binary file uses an `MLBRICKS-BIN-1` header followed by the project payload.
 Python helpers are also available in `mlbricks_builder.design_io`.
+
+
+## v0.5.2 — executable Data Run + live node progress
+
+### Correct default beginner pipeline
+
+Every new Data Processing workspace now starts with:
+
+`Hugging Face → Text Processing → Train/Validation/Test → Tokenize → Prepared Dataset`
+
+The default Hugging Face source is capped at 10,000 rows so a beginner does not
+accidentally start by processing an entire large dataset. Set Max Rows to 0 to
+use all rows.
+
+**Batch / DataLoader** remains available as an optional advanced step.
+
+### Run now executes the Python data pipeline
+
+Builder uses a bridge made only from **standard ipywidgets** (no AnyWidget or
+custom frontend extension). In Jupyter/Kaggle, the visual Run button sends the
+current graph to Python and executes `mlbricks_builder.runner`.
+
+The active node is visibly highlighted:
+
+- `QUEUED`
+- `RUNNING`
+- `DONE`
+- `ERROR`
+- `STOPPED`
+
+The toolbar shows overall step progress and the Inspector shows the selected
+node's live execution state. Long operations use an indeterminate activity bar
+rather than inventing a fake percentage.
+
+**Stop** requests cancellation after the currently active processing step.
+
+If a notebook frontend does not expose standard ipywidgets comms, the Builder
+continues to render normally and the same real runner is available through:
+
+```python
+builder.run_data_pipeline()
+```
+
+### Beginner validation
+
+Run refuses obviously invalid data pipelines before downloading or processing
+anything. It checks for:
+
+- exactly one Data Source
+- exactly one Prepared Dataset output
+- Prepared Dataset being the final step
+- Train + Validation + Test totaling 100%
+- disconnected Main-lane steps
+- cycles / unsupported branching in the beginner runner
+
+Invalid nodes are highlighted in red with a readable explanation.
+
+Use **Default Data Pipeline** to instantly restore the known-good beginner
+pipeline.
+
+JSON and `.mlbricks.bin` project Save/Load support remains available.

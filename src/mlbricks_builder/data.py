@@ -624,8 +624,13 @@ def prepared_dataset_output(
     save_to_disk: bool = False,
     path: str = "/kaggle/working/prepared_dataset",
 ):
-    """Return the prepared dataset and optionally save it using Dataset.save_to_disk."""
+    """Return prepared data and optionally persist Dataset/DatasetDict objects."""
     if save_to_disk:
+        if not hasattr(dataset, "save_to_disk"):
+            raise TypeError(
+                "Save To Disk requires a Dataset/DatasetDict. "
+                "Place Prepared Dataset before Batch/DataLoader, or disable Save To Disk."
+            )
         dataset.save_to_disk(str(path))
     return dataset
 

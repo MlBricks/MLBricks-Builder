@@ -35,6 +35,10 @@
     const catalog=cp(payload.catalog);
     const mlapi=cp(payload.mlbricks_api||{});
     let selected=null,pendingPort=null,filter="All",search="",inspectorTab="settings",zoom=1,status="Ready";
+    const bridge=payload.bridge||null;
+    let execution={status:"idle",overall:0,message:"Ready",nodes:{}};
+    let lastProgressRaw="";
+    let bridgePollTimer=null;
     const workspaceScroll={model:{left:0,top:0},data:{left:0,top:0}};
     let switchingWorkspace=false;
     const undoStack=[],redoStack=[];
@@ -151,18 +155,243 @@
     }
     function defaultDataNodes(){
       const nodes=[
-        makeNode(cat(catalog,"hf_dataset")),makeNode(cat(catalog,"text_process")),makeNode(cat(catalog,"train_test_split")),
-        makeNode(cat(catalog,"tokenize_text")),makeNode(cat(catalog,"batch_data")),makeNode(cat(catalog,"prepared_dataset"))
+        makeNode(cat(catalog,"hf_dataset")),
+        makeNode(cat(catalog,"text_process")),
+        makeNode(cat(catalog,"train_test_split")),
+        makeNode(cat(catalog,"tokenize_text")),
+        makeNode(cat(catalog,"prepared_dataset"))
       ];
-      nodes[0].params.dataset_id="roneneldan/TinyStories";nodes[0].params.split="train";
-      nodes[2].params.train_size=90;nodes[2].params.validation_size=5;nodes[2].params.test_size=5;
-      nodes[4].params.batch_size=16;
-      const edges=[];for(let i=0;i<nodes.length-1;i++){const e=edge(nodes[i].id,nodes[i+1].id,"main");e.source_port="main_out";e.target_port="main_in";edges.push(e);}
+      nodes[0].params.dataset_id="roneneldan/TinyStories";
+      nodes[0].params.split="train";
+      nodes[0].params.max_rows=10000;
+      nodes[2].params.train_size=90;
+      nodes[2].params.validation_size=5;
+      nodes[2].params.test_size=5;
+      const edges=[];
+      for(let i=0;i<nodes.length-1;i++){
+        const e=edge(nodes[i].id,nodes[i+1].id,"main");
+        e.source_port="main_out";e.target_port="main_in";edges.push(e);
+      }
       return {nodes,edges};
     }
 
 
     ensureWorkspaces();
+
+    function bridgeRoot(cls){
+      if(!cls)return null;
+      return document.querySelector("."+cls);
+    }
+
+    function bridgeControl(cls,selector){
+      const host=bridgeRoot(cls);
+      if(!host)return null;
+      return host.querySelector(selector);
+    }
+
+    function setBridgeState(){
+      if(!bridge)return false;
+      const input=bridgeControl(bridge.state,"textarea");
+      if(!input)return false;
+      const raw=JSON.stringify(state);
+      input.value=raw;
+      input.dispatchEvent(new Event("input",{bubbles:true}));
+      input.dispatchEvent(new Event("change",{bubbles:true}));
+      return true;
+    }
+
+    function markExecutionLocally(kind,message){
+      const nodes={};
+      (current(state).nodes||[]).forEach(n=>{
+        nodes[n.id]={status:kind,message:message||kind};
+      });
+      execution={status:kind,overall:0,message:message||kind,nodes};
+      applyExecutionProgress(execution);
+    }
+
+    function clientDataValidation(){
+      if(state.active_workspace!=="data")return [];
+      const comp=current(state);
+      const nodes=comp.nodes||[];
+      const edges=(comp.edges||[]).filter(e=>(e.kind||"main")==="main");
+      const sources=new Set(["manual_dataset","hf_dataset","kaggle_dataset","url_dataset","local_dataset"]);
+      const sourceNodes=nodes.filter(n=>sources.has(n.type));
+      const outputs=nodes.filter(n=>n.type==="prepared_dataset");
+      const outgoing={};nodes.forEach(n=>outgoing[n.id]=[]);
+      edges.forEach(e=>{if(outgoing[e.source])outgoing[e.source].push(e.target);});
+      const errors=[];
+
+      if(sourceNodes.length!==1){
+        errors.push({
+          node_ids:sourceNodes.map(n=>n.id),
+          message:"Use exactly one Data Source. Found "+sourceNodes.length+"."
+        });
+      }
+      if(outputs.length!==1){
+        errors.push({
+          node_ids:outputs.map(n=>n.id),
+          message:"Use exactly one Prepared Dataset output. Found "+outputs.length+"."
+        });
+      }else if((outgoing[outputs[0].id]||[]).length){
+        errors.push({
+          node_ids:[outputs[0].id],
+          message:"Prepared Dataset must be the final step."
+        });
+      }
+      nodes.filter(n=>n.type==="train_test_split").forEach(n=>{
+        const total=splitTotal(n);
+        if(!splitIsValid(n)){
+          errors.push({
+            node_ids:[n.id],
+            message:"Train + Validation + Test must equal 100%. Current total: "+total+"%."
+          });
+        }
+      });
+      return errors;
+    }
+
+    function showClientErrors(errors){
+      const nodeStates={};
+      (current(state).nodes||[]).forEach(n=>nodeStates[n.id]={status:"queued",message:"Waiting"});
+      errors.forEach(err=>(err.node_ids||[]).forEach(id=>{
+        nodeStates[id]={status:"error",message:err.message};
+      }));
+      execution={
+        status:"error",
+        overall:0,
+        message:errors[0]?.message||"Pipeline needs attention.",
+        nodes:nodeStates
+      };
+      applyExecutionProgress(execution);
+      setStatus(execution.message);
+    }
+
+    function requestRun(){
+      if(state.active_workspace!=="data"){
+        setStatus("Model execution is not compiled yet. Run is currently available for Data Processing.");
+        draw();
+        return;
+      }
+
+      const errors=clientDataValidation();
+      if(errors.length){
+        showClientErrors(errors);
+        return;
+      }
+
+      if(!bridge || !setBridgeState()){
+        setStatus("Python kernel bridge unavailable. Use builder.run_data_pipeline() in a Python cell.");
+        draw();
+        return;
+      }
+
+      const runButton=bridgeControl(bridge.run,"button");
+      if(!runButton){
+        setStatus("Python Run bridge is not ready yet. Try Run again in a moment.");
+        draw();
+        return;
+      }
+
+      const queued={};
+      (current(state).nodes||[]).forEach(n=>queued[n.id]={status:"queued",message:"Waiting"});
+      execution={status:"running",overall:0,message:"Sending pipeline to Python…",nodes:queued};
+      applyExecutionProgress(execution);
+
+      // Give the standard Textarea widget enough time to sync the latest design
+      // to the Python kernel before triggering its hidden standard Button.
+      setTimeout(()=>runButton.click(),120);
+    }
+
+    function requestStop(){
+      if(execution.status!=="running"){
+        setStatus("Nothing is running.");
+        return;
+      }
+      if(!bridge){
+        setStatus("Stop bridge unavailable.");
+        return;
+      }
+      const stopButton=bridgeControl(bridge.stop,"button");
+      if(stopButton){
+        stopButton.click();
+        setStatus("Stop requested. The active step will finish, then the pipeline will stop.");
+      }
+    }
+
+    function runLabel(s){
+      return s==="running"?"RUNNING":s==="done"?"DONE":s==="error"?"ERROR":
+             s==="stopped"?"STOPPED":s==="queued"?"QUEUED":"";
+    }
+
+    function applyExecutionProgress(next){
+      if(!next||typeof next!=="object")return;
+      execution=next;
+
+      root.querySelectorAll(".mlb-node").forEach(card=>{
+        const nodeState=execution.nodes?.[card.dataset.nodeId];
+        card.classList.remove("run-queued","run-running","run-done","run-error","run-stopped");
+        const old=card.querySelector(".mlb-run-badge");if(old)old.remove();
+        const oldTrack=card.querySelector(".mlb-run-track");if(oldTrack)oldTrack.remove();
+        if(!nodeState)return;
+
+        card.classList.add("run-"+nodeState.status);
+        const badge=document.createElement("div");badge.className="mlb-run-badge";
+        badge.textContent=runLabel(nodeState.status);
+        badge.title=nodeState.message||"";
+        card.appendChild(badge);
+
+        if(nodeState.status==="running"){
+          const track=document.createElement("div");track.className="mlb-run-track";
+          track.innerHTML="<i></i>";card.appendChild(track);
+        }
+      });
+
+      const live=root.querySelector(".mlb-run-live");
+      if(live){
+        live.className="mlb-run-live "+(execution.status||"idle");
+        live.innerHTML="<strong>"+Math.max(0,Math.min(100,Number(execution.overall||0)))+"%</strong><span>"+(execution.message||"Ready")+"</span>";
+      }
+
+      const selectedLive=root.querySelector(".mlb-ins-run-live");
+      const selectedState=selected ? execution.nodes?.[selected] : null;
+      if(selectedLive){
+        if(selectedState){
+          selectedLive.style.display="block";
+          selectedLive.className="mlb-ins-run-live "+selectedState.status;
+          selectedLive.innerHTML="<strong>"+runLabel(selectedState.status)+"</strong><span>"+(selectedState.message||"")+"</span>";
+        }else{
+          selectedLive.style.display="none";
+        }
+      }
+
+      const stat=root.querySelector(".mlb-statusbar .right");
+      if(stat)stat.textContent="● "+(execution.message||status);
+
+      const run=root.querySelector(".mlb-run");
+      if(run){
+        run.disabled=execution.status==="running";
+        run.textContent=execution.status==="running"?"▶ Running…":"▶ Run";
+      }
+    }
+
+    function pollBridgeProgress(){
+      if(!bridge)return;
+      const input=bridgeControl(bridge.progress,"textarea");
+      if(!input)return;
+      const raw=input.value||"";
+      if(!raw || raw===lastProgressRaw)return;
+      lastProgressRaw=raw;
+      try{
+        const parsed=JSON.parse(raw);
+        applyExecutionProgress(parsed);
+        if(parsed.message)setStatus(parsed.message);
+      }catch(_){}
+    }
+
+    function startBridgePolling(){
+      if(!bridge || bridgePollTimer)return;
+      bridgePollTimer=setInterval(pollBridgeProgress,250);
+    }
 
     function btn(text,cls){const b=document.createElement("button");b.type="button";b.className=cls||"";b.textContent=text;return b;}
     function portLabel(side,index){
@@ -826,7 +1055,7 @@
     }
 
     function loadTextDataStarter(){
-      checkpoint("Load Text Data Starter");
+      checkpoint("Load Default Data Pipeline");
       rememberWorkspaceView();
       state.active_workspace="data";
       const ws=state.workspaces.data;
@@ -835,31 +1064,18 @@
       ws.view_component_id=ws.root_component_id;
       ws.breadcrumbs=cp(state.breadcrumbs);
 
-      const nodes=[
-        makeNode(cat(catalog,"hf_dataset")),
-        makeNode(cat(catalog,"text_process")),
-        makeNode(cat(catalog,"train_test_split")),
-        makeNode(cat(catalog,"tokenize_text")),
-        makeNode(cat(catalog,"batch_data")),
-        makeNode(cat(catalog,"prepared_dataset"))
-      ];
-      nodes[0].params.dataset_id="roneneldan/TinyStories";
-      nodes[0].params.split="train";
-      nodes[2].params.train_size=90;
-      nodes[2].params.validation_size=5;
-      nodes[2].params.test_size=5;
-      nodes[4].params.batch_size=16;
-      nodes[4].params.shuffle="true";
-      const edges=[];
-      for(let i=0;i<nodes.length-1;i++){
-        const e=edge(nodes[i].id,nodes[i+1].id,"main");
-        e.source_port="main_out";e.target_port="main_in";edges.push(e);
-      }
+      const starter=defaultDataNodes();
       state.components[ws.root_component_id]={
-        id:ws.root_component_id,name:"Data Processing",kind:"data",revision:1,nodes,edges
+        id:ws.root_component_id,
+        name:"Data Processing",
+        kind:"data",
+        revision:1,
+        nodes:starter.nodes,
+        edges:starter.edges
       };
       selected=null;pendingPort=null;
-      setStatus("Beginner data pipeline loaded: source → clean → split → tokenize → batch → output.");
+      execution={status:"idle",overall:0,message:"Ready",nodes:{}};
+      setStatus("Default pipeline restored: Hugging Face → Clean → Train/Val/Test → Tokenize → Prepared Dataset.");
       switchingWorkspace=true;
       draw();
     }
@@ -990,12 +1206,12 @@
 
       // Top bar
       const top=document.createElement("div");top.className="mlb-topbar";
-      const logo=document.createElement("div");logo.className="mlb-logo";logo.innerHTML='<span class="mlb-logo-mark">◇</span>MLBricks Builder <span class="mlb-beta">v0.5.1</span>';top.appendChild(logo);
+      const logo=document.createElement("div");logo.className="mlb-logo";logo.innerHTML='<span class="mlb-logo-mark">◇</span>MLBricks Builder <span class="mlb-beta">v0.5.2</span>';top.appendChild(logo);
       const title=document.createElement("div");title.className="mlb-project-title";title.textContent=state.project?.name||"Untitled";top.appendChild(title);
       const saved=document.createElement("div");saved.className="mlb-save-state";saved.textContent="• Saved";top.appendChild(saved);
       const sp=document.createElement("div");sp.className="mlb-topspacer";top.appendChild(sp);
       const acts=document.createElement("div");acts.className="mlb-top-actions";
-      const run=btn("▶ Run","mlb-run");run.addEventListener("click",()=>{setStatus("Graph ready for MLBricks runtime compilation.");draw();});
+      const run=btn("▶ Run","mlb-run");run.addEventListener("click",requestRun);
       const undoBtn=btn("↶ Undo","mlb-dark-btn mlb-history-btn");undoBtn.disabled=undoStack.length===0;undoBtn.title="Undo last model edit";undoBtn.addEventListener("click",undo);
       const redoBtn=btn("↷ Redo","mlb-dark-btn mlb-history-btn");redoBtn.disabled=redoStack.length===0;redoBtn.title="Redo last undone edit";redoBtn.addEventListener("click",redo);
       const clearBtn=btn("↻ Clear","mlb-dark-btn");clearBtn.addEventListener("click",()=>{
@@ -1005,7 +1221,8 @@
       const saveBtn=btn("▣ Save","mlb-dark-btn");saveBtn.title="Save full project as readable .mlbricks.json";saveBtn.addEventListener("click",saveDesign);
       const saveBinBtn=btn("BIN","mlb-dark-btn");saveBinBtn.title="Save full project as .mlbricks.bin";saveBinBtn.addEventListener("click",saveDesignBin);
       const loadBtn=btn("⇧ Load","mlb-dark-btn");loadBtn.title="Load .mlbricks.json or .mlbricks.bin";loadBtn.addEventListener("click",loadDesign);
-      acts.append(run,btn("□ Stop","mlb-stop"),undoBtn,redoBtn,clearBtn,saveBtn,saveBinBtn,loadBtn,btn("⇩ Export","mlb-dark-btn"),btn("⌯ Share","mlb-dark-btn"),btn("?","mlb-dark-btn"),btn("⚙","mlb-dark-btn"));top.appendChild(acts);
+      const stopBtn=btn("□ Stop","mlb-stop");stopBtn.addEventListener("click",requestStop);
+      acts.append(run,stopBtn,undoBtn,redoBtn,clearBtn,saveBtn,saveBinBtn,loadBtn,btn("⇩ Export","mlb-dark-btn"),btn("⌯ Share","mlb-dark-btn"),btn("?","mlb-dark-btn"),btn("⚙","mlb-dark-btn"));top.appendChild(acts);
       root.appendChild(top);
 
       const shell=document.createElement("div");shell.className="mlb-shell";
@@ -1103,9 +1320,14 @@
       if(state.active_workspace==="model"){
         const demo=btn("★ TinyStories 30M","mlb-tool");demo.addEventListener("click",loadTinyStories);toolbar.appendChild(demo);
       }else{
-        const demo=btn("★ Text Data Starter","mlb-tool");demo.addEventListener("click",loadTextDataStarter);toolbar.appendChild(demo);
+        const demo=btn("★ Default Data Pipeline","mlb-tool");demo.addEventListener("click",loadTextDataStarter);toolbar.appendChild(demo);
       }
 
+      if(state.active_workspace==="data"){
+        const live=document.createElement("div");live.className="mlb-run-live "+(execution.status||"idle");
+        live.innerHTML="<strong>"+Math.max(0,Math.min(100,Number(execution.overall||0)))+"%</strong><span>"+(execution.message||"Ready")+"</span>";
+        toolbar.appendChild(live);
+      }
       const tsp=document.createElement("div");tsp.className="mlb-toolspacer";toolbar.appendChild(tsp);
       const toggle=document.createElement("label");toggle.className="mlb-toggle";
       const cb=document.createElement("input");cb.type="checkbox";cb.checked=!!state.auto_connect;
@@ -1152,8 +1374,15 @@
         comp.nodes.forEach((n,i)=>{
           if(i){const a=document.createElement("div");a.className="mlb-arrow";a.textContent="→";flow.appendChild(a);}
           const info=n.type==="custom"?{accent:"purple",description:"Nested reusable layer",icon:"LAY",api:[]}:cat(catalog,n.type);
-          const card=document.createElement("div");card.className="mlb-node"+(selected===n.id?" selected":"");card.dataset.nodeId=n.id;card.dataset.accent=info.accent||"purple";
+          const runState=execution.nodes?.[n.id];
+          const card=document.createElement("div");
+          card.className="mlb-node"+(selected===n.id?" selected":"")+(runState?" run-"+runState.status:"");
+          card.dataset.nodeId=n.id;card.dataset.accent=info.accent||"purple";
           card.innerHTML='<span class="index">'+(i+1)+'</span>'+portButtons(n,"in")+'<div class="node-head"><div class="node-name"></div><div class="node-icon"></div></div><div class="node-desc"></div><div class="mlb-node-fields"></div><div class="node-meta"></div>'+portButtons(n,"out");
+          if(runState){
+            const rb=document.createElement("div");rb.className="mlb-run-badge";rb.textContent=runLabel(runState.status);rb.title=runState.message||"";card.appendChild(rb);
+            if(runState.status==="running"){const rt=document.createElement("div");rt.className="mlb-run-track";rt.innerHTML="<i></i>";card.appendChild(rt);}
+          }
           card.querySelector(".node-name").textContent=n.name;card.querySelector(".node-icon").textContent=info.icon||"ML";card.querySelector(".node-desc").textContent=info.description||"MLBricks layer";
           card.querySelector(".mlb-node-fields").innerHTML=n.type==="custom"
             ?('<div class="mlb-mini-field"><span>Architecture</span><strong>Open</strong></div>'+
@@ -1175,7 +1404,7 @@
       hint.textContent=pendingPort
         ?"Choose the matching lane: Top ↔ Top, Main ↔ Main, Bottom ↔ Bottom."
         :(state.active_workspace==="data"
-          ?"Build left to right: Data Source → Processing → Split/Batch → Prepared Dataset. Select a step before adding to insert after it."
+          ?"Build left to right: one Data Source → Processing → Train/Val/Test → Tokenize → Prepared Dataset. Use Default Data Pipeline to reset."
           :"Select a node before adding a brick to insert after it. Use Move Left / Move Right in Inspector to reorder. Main flow rewires automatically.");
       canvas.appendChild(hint);
       main.appendChild(canvas);
@@ -1207,7 +1436,7 @@
       const p4=document.createElement("div");p4.className="mlb-bottom-card";
 
       if(state.active_workspace==="data"){
-        p1.innerHTML='<div class="mlb-bottom-title">STARTER</div><div class="mlb-preset-card"><strong>★ Text Data Pipeline</strong>Hugging Face → Clean → Split → Tokenize → Output</div>';
+        p1.innerHTML='<div class="mlb-bottom-title">STARTER</div><div class="mlb-preset-card"><strong>★ Default Data Pipeline</strong>Hugging Face → Clean → Train/Val/Test → Tokenize → Output</div>';
         p1.querySelector(".mlb-preset-card").addEventListener("click",loadTextDataStarter);
         p2.innerHTML='<div class="mlb-bottom-title">PIPELINE INFO</div><div class="mlb-stat-row"><span>Steps</span><strong>'+current(state).nodes.length+'</strong></div><div class="mlb-stat-row"><span>Connections</span><strong>'+(current(state).edges||[]).length+'</strong></div><div class="mlb-stat-row"><span>Workspace</span><strong>Data</strong></div><div class="mlb-stat-row"><span>Status</span><strong class="mlb-good">✓ Designed</strong></div>';
         p3.innerHTML='<div class="mlb-bottom-title">PROCESSING</div><div class="mlb-stat-row"><span>Text</span><strong>Clean / Tokenize</strong></div><div class="mlb-stat-row"><span>Image</span><strong>Resize / Crop</strong></div><div class="mlb-stat-row"><span>Audio</span><strong>Resample / Normalize</strong></div><div class="mlb-stat-row"><span>Split</span><strong>Train / Val / Test</strong></div>';
@@ -1238,6 +1467,16 @@
       }else{
         const api=apiInfo(n);const info=n.type==="custom"?{api:[]}:cat(catalog,n.type);
         const sw=document.createElement("div");sw.className="mlb-selected";sw.innerHTML="<strong>"+n.name+"</strong><span class='mlb-pill'>"+(api.public_name||"Custom Layer")+"</span>";body.appendChild(sw);
+        const runLive=document.createElement("div");runLive.className="mlb-ins-run-live";
+        const rs=execution.nodes?.[n.id];
+        if(rs){
+          runLive.className+=" "+rs.status;
+          runLive.innerHTML="<strong>"+runLabel(rs.status)+"</strong><span>"+(rs.message||"")+"</span>";
+        }else{
+          runLive.style.display="none";
+        }
+        body.appendChild(runLive);
+
         const path=document.createElement("div");path.className="mlb-api-path";
         path.textContent=n.type==="custom"
           ?"custom://"+n.definition_id
@@ -1361,6 +1600,7 @@
     }
 
     draw();
+    startBridgePolling();
   }
 
   window.MLBricksBuilder={mount};
