@@ -591,11 +591,18 @@
 
       const run=root.querySelector(".mlb-run");
       if(run){
+        const runtimeBusy=state.active_workspace==="model" && execution.status==="running" &&
+          (execution.runtime_kind==="train"||execution.runtime_kind==="generate");
+        run.classList.toggle("runtime-busy",runtimeBusy);
+        run.classList.toggle("train",runtimeBusy&&execution.runtime_kind==="train");
+        run.classList.toggle("generate",runtimeBusy&&execution.runtime_kind==="generate");
         run.disabled=execution.status==="running";
         if(state.active_workspace==="model"){
-          run.textContent=execution.status==="running"?"◆ Building…":"◆ Build";
+          run.textContent=runtimeBusy
+            ?(execution.runtime_kind==="train"?"◆ Training":"◆ Generating")
+            :(execution.status==="running"?"◆ Building":"◆ Build");
         }else{
-          run.textContent=execution.status==="running"?"▶ Running…":"▶ Run Data";
+          run.textContent=execution.status==="running"?"▶ Running":"▶ Run Data";
         }
       }
     }
@@ -806,6 +813,256 @@
       return (state.model_outputs||[]).filter(item=>item.kind==="built_model"||item.kind==="trained_model"||item.kind==="model_artifact");
     }
 
+    function numberOr(value,fallback){
+      const n=Number(value);
+      return Number.isFinite(n)&&n>0?n:fallback;
+    }
+
+    function precisionToDtype(value){
+      const p=String(value||"fp16").toLowerCase();
+      return p==="fp32"?"float32":p==="bf16"?"bfloat16":"float16";
+    }
+
+    function firstModelNode(type){
+      const model=modelRootComponent();
+      return (model?.nodes||[]).find(n=>n.type===type)||null;
+    }
+
+    function referencedCustomDefinitions(){
+      const found=[];
+      const seen=new Set();
+      const visitNodes=(nodes)=>{
+        (nodes||[]).forEach(node=>{
+          if(node.type!=="custom"||!node.definition_id||seen.has(node.definition_id))return;
+          seen.add(node.definition_id);
+          const def=state.custom_components?.[node.definition_id];
+          if(def){
+            found.push(def);
+            visitNodes(def.nodes||[]);
+          }
+        });
+      };
+      visitNodes(modelRootComponent()?.nodes||[]);
+      return found;
+    }
+
+    function allModelSettingNodes(){
+      const model=modelRootComponent();
+      const nodes=[...(model?.nodes||[])];
+      referencedCustomDefinitions().forEach(def=>nodes.push(...(def.nodes||[])));
+      return nodes;
+    }
+
+    function deriveModelSettings(entry){
+      state.project=state.project||{};
+      const stored=state.project.model_settings||{};
+      const nodes=allModelSettingNodes();
+      const embedding=nodes.find(n=>n.type==="embedding");
+      const esa=nodes.find(n=>n.type==="esa");
+      const head=nodes.find(n=>n.type==="lm_head");
+
+      const embeddingSize=numberOr(
+        stored.embedding_size,
+        numberOr(
+          embedding?.params?.embedding_dim ?? embedding?.params?.hidden_size ?? embedding?.params?.dim,
+          numberOr(esa?.params?.embd ?? esa?.params?.dim,384)
+        )
+      );
+      const heads=numberOr(
+        stored.heads,
+        numberOr(esa?.params?.head ?? esa?.params?.heads ?? esa?.params?.num_heads,6)
+      );
+      const block=numberOr(
+        stored.block,
+        numberOr(esa?.params?.block,numberOr(entry?.context_length ?? state.project.context_length,512))
+      );
+      const defaultBatch=numberOr(
+        stored.default_batch,
+        numberOr(esa?.params?.batch,numberOr(entry?.batch_size ?? state.project.batch_size,16))
+      );
+      const vocab=numberOr(
+        stored.vocab_size,
+        numberOr(embedding?.params?.vocab_size,numberOr(head?.params?.vocab_size,32000))
+      );
+      const precision=String(
+        stored.precision ||
+        esa?.params?.precision ||
+        (embedding?.params?.dtype==="float32"?"fp32":embedding?.params?.dtype==="bfloat16"?"bf16":"fp16")
+      ).toLowerCase();
+
+      const settings={
+        embedding_size:embeddingSize,
+        heads,
+        block,
+        default_batch:defaultBatch,
+        vocab_size:vocab,
+        precision:["fp32","fp16","bf16"].includes(precision)?precision:"fp16"
+      };
+      state.project.model_settings={...settings};
+      return settings;
+    }
+
+    function syncModelSettingsToGraph(settings,oldSettings){
+      state.project=state.project||{};
+      state.project.context_length=settings.block;
+      state.project.batch_size=settings.default_batch;
+      state.project.model_settings={...settings};
+
+      const dtype=precisionToDtype(settings.precision);
+      allModelSettingNodes().forEach(node=>{
+        node.params=node.params||{};
+        const p=node.params;
+        const t=node.type;
+
+        if(t==="embedding"){
+          p.embedding_dim=settings.embedding_size;
+          p.hidden_size=settings.embedding_size;
+          p.dim=settings.embedding_size;
+          p.vocab_size=settings.vocab_size;
+          p.dtype=dtype;
+        }else if(t==="esa"){
+          p.embd=settings.embedding_size;
+          p.dim=settings.embedding_size;
+          p.head=settings.heads;
+          p.heads=settings.heads;
+          p.batch=settings.default_batch;
+          p.block=settings.block;
+          p.precision=settings.precision;
+          p.dtype=dtype;
+        }else if(t==="rmsnorm"||t==="layernorm"){
+          p.normalized_shape=settings.embedding_size;
+          p.hidden_size=settings.embedding_size;
+          p.dim=settings.embedding_size;
+        }else if(t==="ffn"||t==="saffn"){
+          const priorDim=numberOr(oldSettings?.embedding_size,384);
+          const priorIntermediate=numberOr(p.intermediate_size ?? p.ffn_dim,priorDim*4);
+          const ratio=Math.max(1,priorIntermediate/priorDim);
+          p.hidden_size=settings.embedding_size;
+          p.dim=settings.embedding_size;
+          p.intermediate_size=Math.round(settings.embedding_size*ratio);
+          p.ffn_dim=Math.round(settings.embedding_size*ratio);
+        }else if(t==="lm_head"){
+          p.hidden_size=settings.embedding_size;
+          p.dim=settings.embedding_size;
+          p.vocab_size=settings.vocab_size;
+        }else if(t==="classifier"){
+          p.hidden_size=settings.embedding_size;
+          p.dim=settings.embedding_size;
+        }else if(["vesa","bolt","visualbolt"].includes(t)){
+          p.dim=settings.embedding_size;
+          if("d_model" in p)p.d_model=settings.embedding_size;
+          if("heads" in p)p.heads=settings.heads;
+          if("num_heads" in p)p.num_heads=settings.heads;
+        }
+      });
+    }
+
+    function updateBuiltModelSetting(entry,key,value){
+      if(!entry)return;
+      const oldSettings=deriveModelSettings(entry);
+      const next={...oldSettings};
+      if(key==="precision"){
+        next[key]=String(value||"fp16");
+      }else{
+        const n=Number(value);
+        if(!Number.isFinite(n)||n<=0){
+          setStatus(key.replaceAll("_"," ")+" must be greater than 0.");
+          draw();
+          return;
+        }
+        next[key]=Math.round(n);
+      }
+
+      if(key==="embedding_size" && next.embedding_size%next.heads!==0){
+        setStatus("Embedding Size must be divisible by Heads.");
+        draw();
+        return;
+      }
+      if(key==="heads" && next.embedding_size%next.heads!==0){
+        setStatus("Heads must divide Embedding Size exactly.");
+        draw();
+        return;
+      }
+
+      checkpoint("Update Model Settings");
+      syncModelSettingsToGraph(next,oldSettings);
+
+      // Architecture-affecting model settings invalidate the previous build.
+      entry.context_length=next.block;
+      entry.batch_size=next.default_batch;
+      entry.status="needs_rebuild";
+      entry.weights_ready=false;
+      entry.training_status="untrained";
+      entry.requirements=inferModelRequirements(modelRootComponent());
+      entry.requirements.context_length=next.block;
+      entry.model_settings={...next};
+      entry.architecture=cp(modelRootComponent());
+      entry.fingerprint=modelFingerprint(modelRootComponent());
+
+      // Keep training defaults aligned with the model-wide default batch.
+      ensureRuntimeConfigs(entry);
+      entry.training_config.batch_size=next.default_batch;
+      if(entry.training_config.precision==="auto" || !entry.training_config.precision){
+        entry.training_config.precision=next.precision;
+      }
+      if(entry.generation_config && (entry.generation_config.precision==="auto" || !entry.generation_config.precision)){
+        entry.generation_config.precision=next.precision;
+      }
+
+      setStatus("Model setting updated. Rebuild required before training.");
+      draw();
+    }
+
+    function modelSettingField(label,key,value,entry,options=null,help=""){
+      const field=document.createElement("div");field.className="mlb-model-setting-field";
+      const top=document.createElement("div");top.className="mlb-model-setting-label";
+      const lab=document.createElement("label");lab.textContent=label;top.appendChild(lab);
+      if(help){const hint=document.createElement("span");hint.textContent=help;top.appendChild(hint);}
+      field.appendChild(top);
+
+      let input;
+      if(options){
+        input=document.createElement("select");
+        options.forEach(opt=>{
+          const value=typeof opt==="object"?opt.value:opt;
+          const text=typeof opt==="object"?opt.label:opt;
+          const o=document.createElement("option");o.value=value;o.textContent=text;
+          input.appendChild(o);
+        });
+        input.value=String(value);
+      }else{
+        input=document.createElement("input");input.type="number";input.min="1";input.step="1";input.value=String(value);
+      }
+      input.addEventListener("change",()=>updateBuiltModelSetting(entry,key,input.value));
+      field.appendChild(input);
+      return field;
+    }
+
+    function renderModelSettings(body,entry){
+      const settings=deriveModelSettings(entry);
+      const title=document.createElement("div");title.className="mlb-section-title";title.textContent="MODEL SETTINGS";
+      body.appendChild(title);
+
+      const box=document.createElement("div");box.className="mlb-model-settings";
+      box.append(
+        modelSettingField("Embedding Size","embedding_size",settings.embedding_size,entry,null,"hidden width"),
+        modelSettingField("Heads","heads",settings.heads,entry,null,"attention / ESA"),
+        modelSettingField("Block / Context","block",settings.block,entry,null,"sequence length"),
+        modelSettingField("Default Batch","default_batch",settings.default_batch,entry,null,"training default"),
+        modelSettingField("Vocabulary","vocab_size",settings.vocab_size,entry,null,"token count"),
+        modelSettingField("Precision","precision",settings.precision,entry,[
+          {value:"fp16",label:"FP16"},
+          {value:"bf16",label:"BF16"},
+          {value:"fp32",label:"FP32"}
+        ],"model default")
+      );
+      body.appendChild(box);
+
+      const note=document.createElement("div");note.className="mlb-model-settings-note";
+      note.textContent="Block / Context, width, heads, vocabulary and precision change the architecture/runtime contract. Changing them marks this build as Rebuild Required. Default Batch can still be overridden per training run.";
+      body.appendChild(note);
+    }
+
     function builtModelById(id){
       return (state.model_outputs||[]).find(item=>item.id===id)||null;
     }
@@ -926,12 +1183,13 @@
         context_length:state.project?.context_length??null,
         batch_size:state.project?.batch_size??null,
         estimated_parameters:state.project?.estimated_parameters??null,
+        model_settings:{...deriveModelSettings(entry)},
         architecture:cp(model),
         requirements,
         fingerprint,
         selected_dataset_id:entry?.selected_dataset_id || latestData?.id || null,
-        training_status:entry?.training_status||"untrained",
-        weights_ready:!!entry?.weights_ready,
+        training_status:"untrained",
+        weights_ready:false,
       };
 
       if(entry){
@@ -1021,6 +1279,11 @@
       }
 
       const req=modelEntry?.requirements||{};
+      add(
+        "Build",
+        modelEntry?.status==="built" || modelEntry?.status==="trained",
+        modelEntry?.status==="needs_rebuild"?"Model settings changed · Build again":"Current build"
+      );
       const modality=datasetModality(datasetMeta);
       add(
         "Modality",
@@ -1585,11 +1848,11 @@
         ["Connections",entry.connections??"—"],
         ["Input",req.modality||"unknown"],
         ["Output",req.output_type||"unknown"],
-        ["Context",entry.context_length??"—"],
-        ["Batch",entry.batch_size??"—"],
         ["Parameters",entry.estimated_parameters??"—"],
         ["Built",entry.built_at||"—"],
       ]);
+
+      renderModelSettings(body,entry);
 
       const dataTitle=document.createElement("div");dataTitle.className="mlb-section-title";dataTitle.textContent="TRAINING DATA";
       body.appendChild(dataTitle);
@@ -1625,13 +1888,15 @@
       body.appendChild(actionTitle);
       const actions=document.createElement("div");actions.className="mlb-model-actions";
 
-      if(compat.ok){
+      if(compat.ok && entry.status!=="needs_rebuild"){
         const train=btn("Train","mlb-train-btn");
         train.addEventListener("click",()=>requestBuiltModelTraining(entry,compat));
         actions.appendChild(train);
       }else{
         const blocked=document.createElement("div");blocked.className="mlb-train-blocked";
-        blocked.textContent="Train appears when the selected data is compatible.";
+        blocked.textContent=entry.status==="needs_rebuild"
+          ?"Model settings changed. Click Build before training."
+          :"Train appears when the selected data is compatible.";
         actions.appendChild(blocked);
       }
 
@@ -1806,7 +2071,7 @@
       if(!model)return;
       const config={
         format:"mlbricks-model-config",
-        builder_version:"0.6.4",
+        builder_version:"0.6.5",
         project:cp(state.project||{}),
         model:cp(model),
         selected_dataset:selectedModelDataset(),
@@ -2639,7 +2904,22 @@
       const rootId=state.workspaces.model.root_component_id;
       state.root_component_id=rootId;
       state.view_component_id=rootId;
-      state.project={...(state.project||{}),name:"TinyStories 30M",context_length:512,batch_size:16,dataset:"TinyStories",estimated_parameters:"~30M"};
+      state.project={
+        ...(state.project||{}),
+        name:"TinyStories 30M",
+        context_length:512,
+        batch_size:16,
+        model_settings:{
+          embedding_size:384,
+          heads:6,
+          block:512,
+          default_batch:16,
+          vocab_size:32000,
+          precision:"fp16"
+        },
+        dataset:"TinyStories",
+        estimated_parameters:"~30M"
+      };
       state.breadcrumbs=[{id:rootId,name:"TinyStories 30M"}];
       state.workspaces.model.view_component_id=rootId;
       state.workspaces.model.breadcrumbs=cp(state.breadcrumbs);
@@ -2667,6 +2947,7 @@
       const head=makeNode(cat(catalog,"lm_head")),out=makeNode(cat(catalog,"text_output"));nodes.push(head,out);
       const edges=[];for(let i=0;i<nodes.length-1;i++)edges.push(edge(nodes[i].id,nodes[i+1].id));
       state.components[rootId]={id:rootId,name:"TinyStories 30M",kind:"model",revision:1,nodes,edges};
+      syncModelSettingsToGraph(state.project.model_settings,state.project.model_settings);
       selected=null;pendingPort=null;setStatus("TinyStories starter loaded.");draw();
     }
 
@@ -2679,8 +2960,8 @@
       rememberWorkspaceView();
       return {
         format:"mlbricks-builder-design",
-        format_version:"0.6.4",
-        builder_version:"0.6.4",
+        format_version:"0.6.5",
+        builder_version:"0.6.5",
         saved_at:new Date().toISOString(),
         state:cp(state)
       };
@@ -2758,14 +3039,22 @@
 
       // Top bar
       const top=document.createElement("div");top.className="mlb-topbar";
-      const logo=document.createElement("div");logo.className="mlb-logo";logo.innerHTML='<span class="mlb-logo-mark">◇</span>MLBricks Builder <span class="mlb-beta">v0.6.4</span>';top.appendChild(logo);
+      const logo=document.createElement("div");logo.className="mlb-logo";logo.innerHTML='<span class="mlb-logo-mark">◇</span>MLBricks Builder <span class="mlb-beta">v0.6.5</span>';top.appendChild(logo);
       const title=document.createElement("div");title.className="mlb-project-title";title.textContent=state.project?.name||"Untitled";top.appendChild(title);
       const saved=document.createElement("div");saved.className="mlb-save-state";saved.textContent="• Saved";top.appendChild(saved);
       const sp=document.createElement("div");sp.className="mlb-topspacer";top.appendChild(sp);
       const acts=document.createElement("div");acts.className="mlb-top-actions";
+      const modelRuntimeBusy=state.active_workspace==="model" && execution.status==="running" &&
+        (execution.runtime_kind==="train"||execution.runtime_kind==="generate");
       const run=state.active_workspace==="model"
-        ?btn("◆ Build","mlb-run mlb-build")
+        ?btn(
+            modelRuntimeBusy
+              ?(execution.runtime_kind==="train"?"◆ Training":"◆ Generating")
+              :"◆ Build",
+            "mlb-run mlb-build"+(modelRuntimeBusy?" runtime-busy "+execution.runtime_kind:"")
+          )
         :btn("▶ Run Data","mlb-run");
+      run.disabled=modelRuntimeBusy;
       run.addEventListener("click",state.active_workspace==="model"?requestModelBuild:requestRun);
       const undoBtn=btn("↶ Undo","mlb-dark-btn mlb-history-btn");undoBtn.disabled=undoStack.length===0;undoBtn.title="Undo last model edit";undoBtn.addEventListener("click",undo);
       const redoBtn=btn("↷ Redo","mlb-dark-btn mlb-history-btn");redoBtn.disabled=redoStack.length===0;redoBtn.title="Redo last undone edit";redoBtn.addEventListener("click",redo);
@@ -3012,7 +3301,8 @@
         canvas.scrollTop=pos.top||0;
       });
 
-      // Bottom project drawer: Details, Output Directory, or Files.
+      // Bottom project drawer: hidden while Training/Generation occupies the model canvas.
+      if(!(runtimePanel && state.active_workspace==="model")){
       const details=document.createElement("div");details.className="mlb-details";
 
       const detailsBar=document.createElement("div");detailsBar.className="mlb-details-bar";
@@ -3085,6 +3375,7 @@
       }
 
       main.appendChild(details);
+      }
 
       // Inspector
       const ins=document.createElement("aside");ins.className="mlb-inspector";

@@ -556,13 +556,21 @@ def new_project(name: str = "Untitled Model"):
     now = datetime.now(timezone.utc).isoformat()
     return {
         "format": "mlbricks-builder",
-        "format_version": "0.6.4",
+        "format_version": "0.6.5",
         "project": {
             "name": name,
             "created_at": now,
             "updated_at": now,
             "context_length": 512,
             "batch_size": 16,
+            "model_settings": {
+                "embedding_size": 384,
+                "heads": 6,
+                "block": 512,
+                "default_batch": 16,
+                "vocab_size": 32000,
+                "precision": "fp16",
+            },
             "dataset": None,
             "estimated_parameters": None,
         },

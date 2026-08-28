@@ -641,8 +641,47 @@
 .mlb-dataset-detail-row span{min-width:0;color:#7f8e9f;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.mlb-dataset-detail-row strong{min-width:0;color:#dce4ec;text-align:right;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 .mlb-build{
-  min-width:62px;
+  width:82px!important;
+  min-width:82px!important;
+  max-width:82px!important;
+  box-sizing:border-box!important;
+  position:relative;
+  overflow:hidden;
   font-weight:900!important;
+  white-space:nowrap;
+}
+.mlb-build.runtime-busy{
+  cursor:wait!important;
+  opacity:1!important;
+  isolation:isolate;
+  animation:mlbBuildPulse 1.35s ease-in-out infinite;
+}
+.mlb-build.runtime-busy::after{
+  content:"";
+  position:absolute;
+  z-index:-1;
+  top:0;
+  bottom:0;
+  width:42%;
+  left:-55%;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.18),transparent);
+  animation:mlbBuildSweep 1.25s linear infinite;
+}
+.mlb-build.runtime-busy.train{
+  border-color:#36a56f!important;
+  box-shadow:0 0 0 1px rgba(54,165,111,.18),0 0 12px rgba(54,165,111,.10);
+}
+.mlb-build.runtime-busy.generate{
+  border-color:#8063ee!important;
+  box-shadow:0 0 0 1px rgba(128,99,238,.18),0 0 12px rgba(128,99,238,.12);
+}
+@keyframes mlbBuildPulse{
+  0%,100%{filter:brightness(.94)}
+  50%{filter:brightness(1.18)}
+}
+@keyframes mlbBuildSweep{
+  from{left:-55%}
+  to{left:120%}
 }
 .mlb-output-stats.compact.model-three{
   grid-template-columns:repeat(3,minmax(0,1fr));
@@ -786,3 +825,67 @@
 .mlb-log-row{display:grid;grid-template-columns:minmax(90px,25%) minmax(0,75%);gap:8px;padding:6px 7px;border-top:1px solid #202c36;font-size:6.7px;min-width:0}.mlb-log-row:first-child{border-top:0}.mlb-log-row span,.mlb-log-row strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.mlb-log-row span{color:#778697}.mlb-log-row strong{color:#bfcad5;font-weight:600}.mlb-log-row.error strong{color:#ef8993}.mlb-log-row.done strong{color:#71d8a4}
 .mlb-log-empty{padding:14px;color:#718091;font-size:7px;text-align:center}
 @media (max-width:1100px){.mlb-status-metrics{grid-template-columns:repeat(3,minmax(0,1fr))}.mlb-validation-status-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+/* v0.6.5 model-wide settings */
+.mlb-model-settings{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:6px;
+  margin:5px 0 7px;
+}
+.mlb-model-setting-field{
+  min-width:0;
+  padding:6px;
+  border:1px solid #314150;
+  border-radius:6px;
+  background:#111a22;
+}
+.mlb-model-setting-label{
+  display:flex;
+  justify-content:space-between;
+  gap:5px;
+  min-width:0;
+  margin-bottom:4px;
+}
+.mlb-model-setting-label label{
+  min-width:0;
+  color:#aab6c4;
+  font-size:6.8px;
+  font-weight:800;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.mlb-model-setting-label span{
+  color:#657587;
+  font-size:5.6px;
+  white-space:nowrap;
+}
+.mlb-model-setting-field input,
+.mlb-model-setting-field select{
+  width:100%;
+  min-width:0;
+  height:25px;
+  box-sizing:border-box;
+  border:1px solid #3a4a59;
+  border-radius:5px;
+  background:#0e171f;
+  color:#dce4ed;
+  padding:0 6px;
+  font-size:7px;
+  outline:none;
+}
+.mlb-model-setting-field input:focus,
+.mlb-model-setting-field select:focus{
+  border-color:#8063ee;
+}
+.mlb-model-settings-note{
+  margin:0 0 9px;
+  padding:6px 7px;
+  border:1px dashed #354655;
+  border-radius:6px;
+  background:#0f171f;
+  color:#738395;
+  font-size:6.3px;
+  line-height:1.4;
+}

@@ -586,8 +586,8 @@ class Builder:
         available = [k for k, v in self.mlbricks_api.items() if v.get("available")]
         unavailable = {k: v.get("error") for k, v in self.mlbricks_api.items() if not v.get("available")}
         return {
-            "builder_version": "0.6.4",
-            "frontend_version": "0.6.4",
+            "builder_version": "0.6.5",
+            "frontend_version": "0.6.5",
             "mlbricks": info,
             "api_components_available": available,
             "api_components_unavailable": unavailable,
@@ -608,7 +608,7 @@ class Builder:
         }).replace("</", "<\\/")
         return f"""
 <style>{css}</style>
-<div id="{html.escape(self._instance_id)}" class="mlb-root" data-mlbricks-builder-version="0.6.4"></div>
+<div id="{html.escape(self._instance_id)}" class="mlb-root" data-mlbricks-builder-version="0.6.5"></div>
 <script>
 try {{ delete window.MLBricksBuilder; }} catch (e) {{ window.MLBricksBuilder = undefined; }}
 {js}

@@ -973,3 +973,45 @@ v0.6.4:
 - keeps blank required fields blocked before Start Training
 
 Opening Training Setup after upgrading automatically repairs old null settings.
+
+
+## v0.6.5 — Model Settings + focused runtime mode
+
+### Model Settings
+
+A built model now exposes editable **MODEL SETTINGS** in the right Inspector:
+
+- Embedding Size
+- Heads
+- Block / Context
+- Default Batch
+- Vocabulary
+- Precision
+
+Changes synchronize compatible model-wide fields across the editable graph and
+nested blocks (Embedding, ESA, norms, FFN, LM Head and supported related
+components).
+
+`Block / Context` updates the project context and ESA block size.
+`Default Batch` updates the model default and seeds Training Setup's batch size.
+Training Setup can still override that batch for an individual run.
+
+Architecture-affecting changes mark the built model **Rebuild Required**.
+Compatibility then blocks Train until **Build** is clicked again, preventing a
+stale build from being trained accidentally.
+
+### Focused training/generation workspace
+
+When Train or Generate opens a runtime workspace, the bottom **MODEL WORKSPACE**
+drawer is hidden completely. The center is reserved for Training
+Setup/Status or Generation Setup/Status.
+
+### Stable animated Build button
+
+The top Build button has a fixed 82 px width, so its label no longer expands and
+shrinks the toolbar.
+
+During training it becomes a fixed-width animated `◆ Training` indicator.
+During generation it becomes `◆ Generating`. A subtle pulse and moving highlight
+show activity without changing the button's dimensions. When runtime activity
+finishes, it returns to `◆ Build`.
