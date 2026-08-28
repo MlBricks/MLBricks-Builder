@@ -657,3 +657,68 @@ train = builder.get_prepared_dataset("TinyStories Prepared", split="train")
 Dataset metadata is saved in the project design. Actual data stays in memory
 unless **Save To Disk** is enabled on Prepared Dataset. If a design is loaded
 in a new Python session, re-run the pipeline or load the disk-backed dataset.
+
+
+## v0.5.5 — Output Directory + unified Files view
+
+The bottom project drawer now has three views:
+
+- **Pipeline Details / Model Details**
+- **Output Directory**
+- **Files**
+
+### Output Directory
+
+The content follows the active workspace.
+
+**Data Processing**
+shows all completed prepared datasets with:
+
+- Train / Validation / Test row counts
+- total rows
+- memory/disk status
+- saved path
+- **Use in Model**
+
+**Model Builder**
+shows:
+
+- current editable model design
+- layer/link/context/batch information
+- selected prepared dataset
+- registered trained/exported model artifacts as those runtimes are added
+
+### Files
+
+Files is workspace-independent and collects known project files in one place.
+
+It includes:
+
+- Builder JSON design (`.mlbricks.json`)
+- Builder binary design (`.mlbricks.bin`)
+- generated model config (`.model-config.json`)
+- disk-backed prepared datasets
+- in-memory prepared dataset entries
+- registered model artifacts
+
+Filters:
+
+- **All**
+- **Data**
+- **Models**
+- **Config**
+- **Design**
+
+Known paths such as `/kaggle/working/prepared_dataset` are displayed directly.
+In-memory datasets are clearly marked as `Python memory`.
+
+Files also provides direct actions:
+
+- Save JSON
+- Save BIN
+- Download model config
+- Use a prepared dataset in Model Builder
+
+The schema now reserves `model_outputs` and `project_files` registries so future
+training, checkpoints, weights, tokenizer files, exports and other artifacts can
+appear in the same Files browser without redesigning the UI.

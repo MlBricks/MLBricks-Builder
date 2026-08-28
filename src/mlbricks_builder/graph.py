@@ -556,7 +556,7 @@ def new_project(name: str = "Untitled Model"):
     now = datetime.now(timezone.utc).isoformat()
     return {
         "format": "mlbricks-builder",
-        "format_version": "0.5.4",
+        "format_version": "0.5.5",
         "project": {
             "name": name,
             "created_at": now,
@@ -601,6 +601,8 @@ def new_project(name: str = "Untitled Model"):
         },
         "active_workspace": "model",
         "prepared_datasets": [],
+        "model_outputs": [],
+        "project_files": [],
         "custom_components": {},
         "view_component_id": root_id,
         "breadcrumbs": [{"id": root_id, "name": name}],

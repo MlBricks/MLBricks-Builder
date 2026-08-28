@@ -76,12 +76,17 @@
     const collapsedInspectorGroups=new Set();
     let myBricksCollapsed=false;
     let bottomExpanded=false;
+    let bottomView="details";
+    let outputDirectorySelection=null;
+    let filesFilter="all";
 
     Object.values(state.components||{}).forEach(c=>{if(!c.edges)c.edges=[];});
     if(state.auto_connect===undefined) state.auto_connect=true;
 
     function ensureWorkspaces(){
       if(!Array.isArray(state.prepared_datasets))state.prepared_datasets=[];
+      if(!Array.isArray(state.model_outputs))state.model_outputs=[];
+      if(!Array.isArray(state.project_files))state.project_files=[];
       if(!state.workspaces){
         const modelRoot=state.root_component_id;
         const dataRoot=uid("component");
@@ -695,6 +700,327 @@
         :"Available in Python memory";
       card.appendChild(foot);
       return card;
+    }
+
+    function modelRootComponent(){
+      const id=state.workspaces?.model?.root_component_id || state.root_component_id;
+      return state.components?.[id] || null;
+    }
+
+    function selectedModelDataset(){
+      const model=modelRootComponent();
+      if(!model)return null;
+      const textInput=(model.nodes||[]).find(n=>
+        n.type==="text_input" &&
+        String(n.params?.input_mode||"prompt")==="prepared_dataset"
+      );
+      return textInput ? preparedDatasetById(textInput.params?.dataset_id) : null;
+    }
+
+    function currentModelDirectoryEntry(){
+      const model=modelRootComponent();
+      if(!model)return null;
+      const dataset=selectedModelDataset();
+      return {
+        id:"current_model_design",
+        name:state.project?.name || model.name || "Current Model",
+        kind:"design",
+        status:"design",
+        nodes:(model.nodes||[]).length,
+        connections:(model.edges||[]).length,
+        dataset:dataset?.name || state.project?.dataset || null,
+        context_length:state.project?.context_length ?? null,
+        batch_size:state.project?.batch_size ?? null,
+      };
+    }
+
+    function modelDirectoryEntries(){
+      const entries=[];
+      const current=currentModelDirectoryEntry();
+      if(current)entries.push(current);
+      (state.model_outputs||[]).forEach(item=>entries.push(item));
+      return entries;
+    }
+
+    function dataStorageLabel(meta){
+      if(meta.storage==="disk+memory")return "Memory + Disk";
+      if(meta.storage==="disk")return "Disk";
+      return "Memory";
+    }
+
+    function makeDirectoryEmpty(message,help){
+      const empty=document.createElement("div");empty.className="mlb-output-empty";
+      empty.innerHTML="<strong>"+message+"</strong><span>"+help+"</span>";
+      return empty;
+    }
+
+    function useDatasetInModel(meta){
+      if(!meta)return;
+      checkpoint("Use "+meta.name+" in Model");
+      autoBindDatasetToModel(meta);
+      setStatus(meta.name+" selected for Model Builder Text Input.");
+      draw();
+    }
+
+    function renderDataOutputDirectory(container){
+      const entries=availablePreparedDatasets();
+      const head=document.createElement("div");head.className="mlb-output-head";
+      head.innerHTML="<div><strong>DATA OUTPUTS</strong><span>"+entries.length+" prepared dataset"+(entries.length===1?"":"s")+"</span></div>";
+      container.appendChild(head);
+
+      if(!entries.length){
+        container.appendChild(makeDirectoryEmpty(
+          "No prepared datasets yet.",
+          "Run a Data Processing pipeline. Completed datasets will appear here automatically."
+        ));
+        return;
+      }
+
+      const list=document.createElement("div");list.className="mlb-output-list";
+      entries.forEach(meta=>{
+        const card=document.createElement("div");
+        card.className="mlb-output-entry"+(outputDirectorySelection===meta.id?" selected":"");
+
+        const top=document.createElement("div");top.className="mlb-output-entry-top";
+        top.innerHTML="<div class='mlb-output-name'><strong>"+meta.name+"</strong><span>Prepared Dataset</span></div>"+
+          "<span class='mlb-output-type data'>DATA</span>";
+        card.appendChild(top);
+
+        const stats=document.createElement("div");stats.className="mlb-output-stats";
+        [["train","Train"],["validation","Validation"],["test","Test"]].forEach(([key,label])=>{
+          if(meta.splits?.[key]){
+            const item=document.createElement("div");
+            item.innerHTML="<span>"+label+"</span><strong>"+splitRows(meta,key)+"</strong>";
+            stats.appendChild(item);
+          }
+        });
+        card.appendChild(stats);
+
+        const metaLine=document.createElement("div");metaLine.className="mlb-output-meta";
+        metaLine.innerHTML="<span>"+dataStorageLabel(meta)+"</span><span>"+(meta.total_rows??"?")+" total rows</span>";
+        card.appendChild(metaLine);
+
+        if(meta.path){
+          const path=document.createElement("div");path.className="mlb-output-path";
+          path.textContent=meta.path;path.title=meta.path;card.appendChild(path);
+        }
+
+        const actions=document.createElement("div");actions.className="mlb-output-actions";
+        const use=btn("Use in Model","mlb-output-btn");
+        use.addEventListener("click",ev=>{ev.stopPropagation();useDatasetInModel(meta);});
+        actions.appendChild(use);card.appendChild(actions);
+
+        card.addEventListener("click",()=>{outputDirectorySelection=meta.id;draw();});
+        list.appendChild(card);
+      });
+      container.appendChild(list);
+    }
+
+    function renderModelOutputDirectory(container){
+      const entries=modelDirectoryEntries();
+      const artifacts=(state.model_outputs||[]);
+      const head=document.createElement("div");head.className="mlb-output-head";
+      head.innerHTML="<div><strong>MODEL OUTPUTS</strong><span>Current design + "+artifacts.length+" model artifact"+(artifacts.length===1?"":"s")+"</span></div>";
+      container.appendChild(head);
+
+      if(!entries.length){
+        container.appendChild(makeDirectoryEmpty(
+          "No model design is available.",
+          "Build a model in Model Builder. Trained/exported model artifacts will appear here later."
+        ));
+        return;
+      }
+
+      const list=document.createElement("div");list.className="mlb-output-list";
+      entries.forEach(entry=>{
+        const card=document.createElement("div");
+        card.className="mlb-output-entry"+(outputDirectorySelection===entry.id?" selected":"");
+
+        const top=document.createElement("div");top.className="mlb-output-entry-top";
+        const kind=entry.kind==="design"?"Model Design":(entry.kind||"Model Artifact");
+        top.innerHTML="<div class='mlb-output-name'><strong>"+entry.name+"</strong><span>"+kind+"</span></div>"+
+          "<span class='mlb-output-type model'>MODEL</span>";
+        card.appendChild(top);
+
+        const stats=document.createElement("div");stats.className="mlb-output-stats model";
+        [["Layers",entry.nodes??entry.layers??"—"],["Links",entry.connections??"—"],
+         ["Context",entry.context_length??"—"],["Batch",entry.batch_size??"—"]].forEach(([label,value])=>{
+          const item=document.createElement("div");
+          item.innerHTML="<span>"+label+"</span><strong>"+value+"</strong>";
+          stats.appendChild(item);
+        });
+        card.appendChild(stats);
+
+        const metaLine=document.createElement("div");metaLine.className="mlb-output-meta";
+        metaLine.innerHTML="<span>"+(entry.kind==="design"?"Editable Builder design":(entry.format||"Model artifact"))+"</span>"+
+          "<span>"+(entry.dataset?("Data: "+entry.dataset):"No prepared dataset selected")+"</span>";
+        card.appendChild(metaLine);
+
+        if(entry.path){
+          const path=document.createElement("div");path.className="mlb-output-path";
+          path.textContent=entry.path;path.title=entry.path;card.appendChild(path);
+        }
+
+        card.addEventListener("click",()=>{outputDirectorySelection=entry.id;draw();});
+        list.appendChild(card);
+      });
+      container.appendChild(list);
+
+      if(!artifacts.length){
+        const note=document.createElement("div");note.className="mlb-output-note";
+        note.textContent="No trained/exported model artifact yet. They will be listed here when model training/export is connected.";
+        container.appendChild(note);
+      }
+    }
+
+    function renderOutputDirectory(container){
+      container.className="mlb-output-directory";
+      if(state.active_workspace==="data")renderDataOutputDirectory(container);
+      else renderModelOutputDirectory(container);
+    }
+
+    function safeProjectStem(){
+      return safeFilename(state.project?.name||"mlbricks-project");
+    }
+
+    function projectFileEntries(){
+      const stem=safeProjectStem();
+      const files=[
+        {
+          id:"design_json",
+          name:stem+".mlbricks.json",
+          category:"design",
+          type:"Builder Design",
+          location:"Browser download",
+          description:"Complete MLBricks project: model graph, data graph, registries and settings."
+        },
+        {
+          id:"design_bin",
+          name:stem+".mlbricks.bin",
+          category:"design",
+          type:"Binary Design",
+          location:"Browser download",
+          description:"Binary Builder project file for Save BIN / Load."
+        },
+        {
+          id:"model_config",
+          name:stem+".model-config.json",
+          category:"config",
+          type:"Model Config",
+          location:"Generated from Model Builder",
+          description:"Current model architecture/configuration represented by the Model Builder graph."
+        }
+      ];
+
+      availablePreparedDatasets().forEach(meta=>{
+        files.push({
+          id:"data_"+meta.id,
+          name:meta.name,
+          category:"data",
+          type:"Prepared Dataset",
+          location:meta.path || "Python memory",
+          path:meta.path || null,
+          description:compactDatasetSummary(meta)+" · "+dataStorageLabel(meta),
+          dataset_id:meta.id
+        });
+      });
+
+      (state.model_outputs||[]).forEach((item,index)=>{
+        files.push({
+          id:"model_"+(item.id||index),
+          name:item.name||("Model Artifact "+(index+1)),
+          category:"model",
+          type:item.format||item.kind||"Model Artifact",
+          location:item.path||"Registered artifact",
+          path:item.path||null,
+          description:item.dataset?("Dataset: "+item.dataset):"Trained/exported model artifact"
+        });
+      });
+
+      (state.project_files||[]).forEach(item=>{
+        if(!files.some(x=>x.id===item.id))files.push(cp(item));
+      });
+      return files;
+    }
+
+    function fileCategoryLabel(category){
+      return category==="data"?"DATA":category==="model"?"MODEL":category==="config"?"CONFIG":"DESIGN";
+    }
+
+    function downloadModelConfig(){
+      const model=modelRootComponent();
+      if(!model)return;
+      const config={
+        format:"mlbricks-model-config",
+        builder_version:"0.5.5",
+        project:cp(state.project||{}),
+        model:cp(model),
+        selected_dataset:selectedModelDataset(),
+      };
+      const blob=new Blob([JSON.stringify(config,null,2)],{type:"application/json"});
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement("a");
+      a.href=url;a.download=safeProjectStem()+".model-config.json";
+      document.body.appendChild(a);a.click();a.remove();
+      setTimeout(()=>URL.revokeObjectURL(url),1000);
+      setStatus("Model config downloaded.");
+    }
+
+    function renderFilesView(container){
+      container.className="mlb-files-view";
+
+      const head=document.createElement("div");head.className="mlb-files-head";
+      const title=document.createElement("div");
+      title.innerHTML="<strong>PROJECT FILES</strong><span>Data, model, config and design files in one place</span>";
+      const filters=document.createElement("div");filters.className="mlb-files-filters";
+      [["all","All"],["data","Data"],["model","Models"],["config","Config"],["design","Design"]].forEach(([value,label])=>{
+        const button=btn(label,"mlb-file-filter"+(filesFilter===value?" active":""));
+        button.addEventListener("click",()=>{filesFilter=value;draw();});
+        filters.appendChild(button);
+      });
+      head.append(title,filters);container.appendChild(head);
+
+      const entries=projectFileEntries().filter(item=>filesFilter==="all"||item.category===filesFilter);
+      if(!entries.length){
+        container.appendChild(makeDirectoryEmpty(
+          "No files in this category yet.",
+          "Run data processing or create/export a model artifact and it will appear here."
+        ));
+        return;
+      }
+
+      const table=document.createElement("div");table.className="mlb-files-table";
+      const header=document.createElement("div");header.className="mlb-files-row header";
+      header.innerHTML="<span>Name</span><span>Type</span><span>Location</span><span>Actions</span>";
+      table.appendChild(header);
+
+      entries.forEach(item=>{
+        const row=document.createElement("div");row.className="mlb-files-row";
+        const name=document.createElement("div");name.className="mlb-file-name";
+        name.innerHTML="<strong>"+item.name+"</strong><span>"+(item.description||"")+"</span>";
+        const type=document.createElement("div");
+        type.innerHTML="<span class='mlb-file-type "+item.category+"'>"+fileCategoryLabel(item.category)+"</span><small>"+(item.type||"File")+"</small>";
+        const location=document.createElement("div");location.className="mlb-file-location";
+        location.textContent=item.location||item.path||"—";
+        location.title=item.location||item.path||"";
+
+        const actions=document.createElement("div");actions.className="mlb-file-actions";
+        if(item.id==="design_json"){
+          const a=btn("Save JSON","mlb-file-action");a.addEventListener("click",saveDesign);actions.appendChild(a);
+        }else if(item.id==="design_bin"){
+          const a=btn("Save BIN","mlb-file-action");a.addEventListener("click",saveDesignBin);actions.appendChild(a);
+        }else if(item.id==="model_config"){
+          const a=btn("Download","mlb-file-action");a.addEventListener("click",downloadModelConfig);actions.appendChild(a);
+        }else if(item.category==="data" && item.dataset_id){
+          const meta=preparedDatasetById(item.dataset_id);
+          const a=btn("Use in Model","mlb-file-action");
+          a.addEventListener("click",()=>useDatasetInModel(meta));actions.appendChild(a);
+        }
+
+        row.append(name,type,location,actions);
+        table.appendChild(row);
+      });
+      container.appendChild(table);
     }
 
     function normalizedBrickName(name){
@@ -1461,7 +1787,7 @@
       rememberWorkspaceView();
       return {
         format:"mlbricks-builder-design",
-        format_version:"0.5.4",
+        format_version:"0.5.5",
         builder_version:"0.5.1",
         saved_at:new Date().toISOString(),
         state:cp(state)
@@ -1540,7 +1866,7 @@
 
       // Top bar
       const top=document.createElement("div");top.className="mlb-topbar";
-      const logo=document.createElement("div");logo.className="mlb-logo";logo.innerHTML='<span class="mlb-logo-mark">◇</span>MLBricks Builder <span class="mlb-beta">v0.5.4</span>';top.appendChild(logo);
+      const logo=document.createElement("div");logo.className="mlb-logo";logo.innerHTML='<span class="mlb-logo-mark">◇</span>MLBricks Builder <span class="mlb-beta">v0.5.5</span>';top.appendChild(logo);
       const title=document.createElement("div");title.className="mlb-project-title";title.textContent=state.project?.name||"Untitled";top.appendChild(title);
       const saved=document.createElement("div");saved.className="mlb-save-state";saved.textContent="• Saved";top.appendChild(saved);
       const sp=document.createElement("div");sp.className="mlb-topspacer";top.appendChild(sp);
@@ -1772,41 +2098,78 @@
         canvas.scrollTop=pos.top||0;
       });
 
-      // Bottom details are collapsed by default so Kaggle gives the graph maximum space.
+      // Bottom project drawer: Details, Output Directory, or Files.
       const details=document.createElement("div");details.className="mlb-details";
-      const detailsBar=document.createElement("button");detailsBar.type="button";detailsBar.className="mlb-details-bar";
-      detailsBar.innerHTML="<span>"+(state.active_workspace==="data"?"Data Pipeline Details":"Model Details")+"</span><span>"+(bottomExpanded?"▾ Hide":"▴ Show")+"</span>";
-      detailsBar.addEventListener("click",()=>{bottomExpanded=!bottomExpanded;draw();});
+
+      const detailsBar=document.createElement("div");detailsBar.className="mlb-details-bar";
+      const detailsLeft=document.createElement("div");detailsLeft.className="mlb-details-left";
+      const detailsTitle=document.createElement("span");detailsTitle.className="mlb-details-title";
+      detailsTitle.textContent=state.active_workspace==="data"?"DATA WORKSPACE":"MODEL WORKSPACE";
+
+      const detailsSelect=document.createElement("select");detailsSelect.className="mlb-details-select";
+      const options=state.active_workspace==="data"
+        ?[["details","Pipeline Details"],["outputs","Output Directory"],["files","Files"]]
+        :[["details","Model Details"],["outputs","Output Directory"],["files","Files"]];
+      options.forEach(([value,label])=>{
+        const o=document.createElement("option");o.value=value;o.textContent=label;
+        if(bottomView===value)o.selected=true;
+        detailsSelect.appendChild(o);
+      });
+      detailsSelect.addEventListener("change",ev=>{
+        ev.stopPropagation();
+        bottomView=detailsSelect.value;
+        bottomExpanded=true;
+        outputDirectorySelection=null;
+        draw();
+      });
+      detailsLeft.append(detailsTitle,detailsSelect);
+
+      const detailsToggle=btn(bottomExpanded?"▾ Hide":"▴ Show","mlb-details-toggle");
+      detailsToggle.addEventListener("click",()=>{bottomExpanded=!bottomExpanded;draw();});
+      detailsBar.append(detailsLeft,detailsToggle);
       details.appendChild(detailsBar);
 
-      const panels=document.createElement("div");panels.className="mlb-bottom-panels"+(bottomExpanded?" expanded":" collapsed");
-      const p1=document.createElement("div");p1.className="mlb-bottom-card";
-      const p2=document.createElement("div");p2.className="mlb-bottom-card";
-      const p3=document.createElement("div");p3.className="mlb-bottom-card";
-      const p4=document.createElement("div");p4.className="mlb-bottom-card";
-
-      if(state.active_workspace==="data"){
-        p1.innerHTML='<div class="mlb-bottom-title">STARTER</div><div class="mlb-preset-card"><strong>★ Default Data Pipeline</strong>Hugging Face → Clean → Train/Val/Test → Tokenize → Output</div>';
-        p1.querySelector(".mlb-preset-card").addEventListener("click",loadTextDataStarter);
-        p2.innerHTML='<div class="mlb-bottom-title">PIPELINE INFO</div><div class="mlb-stat-row"><span>Steps</span><strong>'+current(state).nodes.length+'</strong></div><div class="mlb-stat-row"><span>Connections</span><strong>'+(current(state).edges||[]).length+'</strong></div><div class="mlb-stat-row"><span>Workspace</span><strong>Data</strong></div><div class="mlb-stat-row"><span>Status</span><strong class="mlb-good">✓ Designed</strong></div>';
-        const latestData=latestPreparedDataset();
-        p3.innerHTML=latestData
-          ?('<div class="mlb-bottom-title">LATEST DATA</div>'+
-            '<div class="mlb-stat-row"><span>Name</span><strong>'+latestData.name+'</strong></div>'+
-            '<div class="mlb-stat-row"><span>Train</span><strong>'+splitRows(latestData,"train")+'</strong></div>'+
-            '<div class="mlb-stat-row"><span>Validation</span><strong>'+splitRows(latestData,"validation")+'</strong></div>'+
-            '<div class="mlb-stat-row"><span>Test</span><strong>'+splitRows(latestData,"test")+'</strong></div>')
-          :'<div class="mlb-bottom-title">PROCESSING</div><div class="mlb-stat-row"><span>Text</span><strong>Clean / Tokenize</strong></div><div class="mlb-stat-row"><span>Image</span><strong>Resize / Crop</strong></div><div class="mlb-stat-row"><span>Audio</span><strong>Resample / Normalize</strong></div><div class="mlb-stat-row"><span>Split</span><strong>Train / Val / Test</strong></div>';
-        p4.innerHTML='<div class="mlb-bottom-title">FLOW</div><div class="mlb-stat-row"><span>Main</span><strong>Processing order</strong></div><div class="mlb-stat-row"><span>Skip</span><strong>Optional branch</strong></div><div class="mlb-stat-row"><span>Extra</span><strong>Aux data</strong></div>';
+      if(bottomView==="outputs"){
+        const outputPanel=document.createElement("div");
+        outputPanel.className="mlb-output-directory"+(bottomExpanded?" expanded":" collapsed");
+        if(bottomExpanded)renderOutputDirectory(outputPanel);
+        details.appendChild(outputPanel);
+      }else if(bottomView==="files"){
+        const filesPanel=document.createElement("div");
+        filesPanel.className="mlb-files-view"+(bottomExpanded?" expanded":" collapsed");
+        if(bottomExpanded)renderFilesView(filesPanel);
+        details.appendChild(filesPanel);
       }else{
-        p1.innerHTML='<div class="mlb-bottom-title">PRESETS</div><div class="mlb-preset-card"><strong>★ TinyStories 30M (6L)</strong>Context 512 · Batch 16<br>~30M parameters</div>';
-        p1.querySelector(".mlb-preset-card").addEventListener("click",loadTinyStories);
-        p2.innerHTML='<div class="mlb-bottom-title">GRAPH INFO</div><div class="mlb-stat-row"><span>Layers</span><strong>'+current(state).nodes.length+'</strong></div><div class="mlb-stat-row"><span>Connections</span><strong>'+(current(state).edges||[]).length+'</strong></div><div class="mlb-stat-row"><span>Context</span><strong>'+(state.project?.context_length||"—")+'</strong></div><div class="mlb-stat-row"><span>Batch Size</span><strong>'+(state.project?.batch_size||"—")+'</strong></div><div class="mlb-stat-row"><span>Status</span><strong class="mlb-good">✓ Valid</strong></div>';
-        p3.innerHTML='<div class="mlb-bottom-title">COMPUTE ESTIMATE</div><div class="mlb-stat-row"><span>Target Params</span><strong>'+(state.project?.estimated_parameters||"—")+'</strong></div><div class="mlb-stat-row"><span>Dataset</span><strong>'+(state.project?.dataset||"—")+'</strong></div><div class="mlb-stat-row"><span>Precision</span><strong>float16</strong></div><div class="mlb-stat-row"><span>Backend</span><strong>MLBricks</strong></div>';
-        p4.innerHTML='<div class="mlb-bottom-title">CONNECTION LANES</div><div class="mlb-stat-row"><span>Skip</span><strong>Top Out → Top In</strong></div><div class="mlb-stat-row"><span>Main</span><strong>Middle Out → Middle In</strong></div><div class="mlb-stat-row"><span>Extra</span><strong>Bottom Out → Bottom In</strong></div><div class="mlb-stat-row"><span>Remove</span><strong>Inspector → Remove</strong></div>';
+        const panels=document.createElement("div");panels.className="mlb-bottom-panels"+(bottomExpanded?" expanded":" collapsed");
+        const p1=document.createElement("div");p1.className="mlb-bottom-card";
+        const p2=document.createElement("div");p2.className="mlb-bottom-card";
+        const p3=document.createElement("div");p3.className="mlb-bottom-card";
+        const p4=document.createElement("div");p4.className="mlb-bottom-card";
+
+        if(state.active_workspace==="data"){
+          p1.innerHTML='<div class="mlb-bottom-title">STARTER</div><div class="mlb-preset-card"><strong>★ Default Data Pipeline</strong>Hugging Face → Clean → Train/Val/Test → Tokenize → Output</div>';
+          p1.querySelector(".mlb-preset-card").addEventListener("click",loadTextDataStarter);
+          p2.innerHTML='<div class="mlb-bottom-title">PIPELINE INFO</div><div class="mlb-stat-row"><span>Steps</span><strong>'+current(state).nodes.length+'</strong></div><div class="mlb-stat-row"><span>Connections</span><strong>'+(current(state).edges||[]).length+'</strong></div><div class="mlb-stat-row"><span>Workspace</span><strong>Data</strong></div><div class="mlb-stat-row"><span>Status</span><strong class="mlb-good">✓ Designed</strong></div>';
+          const latestData=latestPreparedDataset();
+          p3.innerHTML=latestData
+            ?('<div class="mlb-bottom-title">LATEST DATA</div>'+
+              '<div class="mlb-stat-row"><span>Name</span><strong>'+latestData.name+'</strong></div>'+
+              '<div class="mlb-stat-row"><span>Train</span><strong>'+splitRows(latestData,"train")+'</strong></div>'+
+              '<div class="mlb-stat-row"><span>Validation</span><strong>'+splitRows(latestData,"validation")+'</strong></div>'+
+              '<div class="mlb-stat-row"><span>Test</span><strong>'+splitRows(latestData,"test")+'</strong></div>')
+            :'<div class="mlb-bottom-title">PROCESSING</div><div class="mlb-stat-row"><span>Text</span><strong>Clean / Tokenize</strong></div><div class="mlb-stat-row"><span>Image</span><strong>Resize / Crop</strong></div><div class="mlb-stat-row"><span>Audio</span><strong>Resample / Normalize</strong></div><div class="mlb-stat-row"><span>Split</span><strong>Train / Val / Test</strong></div>';
+          p4.innerHTML='<div class="mlb-bottom-title">FLOW</div><div class="mlb-stat-row"><span>Main</span><strong>Processing order</strong></div><div class="mlb-stat-row"><span>Skip</span><strong>Optional branch</strong></div><div class="mlb-stat-row"><span>Extra</span><strong>Aux data</strong></div>';
+        }else{
+          p1.innerHTML='<div class="mlb-bottom-title">PRESETS</div><div class="mlb-preset-card"><strong>★ TinyStories 30M (6L)</strong>Context 512 · Batch 16<br>~30M parameters</div>';
+          p1.querySelector(".mlb-preset-card").addEventListener("click",loadTinyStories);
+          p2.innerHTML='<div class="mlb-bottom-title">GRAPH INFO</div><div class="mlb-stat-row"><span>Layers</span><strong>'+current(state).nodes.length+'</strong></div><div class="mlb-stat-row"><span>Connections</span><strong>'+(current(state).edges||[]).length+'</strong></div><div class="mlb-stat-row"><span>Context</span><strong>'+(state.project?.context_length||"—")+'</strong></div><div class="mlb-stat-row"><span>Batch Size</span><strong>'+(state.project?.batch_size||"—")+'</strong></div><div class="mlb-stat-row"><span>Status</span><strong class="mlb-good">✓ Valid</strong></div>';
+          p3.innerHTML='<div class="mlb-bottom-title">COMPUTE ESTIMATE</div><div class="mlb-stat-row"><span>Target Params</span><strong>'+(state.project?.estimated_parameters||"—")+'</strong></div><div class="mlb-stat-row"><span>Dataset</span><strong>'+(state.project?.dataset||"—")+'</strong></div><div class="mlb-stat-row"><span>Precision</span><strong>float16</strong></div><div class="mlb-stat-row"><span>Backend</span><strong>MLBricks</strong></div>';
+          p4.innerHTML='<div class="mlb-bottom-title">CONNECTION LANES</div><div class="mlb-stat-row"><span>Skip</span><strong>Top Out → Top In</strong></div><div class="mlb-stat-row"><span>Main</span><strong>Middle Out → Middle In</strong></div><div class="mlb-stat-row"><span>Extra</span><strong>Bottom Out → Bottom In</strong></div><div class="mlb-stat-row"><span>Remove</span><strong>Inspector → Remove</strong></div>';
+        }
+        panels.append(p1,p2,p3,p4);
+        details.appendChild(panels);
       }
-      panels.append(p1,p2,p3,p4);
-      details.appendChild(panels);
+
       main.appendChild(details);
 
       // Inspector
