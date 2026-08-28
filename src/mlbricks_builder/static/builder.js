@@ -78,8 +78,9 @@
       if(!state.workspaces){
         const modelRoot=state.root_component_id;
         const dataRoot=uid("component");
+        const starter=defaultDataNodes();
         state.components[dataRoot]={
-          id:dataRoot,name:"Data Processing",kind:"data",revision:1,nodes:[],edges:[]
+          id:dataRoot,name:"Data Processing",kind:"data",revision:1,nodes:starter.nodes,edges:starter.edges
         };
         state.workspaces={
           model:{
@@ -148,6 +149,18 @@
     function itemWorkspace(item){
       return dataNodeTypes.has(item.type) ? "data" : "model";
     }
+    function defaultDataNodes(){
+      const nodes=[
+        makeNode(cat(catalog,"hf_dataset")),makeNode(cat(catalog,"text_process")),makeNode(cat(catalog,"train_test_split")),
+        makeNode(cat(catalog,"tokenize_text")),makeNode(cat(catalog,"batch_data")),makeNode(cat(catalog,"prepared_dataset"))
+      ];
+      nodes[0].params.dataset_id="roneneldan/TinyStories";nodes[0].params.split="train";
+      nodes[2].params.train_size=90;nodes[2].params.validation_size=5;nodes[2].params.test_size=5;
+      nodes[4].params.batch_size=16;
+      const edges=[];for(let i=0;i<nodes.length-1;i++){const e=edge(nodes[i].id,nodes[i+1].id,"main");e.source_port="main_out";e.target_port="main_in";edges.push(e);}
+      return {nodes,edges};
+    }
+
 
     ensureWorkspaces();
 
@@ -572,47 +585,93 @@
     }
 
 
+    function splitPercentages(node){
+      return {
+        train:Math.max(0,Math.min(100,Number(fieldCurrentValue(node,"train_size")??90))),
+        validation:Math.max(0,Math.min(100,Number(fieldCurrentValue(node,"validation_size")??5))),
+        test:Math.max(0,Math.min(100,Number(fieldCurrentValue(node,"test_size")??5)))
+      };
+    }
+
+    function splitTotal(node){
+      const s=splitPercentages(node);
+      return s.train+s.validation+s.test;
+    }
+
+    function splitIsValid(node){
+      const s=splitPercentages(node);
+      return s.train>0 && Math.abs((s.train+s.validation+s.test)-100)<0.0001;
+    }
+
+    function setSplitPreset(node,train,validation,test,label){
+      checkpoint("Split preset "+label);
+      node.params=node.params||{};
+      node.params.train_size=train;
+      node.params.validation_size=validation;
+      node.params.test_size=test;
+      setStatus("Split set to "+train+"% train / "+validation+"% validation / "+test+"% test.");
+      draw();
+    }
+
     function renderField(body,node,f){
-      const wrap=document.createElement("div");wrap.className="mlb-field";
+      const wrap=document.createElement("div");wrap.className="mlb-field"+(f.type==="percent"?" mlb-percent-field":"");
       const label=document.createElement("label");label.textContent=f.label+(f.required?" *":"");
       let input;
 
-      if(f.type==="select"){
+      const commit=(value)=>{
+        checkpoint("Edit "+node.name+"."+f.key);
+        node.params=node.params||{};
+        node.params[f.key]=f.type==="number"||f.type==="percent"?Number(value):value;
+        if(node.type==="train_test_split"){
+          const total=splitTotal(node);
+          setStatus(splitIsValid(node)
+            ?"Split valid: total 100%."
+            :"Split needs attention: Train + Validation + Test = "+total+"%. It must equal 100%.");
+        }else{
+          setStatus(node.name+" settings updated.");
+        }
+        draw();
+      };
+
+      if(f.type==="percent"){
+        const row=document.createElement("div");row.className="mlb-percent-row";
+        const range=document.createElement("input");range.type="range";range.min=f.min??0;range.max=f.max??100;range.step=f.step??1;
+        const number=document.createElement("input");number.type="number";number.min=f.min??0;number.max=f.max??100;number.step=f.step??1;
+        const value=Number(node.params?.[f.key]??f.value??0);
+        range.value=value;number.value=value;
+        const suffix=document.createElement("span");suffix.className="mlb-percent-sign";suffix.textContent="%";
+        range.addEventListener("input",()=>{number.value=range.value;});
+        number.addEventListener("input",()=>{range.value=Math.max(Number(range.min),Math.min(Number(range.max),Number(number.value||0)));});
+        range.addEventListener("change",()=>commit(range.value));
+        number.addEventListener("change",()=>commit(Math.max(Number(number.min),Math.min(Number(number.max),Number(number.value||0)))));
+        row.append(range,number,suffix);
+        input=row;
+      }else if(f.type==="select"){
         input=document.createElement("select");
         (f.options||[]).forEach(v=>{
-          const o=document.createElement("option");
-          o.value=v;o.textContent=v;
+          const o=document.createElement("option");o.value=v;o.textContent=v;
           if(String(node.params?.[f.key]??f.value)===String(v))o.selected=true;
           input.appendChild(o);
         });
+        input.addEventListener("change",()=>commit(input.value));
       }else if(f.type==="textarea"){
-        input=document.createElement("textarea");
-        input.rows=4;
-        input.value=node.params?.[f.key]??f.value??"";
+        input=document.createElement("textarea");input.rows=4;input.value=node.params?.[f.key]??f.value??"";
+        input.addEventListener("change",()=>commit(input.value));
       }else if(f.type==="bool"){
         input=document.createElement("select");
-        ["true","false"].forEach(v=>{
-          const o=document.createElement("option");
-          o.value=v;o.textContent=v;
-          if(String(node.params?.[f.key]??f.value)===v)o.selected=true;
-          input.appendChild(o);
-        });
+        ["true","false"].forEach(v=>{const o=document.createElement("option");o.value=v;o.textContent=v;if(String(node.params?.[f.key]??f.value)===v)o.selected=true;input.appendChild(o);});
+        input.addEventListener("change",()=>commit(input.value));
       }else{
-        input=document.createElement("input");
-        input.type=f.type==="number"?"number":"text";
-        input.step="any";
+        input=document.createElement("input");input.type=f.type==="number"?"number":"text";input.step=f.step??"any";
+        if(f.min!==undefined)input.min=f.min;if(f.max!==undefined)input.max=f.max;
         input.value=node.params?.[f.key]??f.value??"";
+        input.addEventListener("change",()=>commit(input.value));
       }
 
-      input.addEventListener("change",()=>{
-        checkpoint("Edit "+node.name+"."+f.key);
-        node.params=node.params||{};
-        node.params[f.key]=f.type==="number"?Number(input.value):input.value;
-        setStatus(node.name+" settings updated.");
-        draw();
-      });
-
       wrap.append(label,input);
+      if(f.help){
+        const help=document.createElement("div");help.className="mlb-field-help";help.textContent=f.help;wrap.appendChild(help);
+      }
       body.appendChild(wrap);
     }
 
@@ -695,6 +754,13 @@
       return html;
     }
     function nodeMiniFields(node,info){
+      if(node.type==="train_test_split"){
+        const s=splitPercentages(node),total=s.train+s.validation+s.test;
+        return '<div class="mlb-mini-field"><span>Train</span><strong>'+s.train+'%</strong></div>'+ 
+               '<div class="mlb-mini-field"><span>Validation</span><strong>'+s.validation+'%</strong></div>'+ 
+               '<div class="mlb-mini-field"><span>Test</span><strong>'+s.test+'%</strong></div>'+ 
+               '<div class="mlb-mini-field"><span>Total</span><strong>'+(total===100?'✓ 100%':'! '+total+'%')+'</strong></div>';
+      }
       const api=apiInfo(node);const source=(api.parameters||info.api||[]).slice(0,4);
       return source.map(f=>{
         let v=node.params?.[f.key];if(v===undefined||v===null||v==="")v=f.value;
@@ -774,6 +840,7 @@
         makeNode(cat(catalog,"text_process")),
         makeNode(cat(catalog,"train_test_split")),
         makeNode(cat(catalog,"tokenize_text")),
+        makeNode(cat(catalog,"batch_data")),
         makeNode(cat(catalog,"prepared_dataset"))
       ];
       nodes[0].params.dataset_id="roneneldan/TinyStories";
@@ -781,6 +848,8 @@
       nodes[2].params.train_size=90;
       nodes[2].params.validation_size=5;
       nodes[2].params.test_size=5;
+      nodes[4].params.batch_size=16;
+      nodes[4].params.shuffle="true";
       const edges=[];
       for(let i=0;i<nodes.length-1;i++){
         const e=edge(nodes[i].id,nodes[i+1].id,"main");
@@ -790,7 +859,7 @@
         id:ws.root_component_id,name:"Data Processing",kind:"data",revision:1,nodes,edges
       };
       selected=null;pendingPort=null;
-      setStatus("Text data starter loaded.");
+      setStatus("Beginner data pipeline loaded: source → clean → split → tokenize → batch → output.");
       switchingWorkspace=true;
       draw();
     }
@@ -838,31 +907,43 @@
       return base||"mlbricks-design";
     }
 
-    function saveDesign(){
-      const payload={
+    function designPayload(){
+      rememberWorkspaceView();
+      return {
         format:"mlbricks-builder-design",
-        format_version:"0.5",
-        builder_version:"0.5.0",
+        format_version:"0.5.1",
+        builder_version:"0.5.1",
         saved_at:new Date().toISOString(),
         state:cp(state)
       };
-      const blob=new Blob([JSON.stringify(payload,null,2)],{type:"application/json"});
+    }
+
+    function downloadDesignBlob(blob,filename){
       const url=URL.createObjectURL(blob);
-      const a=document.createElement("a");
-      a.href=url;
-      a.download=safeFilename(state.project?.name)+".mlbricks.json";
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
+      const a=document.createElement("a");a.href=url;a.download=filename;document.body.appendChild(a);a.click();a.remove();
       setTimeout(()=>URL.revokeObjectURL(url),1000);
-      setStatus("Design saved.");
-      draw();
+    }
+
+    function saveDesignBin(){
+      const json=JSON.stringify(designPayload());
+      const magic=new TextEncoder().encode("MLBRICKS-BIN-1\n");
+      const payloadBytes=new TextEncoder().encode(json);
+      const bytes=new Uint8Array(magic.length+payloadBytes.length);
+      bytes.set(magic,0);bytes.set(payloadBytes,magic.length);
+      downloadDesignBlob(new Blob([bytes],{type:"application/octet-stream"}),safeFilename(state.project?.name)+".mlbricks.bin");
+      setStatus("Binary design saved.");draw();
+    }
+
+    function saveDesign(){
+      const blob=new Blob([JSON.stringify(designPayload(),null,2)],{type:"application/json"});
+      downloadDesignBlob(blob,safeFilename(state.project?.name)+".mlbricks.json");
+      setStatus("JSON design saved.");draw();
     }
 
     function loadDesign(){
       const input=document.createElement("input");
       input.type="file";
-      input.accept=".json,.mlbricks,application/json";
+      input.accept=".json,.mlbricks,.bin,.mlbricks.bin,application/json,application/octet-stream";
       input.style.display="none";
       input.addEventListener("change",()=>{
         const file=input.files?.[0];
@@ -870,36 +951,31 @@
         const reader=new FileReader();
         reader.onload=()=>{
           try{
-            const parsed=JSON.parse(String(reader.result||""));
+            const bytes=new Uint8Array(reader.result);
+            const magic="MLBRICKS-BIN-1\n";
+            const magicBytes=new TextEncoder().encode(magic);
+            let isBin=bytes.length>=magicBytes.length;
+            for(let i=0;i<magicBytes.length&&isBin;i++) if(bytes[i]!==magicBytes[i])isBin=false;
+            const text=new TextDecoder().decode(isBin?bytes.slice(magicBytes.length):bytes);
+            const parsed=JSON.parse(text);
             const incoming=parsed.state||parsed;
-            if(!incoming || !incoming.components || !incoming.root_component_id){
-              throw new Error("This file is not an MLBricks Builder design.");
-            }
+            if(!incoming||!incoming.components||!incoming.root_component_id) throw new Error("This file is not an MLBricks Builder design.");
             checkpoint("Load design");
             state=cp(incoming);
             Object.values(state.components||{}).forEach(c=>{if(!c.edges)c.edges=[];});
             ensureWorkspaces();
-            if(!state.view_component_id || !state.components[state.view_component_id]){
-              state.view_component_id=state.root_component_id;
-            }
-            if(!Array.isArray(state.breadcrumbs)||!state.breadcrumbs.length){
-              state.breadcrumbs=[{id:state.root_component_id,name:state.project?.name||"Model"}];
-            }
-            selected=null;pendingPort=null;
-            setStatus("Design loaded: "+file.name);
+            if(!state.view_component_id||!state.components[state.view_component_id])state.view_component_id=state.root_component_id;
+            if(!Array.isArray(state.breadcrumbs)||!state.breadcrumbs.length)state.breadcrumbs=[{id:state.root_component_id,name:state.project?.name||"Model"}];
+            selected=null;pendingPort=null;switchingWorkspace=true;
+            setStatus((isBin?"Binary":"JSON")+" design loaded: "+file.name);
             draw();
           }catch(err){
-            alert("Could not load design: "+err.message);
-            setStatus("Design load failed.");
-            draw();
-          }finally{
-            input.remove();
-          }
+            alert("Could not load design: "+err.message);setStatus("Design load failed.");draw();
+          }finally{input.remove();}
         };
-        reader.readAsText(file);
+        reader.readAsArrayBuffer(file);
       });
-      document.body.appendChild(input);
-      input.click();
+      document.body.appendChild(input);input.click();
     }
 
     function draw(){
@@ -914,7 +990,7 @@
 
       // Top bar
       const top=document.createElement("div");top.className="mlb-topbar";
-      const logo=document.createElement("div");logo.className="mlb-logo";logo.innerHTML='<span class="mlb-logo-mark">◇</span>MLBricks Builder <span class="mlb-beta">v0.5.0</span>';top.appendChild(logo);
+      const logo=document.createElement("div");logo.className="mlb-logo";logo.innerHTML='<span class="mlb-logo-mark">◇</span>MLBricks Builder <span class="mlb-beta">v0.5.1</span>';top.appendChild(logo);
       const title=document.createElement("div");title.className="mlb-project-title";title.textContent=state.project?.name||"Untitled";top.appendChild(title);
       const saved=document.createElement("div");saved.className="mlb-save-state";saved.textContent="• Saved";top.appendChild(saved);
       const sp=document.createElement("div");sp.className="mlb-topspacer";top.appendChild(sp);
@@ -926,9 +1002,10 @@
         const c=current(state);if(!c.nodes.length&&!c.edges.length)return;
         checkpoint("Clear graph");c.nodes=[];c.edges=[];selected=null;pendingPort=null;setStatus("Graph cleared.");draw();
       });
-      const saveBtn=btn("▣ Save","mlb-dark-btn");saveBtn.title="Save full model + data pipeline design";saveBtn.addEventListener("click",saveDesign);
-      const loadBtn=btn("⇧ Load","mlb-dark-btn");loadBtn.title="Load a saved MLBricks Builder design";loadBtn.addEventListener("click",loadDesign);
-      acts.append(run,btn("□ Stop","mlb-stop"),undoBtn,redoBtn,clearBtn,saveBtn,loadBtn,btn("⇩ Export","mlb-dark-btn"),btn("⌯ Share","mlb-dark-btn"),btn("?","mlb-dark-btn"),btn("⚙","mlb-dark-btn"));top.appendChild(acts);
+      const saveBtn=btn("▣ Save","mlb-dark-btn");saveBtn.title="Save full project as readable .mlbricks.json";saveBtn.addEventListener("click",saveDesign);
+      const saveBinBtn=btn("BIN","mlb-dark-btn");saveBinBtn.title="Save full project as .mlbricks.bin";saveBinBtn.addEventListener("click",saveDesignBin);
+      const loadBtn=btn("⇧ Load","mlb-dark-btn");loadBtn.title="Load .mlbricks.json or .mlbricks.bin";loadBtn.addEventListener("click",loadDesign);
+      acts.append(run,btn("□ Stop","mlb-stop"),undoBtn,redoBtn,clearBtn,saveBtn,saveBinBtn,loadBtn,btn("⇩ Export","mlb-dark-btn"),btn("⌯ Share","mlb-dark-btn"),btn("?","mlb-dark-btn"),btn("⚙","mlb-dark-btn"));top.appendChild(acts);
       root.appendChild(top);
 
       const shell=document.createElement("div");shell.className="mlb-shell";
@@ -1197,6 +1274,21 @@
           fixed.textContent="Fixed clean interface: Top Skip, Middle Main, Bottom Extra — on both left and right sides.";
           body.appendChild(fixed);
         }else{
+          if(n.type==="train_test_split"){
+            const s=splitPercentages(n),total=s.train+s.validation+s.test,valid=splitIsValid(n);
+            const title=document.createElement("div");title.className="mlb-section-title";title.textContent="SPLIT PREVIEW";body.appendChild(title);
+            const preview=document.createElement("div");preview.className="mlb-split-preview"+(valid?" valid":" invalid");
+            preview.innerHTML='<div class="mlb-split-values"><span><b>'+s.train+'%</b> Train</span><span><b>'+s.validation+'%</b> Validation</span><span><b>'+s.test+'%</b> Test</span></div>'+
+              '<div class="mlb-split-bar"><i style="width:'+s.train+'%"></i><i style="width:'+s.validation+'%"></i><i style="width:'+s.test+'%"></i></div>'+
+              '<div class="mlb-split-total">'+(valid?'✓':'!')+' Total: <b>'+total+'%</b> '+(valid?'Ready':'— must equal 100%')+'</div>';
+            body.appendChild(preview);
+            const presets=document.createElement("div");presets.className="mlb-split-presets";
+            [[90,5,5,"90 / 5 / 5"],[80,10,10,"80 / 10 / 10"],[90,10,0,"90 / 10 / 0"]].forEach(([tr,va,te,label])=>{
+              const b=btn(label);b.addEventListener("click",()=>setSplitPreset(n,tr,va,te,label));presets.appendChild(b);
+            });
+            body.appendChild(presets);
+          }
+
           const st=document.createElement("div");st.className="mlb-section-title";st.textContent=state.active_workspace==="data"?"DATA SETTINGS":"PARAMETERS";body.appendChild(st);
           const fields=(api.parameters||info.api||[]);
           if(fields.some(f=>f.group)) renderGroupedFields(body,n,fields);

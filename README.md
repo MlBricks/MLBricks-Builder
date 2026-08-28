@@ -446,3 +446,47 @@ empty Data Processing workspace while preserving the existing model graph.
 In Data Processing mode, **Text Data Starter** builds:
 
 `Hugging Face → Clean Text → Train/Val/Test → Tokenize → Prepared Dataset`
+
+
+## v0.5.1 — proper train/validation/test UI + beginner data pipeline
+
+### Split interface
+
+The Hugging Face source field previously labelled `Split` is now labelled
+**Hub Source Split**. It only chooses which existing Hub split to download.
+It is deliberately separated from dataset percentages.
+
+The real **Train / Validation / Test Split** processing step now has:
+
+- Training percentage slider + number input
+- Validation percentage slider + number input
+- Testing percentage slider + number input
+- live split preview
+- live total validation (`100%` required)
+- beginner presets: `90/5/5`, `80/10/10`, `90/10/0`
+- random seed and shuffle controls
+
+Its executable Builder Data API calls
+`train_validation_test_split(dataset, train_size=..., validation_size=..., test_size=...)`.
+The backend validates that the three proportions sum to exactly 1.0.
+
+### Default Data Processing pipeline
+
+Every brand-new project now already contains:
+
+`Hugging Face → Text Processing → Train/Validation/Test → Tokenize → Batch/DataLoader → Prepared Dataset`
+
+The **Text Data Starter** button rebuilds the same beginner-ready pipeline.
+Legacy projects that do not yet contain a Data Processing workspace are migrated
+with this starter pipeline instead of a blank canvas.
+
+### Binary project files
+
+The top toolbar now includes **BIN** next to Save.
+
+- **Save** → `<project>.mlbricks.json`
+- **BIN** → `<project>.mlbricks.bin`
+- **Load** automatically accepts either format
+
+The binary file uses an `MLBRICKS-BIN-1` header followed by the project payload.
+Python helpers are also available in `mlbricks_builder.design_io`.

@@ -61,7 +61,7 @@ def primitive_catalog():
             "api": [
                 {"key": "dataset_id", "label": "Dataset ID", "type": "text", "value": "roneneldan/TinyStories"},
                 {"key": "config", "label": "Config", "type": "text", "value": ""},
-                {"key": "split", "label": "Split", "type": "text", "value": "train"},
+                {"key": "split", "label": "Hub Source Split", "type": "text", "value": "train", "help": "Which split is downloaded from Hugging Face. Use the Train / Validation / Test Split step for percentages."},
                 {"key": "text_column", "label": "Text Column", "type": "text", "value": "text"},
                 {"key": "streaming", "label": "Streaming", "type": "select", "value": "false", "options": ["false", "true"]},
                 {"key": "max_rows", "label": "Max Rows (0 = All)", "type": "number", "value": 0}
@@ -140,17 +140,22 @@ def primitive_catalog():
             "type": "train_test_split",
             "builder_utility": True,
             "builder_python_api": True,
-            "name": "Train / Val / Test Split",
+            "name": "Train / Validation / Test Split",
             "icon": "SPLIT",
             "category": "Splitting",
-            "description": "Divide data for training, validation and testing",
+            "description": "Choose exactly how much data is used for train, validation and test",
             "accent": "purple",
             "api": [
-                {"key": "train_size", "label": "Train %", "type": "number", "value": 90},
-                {"key": "validation_size", "label": "Validation %", "type": "number", "value": 5},
-                {"key": "test_size", "label": "Test %", "type": "number", "value": 5},
-                {"key": "seed", "label": "Seed", "type": "number", "value": 42},
-                {"key": "shuffle", "label": "Shuffle", "type": "select", "value": "true", "options": ["true", "false"]}
+                {"key": "train_size", "label": "Training", "type": "percent", "value": 90, "min": 0, "max": 100, "step": 1,
+                 "help": "Percentage used to train the model."},
+                {"key": "validation_size", "label": "Validation", "type": "percent", "value": 5, "min": 0, "max": 100, "step": 1,
+                 "help": "Percentage used to check the model during training."},
+                {"key": "test_size", "label": "Testing", "type": "percent", "value": 5, "min": 0, "max": 100, "step": 1,
+                 "help": "Percentage kept for final evaluation."},
+                {"key": "seed", "label": "Random Seed", "type": "number", "value": 42,
+                 "help": "Use the same seed to reproduce the same split."},
+                {"key": "shuffle", "label": "Shuffle Before Split", "type": "select", "value": "true", "options": ["true", "false"],
+                 "help": "Mix examples before dividing them."}
             ],
         },
         {
@@ -487,13 +492,67 @@ def _edge(source, target, source_port="out", target_port="in", kind="main"):
     }
 
 
+def _default_data_processing_graph():
+    """Beginner-ready text pipeline shown in every new project."""
+    source = _node("hf_dataset", "Hugging Face Dataset", {
+        "dataset_id": "roneneldan/TinyStories",
+        "config": "",
+        "split": "train",
+        "text_column": "text",
+        "streaming": "false",
+        "max_rows": 0,
+    })
+    clean = _node("text_process", "Text Processing", {
+        "text_column": "text",
+        "lowercase": "false",
+        "strip": "true",
+        "normalize_whitespace": "true",
+        "unicode_nfkc": "true",
+        "remove_empty": "true",
+        "min_chars": 1,
+        "max_chars": 0,
+    })
+    split = _node("train_test_split", "Train / Validation / Test Split", {
+        "train_size": 90,
+        "validation_size": 5,
+        "test_size": 5,
+        "seed": 42,
+        "shuffle": "true",
+    })
+    tokenize = _node("tokenize_text", "Tokenize Text", {
+        "tokenizer_name": "gpt2",
+        "text_column": "text",
+        "context_length": 512,
+        "truncation": "true",
+        "padding": "false",
+        "add_special_tokens": "true",
+    })
+    batch = _node("batch_data", "Batch / DataLoader", {
+        "batch_size": 16,
+        "shuffle": "true",
+        "num_workers": 2,
+        "drop_last": "false",
+    })
+    output = _node("prepared_dataset", "Prepared Dataset", {
+        "save_to_disk": "false",
+        "path": "/kaggle/working/prepared_dataset",
+    })
+    nodes = [source, clean, split, tokenize, batch, output]
+    edges = [
+        _edge(left["id"], right["id"], "main_out", "main_in", "main")
+        for left, right in zip(nodes[:-1], nodes[1:])
+    ]
+    return nodes, edges
+
+
 def new_project(name: str = "Untitled Model"):
     root_id = _id("component")
     data_root_id = _id("component")
+    data_nodes, data_edges = _default_data_processing_graph()
     now = datetime.now(timezone.utc).isoformat()
     return {
         "format": "mlbricks-builder",
-        "format_version": "0.5",
+        "format_version": "0.5.1",
         "project": {
             "name": name,
             "created_at": now,
@@ -518,8 +577,8 @@ def new_project(name: str = "Untitled Model"):
                 "name": "Data Processing",
                 "kind": "data",
                 "revision": 1,
-                "nodes": [],
-                "edges": [],
+                "nodes": data_nodes,
+                "edges": data_edges,
             },
         },
         "workspaces": {
