@@ -40,8 +40,8 @@
     let runtimePanel=null;
     let execution={status:"idle",overall:0,message:"Ready",nodes:{}};
     let localFiles={roots:[],entries:[],truncated:false};
-    let localImportReport=null;
-    let localForm={path:"/kaggle/working"};
+    let localImportReports={model:null,data:null};
+    let localForm={model_path:"/kaggle/working",data_path:"/kaggle/working"};
     let serveSecrets={};
     let cloudStatus={};
     let cloudSecrets={
@@ -672,12 +672,16 @@
 
       if(next.runtime_kind==="local"){
         if(next.local_scan)localFiles=cp(next.local_scan);
-        if(next.local_import)localImportReport=cp(next.local_import);
+        if(next.local_import){
+          const type=next.local_import_type||"model";
+          localImportReports[type]=cp(next.local_import);
+        }
         if(next.state_replace){
           state=cp(next.state_replace);delete state._runtime_command;ensureWorkspaces();
           selected=null;pendingPort=null;
           if(next.local_import){
-            state.active_workspace="model";
+            const type=next.local_import_type||"model";
+            state.active_workspace=type==="data"?"data":"model";
             bottomView="outputs";
             bottomExpanded=true;
             const imported=next.local_import.imported||[];
@@ -698,6 +702,14 @@
             serveSecrets[entry.id]=serveSecrets[entry.id]||{};
             serveSecrets[entry.id].api_key=next.serve_info.api_key;
           }
+        }
+        if(entry&&next.status==="error"){
+          entry.serve_status="error";
+          entry.serve_live={
+            ...(entry.serve_live||{}),
+            running:false,
+            error:next.message||"API server failed to start."
+          };
         }
         if(next.message)setStatus(next.message);
         if(runtimePanel?.mode==="serve")setTimeout(draw,80);
@@ -1349,6 +1361,7 @@
         estimated_parameters:state.project?.estimated_parameters??null,
         model_settings:{...deriveModelSettings(entry)},
         architecture:cp(model),
+        custom_components_snapshot:cp(state.custom_components||{}),
         requirements,
         fingerprint,
         selected_dataset_id:entry?.selected_dataset_id || latestData?.id || null,
@@ -1863,9 +1876,28 @@
     function serveCodeExample(entry,info){
       const base=info?.public_url||info?.lan_url||info?.local_url||"http://127.0.0.1:8000";
       const secret=serveSecrets[entry.id]?.api_key||"YOUR_API_KEY";
-      const auth=entry.serve_config?.require_api_key!==false?'\\n    "Authorization": "Bearer '+secret+'",':"";
-      return 'fetch("'+base+'/v1/generate", {\\n  method: "POST",\\n  headers: {\\n    "Content-Type": "application/json",'+auth+'\\n  },\\n  body: JSON.stringify({\\n    prompt: "Once upon a time",\\n    max_new_tokens: 128\\n  })\\n}).then(r => r.json()).then(console.log);';
+      const lines=[
+        'fetch("'+base+'/v1/generate", {',
+        '  method: "POST",',
+        '  headers: {',
+        '    "Content-Type": "application/json",'
+      ];
+      if(entry.serve_config?.require_api_key!==false){
+        lines.push('    "Authorization": "Bearer '+secret+'",');
+      }
+      lines.push(
+        '  },',
+        '  body: JSON.stringify({',
+        '    prompt: "Once upon a time",',
+        '    max_new_tokens: 128',
+        '  })',
+        '})',
+        '.then(r => r.json())',
+        '.then(console.log);'
+      );
+      return lines.join("\n");
     }
+
 
     function renderServingWorkspace(canvas,entry){
       ensureRuntimeConfigs(entry);
@@ -1884,8 +1916,19 @@
 
       if(tab==="status"){
         const running=entry.serve_status==="running"||!!info.local_url;
-        const hero=runtimeSection("API Server Status"),status=document.createElement("div");status.className="mlb-serve-status "+(running?"running":"stopped");
-        status.innerHTML="<strong>"+(running?"● RUNNING":"○ STOPPED")+"</strong><span>"+(running?"Model is accepting HTTP inference requests.":"Start the server from API Server Setup.")+"</span>";hero.appendChild(status);main.appendChild(hero);
+        const failed=entry.serve_status==="error"||!!info.error;
+        const hero=runtimeSection("API Server Status"),status=document.createElement("div");
+        status.className="mlb-serve-status "+(running?"running":failed?"error":"stopped");
+        status.innerHTML="<strong>"+(running?"● RUNNING":failed?"✕ ERROR":"○ STOPPED")+"</strong><span>"+
+          (running?"Model is accepting HTTP inference requests.":failed?(info.error||"API server failed to start."):"Start the server from API Server Setup.")+
+          "</span>";
+        hero.appendChild(status);
+        if(running&&info.used_port_fallback){
+          const portNotice=document.createElement("div");portNotice.className="mlb-serve-port-notice";
+          portNotice.innerHTML="<strong>Port "+(info.requested_port||config.port)+" was busy.</strong><span>Builder automatically selected port "+info.port+". All links and examples below use the actual port.</span>";
+          hero.appendChild(portNotice);
+        }
+        main.appendChild(hero);
         const links=runtimeSection("Access Links"),linkGrid=document.createElement("div");linkGrid.className="mlb-serve-links";
         linkGrid.append(serveUrlCard("Localhost",info.local_url||entry.serve_urls?.local_url,"local"),
           serveUrlCard("LAN / Same Wi‑Fi",info.lan_url||entry.serve_urls?.lan_url,"lan"),
@@ -1926,7 +1969,13 @@
       summary.innerHTML="<h3>Serve Summary</h3><div><span>Device</span><strong>"+device.label+"</strong></div><div><span>Host</span><strong>"+config.host+":"+config.port+"</strong></div><div><span>Auth</span><strong>"+(config.require_api_key?"API key":"None")+"</strong></div><div><span>Public</span><strong>"+(config.public_tunnel==="ngrok"?"ngrok HTTPS":"Off")+"</strong></div><div><span>Execution</span><strong>"+config.execution_mode+"</strong></div>";side.appendChild(summary);
       const weights=document.createElement("div");weights.className="mlb-weight-status "+(entry.weights_ready?"ready":"missing");weights.textContent=entry.weights_ready?"✓ Trained / loaded weights available":"✕ No weights available";side.appendChild(weights);
       const start=btn(entry.serve_status==="running"?"Restart API Server":"Start API Server","mlb-runtime-start");start.disabled=!entry.weights_ready||execution.status==="running";
-      start.addEventListener("click",()=>{runtimePanel={mode:"serve",modelId:entry.id,tab:"status"};entry.serve_live={running:false,message:"Starting API server…"};draw();setTimeout(()=>requestServeCommand("serve_start",entry),80);});side.appendChild(start);
+      start.addEventListener("click",()=>{
+        runtimePanel={mode:"serve",modelId:entry.id,tab:"status"};
+        entry.serve_status="starting";
+        entry.serve_live={running:false,error:null,message:"Starting API server…"};
+        draw();
+        setTimeout(()=>requestServeCommand("serve_start",entry),80);
+      });side.appendChild(start);
       if(config.public_tunnel==="ngrok"){const note=document.createElement("div");note.className="mlb-serve-warning compact";note.innerHTML="<strong>Remote access</strong><span>ngrok creates the HTTPS URL needed to reach a Kaggle/Colab model from your phone or local web app.</span>";side.appendChild(note);}
       canvas.appendChild(outer);
     }
@@ -2213,10 +2262,10 @@
 
     function renderDataOutputDirectory(container){
       const entries=availablePreparedDatasets();
-      const head=document.createElement("div");head.className="mlb-output-head";head.innerHTML="<div><strong>DATA OUTPUTS</strong><span>"+entries.length+" prepared dataset"+(entries.length===1?"":"s")+" · click one for details</span></div>";container.appendChild(head);
+      const head=document.createElement("div");head.className="mlb-output-head";head.innerHTML="<div><strong>DATA REPOSITORY</strong><span>"+entries.length+" dataset"+(entries.length===1?"":"s")+" · processed, loaded and imported data</span></div>";container.appendChild(head);
       if(!entries.length){container.appendChild(makeDirectoryEmpty("No prepared datasets yet.","Run a Data Processing pipeline. Completed datasets will appear here automatically."));return;}
       const list=document.createElement("div");list.className="mlb-output-list compact";
-      entries.forEach(meta=>{const card=document.createElement("div");card.className="mlb-output-entry compact"+(outputDirectorySelection===meta.id?" selected":"");const top=document.createElement("div");top.className="mlb-output-entry-top";top.innerHTML="<div class='mlb-output-name'><strong>"+meta.name+"</strong><span>"+dataStorageLabel(meta)+"</span></div><span class='mlb-output-type data'>DATA</span>";card.appendChild(top);const stats=document.createElement("div");stats.className="mlb-output-stats compact";[["train","Train"],["validation","Val"],["test","Test"]].forEach(([key,label])=>{if(meta.splits?.[key]){const item=document.createElement("div");item.innerHTML="<span>"+label+"</span><strong>"+splitRows(meta,key)+"</strong>";stats.appendChild(item);}});card.appendChild(stats);const foot=document.createElement("div");foot.className="mlb-output-compact-foot";foot.innerHTML="<span>"+(meta.total_rows??"?")+" rows</span><span>Details →</span>";card.appendChild(foot);card.addEventListener("click",()=>{outputDirectorySelection=meta.id;selected=null;inspectorTab="settings";setStatus(meta.name+" details opened.");draw();});list.appendChild(card);});container.appendChild(list);
+      entries.forEach(meta=>{const card=document.createElement("div");card.className="mlb-output-entry compact"+(outputDirectorySelection===meta.id?" selected":"");const top=document.createElement("div");top.className="mlb-output-entry-top";const sourceLabel=meta.local_source?"Local / Kaggle Data":dataStorageLabel(meta);top.innerHTML="<div class='mlb-output-name'><strong>"+meta.name+"</strong><span>"+sourceLabel+"</span></div><span class='mlb-output-type data'>DATA</span>";card.appendChild(top);const stats=document.createElement("div");stats.className="mlb-output-stats compact";[["train","Train"],["validation","Val"],["test","Test"]].forEach(([key,label])=>{if(meta.splits?.[key]){const item=document.createElement("div");item.innerHTML="<span>"+label+"</span><strong>"+splitRows(meta,key)+"</strong>";stats.appendChild(item);}});card.appendChild(stats);const foot=document.createElement("div");foot.className="mlb-output-compact-foot";foot.innerHTML="<span>"+(meta.total_rows??"?")+" rows</span><span>Details →</span>";card.appendChild(foot);card.addEventListener("click",()=>{outputDirectorySelection=meta.id;selected=null;inspectorTab="settings";setStatus(meta.name+" details opened.");draw();});list.appendChild(card);});container.appendChild(list);
     }
 
     function renderModelOutputDirectory(container){
@@ -2239,8 +2288,11 @@
         card.className="mlb-output-entry compact"+(outputDirectorySelection===entry.id?" selected":"");
 
         const top=document.createElement("div");top.className="mlb-output-entry-top";
-        top.innerHTML="<div class='mlb-output-name'><strong>"+entry.name+"</strong><span>Built Model · r"+(entry.revision||1)+"</span></div>"+
-          "<span class='mlb-output-type model'>MODEL</span>";
+        const sourceLabel=entry.legacy_recovered
+          ?"Recovered Legacy Checkpoint"
+          :(entry.local_source?"Local / Kaggle Model":"Built Model · r"+(entry.revision||1));
+        top.innerHTML="<div class='mlb-output-name'><strong>"+entry.name+"</strong><span>"+sourceLabel+"</span></div>"+
+          "<span class='mlb-output-type model'>"+(entry.legacy_recovered?"RECOVERED":"MODEL")+"</span>";
         card.appendChild(top);
 
         const stats=document.createElement("div");stats.className="mlb-output-stats compact model-three";
@@ -2345,7 +2397,7 @@
       if(!model)return;
       const config={
         format:"mlbricks-model-config",
-        builder_version:"0.7.1",
+        builder_version:"0.7.4",
         project:cp(state.project||{}),
         model:cp(model),
         selected_dataset:selectedModelDataset(),
@@ -2361,74 +2413,99 @@
 
     function renderLocalView(container){
       container.className="mlb-local-view";
+      const importingData=state.active_workspace==="data";
+      const kind=importingData?"data":"model";
+      const report=localImportReports[kind];
+      const pathKey=importingData?"data_path":"model_path";
+      const action=importingData?"local_import_data":"local_import_models";
+
       const head=document.createElement("div");head.className="mlb-local-head";
       const copyHead=document.createElement("div");
-      copyHead.innerHTML="<strong>LOCAL / KAGGLE MODEL IMPORT</strong><span>Enter one directory. Builder scans all subdirectories and imports compatible models automatically.</span>";
+      copyHead.innerHTML=importingData
+        ?"<strong>LOCAL / KAGGLE DATA IMPORT</strong><span>Enter one directory. Builder scans all subdirectories and imports compatible datasets automatically.</span>"
+        :"<strong>LOCAL / KAGGLE MODEL IMPORT</strong><span>Enter one directory. Builder scans all subdirectories and imports compatible models automatically.</span>";
       const badge=document.createElement("span");badge.className="mlb-local-badge";badge.textContent="AUTO";
       head.append(copyHead,badge);container.appendChild(head);
 
       const box=document.createElement("div");box.className="mlb-local-auto-box";
       const field=document.createElement("div");field.className="mlb-local-field";
       const label=document.createElement("label");label.textContent="Base Path";field.appendChild(label);
-      const input=document.createElement("input");input.value=localForm.path||"/kaggle/working";input.placeholder="/kaggle/working";
-      input.addEventListener("input",()=>localForm.path=input.value);field.appendChild(input);
-      const button=btn("Scan & Import Models","mlb-local-load");
+      const input=document.createElement("input");
+      input.value=localForm[pathKey]||"/kaggle/working";
+      input.placeholder="/kaggle/working";
+      input.addEventListener("input",()=>localForm[pathKey]=input.value);
+      field.appendChild(input);
+
+      const button=btn(importingData?"Scan & Import Data":"Scan & Import Models","mlb-local-load");
       button.addEventListener("click",()=>{
-        const path=String(localForm.path||"").trim();
+        const path=String(localForm[pathKey]||"").trim();
         if(!path){setStatus("Enter a Kaggle/local directory path.");return;}
-        requestLocalCommand("local_import_models",{path,max_depth:12,max_entries:1000});
+        requestLocalCommand(action,{path,max_depth:12,max_entries:1000});
       });
       box.append(field,button);container.appendChild(box);
 
       const examples=document.createElement("div");examples.className="mlb-local-path-examples";
-      ["/kaggle/working","/kaggle/input","/content/models"].forEach(value=>{
+      const quickPaths=importingData
+        ?["/kaggle/working","/kaggle/input","/content/data"]
+        :["/kaggle/working","/kaggle/input","/content/models"];
+      quickPaths.forEach(value=>{
         const chip=document.createElement("button");chip.textContent=value;
-        chip.addEventListener("click",()=>{localForm.path=value;draw();});
+        chip.addEventListener("click",()=>{localForm[pathKey]=value;draw();});
         examples.appendChild(chip);
       });
       container.appendChild(examples);
 
       const flow=document.createElement("div");flow.className="mlb-local-flow";
-      flow.innerHTML="<span>1</span><strong>Path</strong><i>→</i><span>2</span><strong>Recursive Scan</strong><i>→</i><span>3</span><strong>Detect Models</strong><i>→</i><span>4</span><strong>Model Repository</strong>";
+      flow.innerHTML=importingData
+        ?"<span>1</span><strong>Path</strong><i>→</i><span>2</span><strong>Recursive Scan</strong><i>→</i><span>3</span><strong>Detect Data</strong><i>→</i><span>4</span><strong>Data Repository</strong>"
+        :"<span>1</span><strong>Path</strong><i>→</i><span>2</span><strong>Recursive Scan</strong><i>→</i><span>3</span><strong>Detect Models</strong><i>→</i><span>4</span><strong>Model Repository</strong>";
       container.appendChild(flow);
 
-      if(localImportReport){
-        const report=document.createElement("div");report.className="mlb-local-report";
+      if(report){
+        const panel=document.createElement("div");panel.className="mlb-local-report";
         const rh=document.createElement("div");rh.className="mlb-local-report-head";
-        rh.innerHTML="<strong>LAST IMPORT</strong><span>"+(localImportReport.root||"")+"</span>";
-        report.appendChild(rh);
+        rh.innerHTML="<strong>LAST IMPORT</strong><span>"+(report.root||"")+"</span>";
+        panel.appendChild(rh);
 
         const stats=document.createElement("div");stats.className="mlb-local-report-stats";
-        [["Found",localImportReport.found||0],["Imported",localImportReport.imported_count||0],["Skipped",localImportReport.skipped_count||0],["Errors",localImportReport.error_count||0]].forEach(([name,value])=>{
+        [["Found",report.found||0],["Imported",report.imported_count||0],["Skipped",report.skipped_count||0],["Errors",report.error_count||0]].forEach(([name,value])=>{
           const item=document.createElement("div");item.innerHTML="<span>"+name+"</span><strong>"+value+"</strong>";stats.appendChild(item);
         });
-        report.appendChild(stats);
+        panel.appendChild(stats);
 
-        const imported=localImportReport.imported||[];
+        const imported=report.imported||[];
         if(imported.length){
           const list=document.createElement("div");list.className="mlb-local-imported-list";
-          imported.forEach(model=>{
+          imported.forEach(item=>{
             const row=document.createElement("div");
-            row.innerHTML="<div><strong>"+(model.name||"Imported Model")+"</strong><span>"+(model.local_path||model.checkpoint_path||"")+"</span></div><b>IMPORTED</b>";
+            const title=item.name||(importingData?"Imported Dataset":"Imported Model");
+            const path=item.local_path||item.checkpoint_path||item.path||"";
+            const badgeText=(!importingData&&item.legacy_recovered)?"RECOVERED":"IMPORTED";
+            row.innerHTML="<div><strong>"+title+"</strong><span>"+path+"</span></div><b>"+badgeText+"</b>";
             list.appendChild(row);
           });
-          report.appendChild(list);
+          panel.appendChild(list);
         }
 
-        if((localImportReport.errors||[]).length){
+        if((report.errors||[]).length){
           const details=document.createElement("details");details.className="mlb-local-errors";
-          const summary=document.createElement("summary");summary.textContent=localImportReport.errors.length+" incompatible / older checkpoint"+(localImportReport.errors.length===1?"":"s");
+          const summary=document.createElement("summary");
+          summary.textContent=report.errors.length+" incompatible "+(importingData?"data item":"checkpoint")+(report.errors.length===1?"":"s");
           details.appendChild(summary);
-          localImportReport.errors.forEach(item=>{
-            const row=document.createElement("div");row.innerHTML="<strong>"+item.path+"</strong><span>"+item.error+"</span>";details.appendChild(row);
+          report.errors.forEach(item=>{
+            const row=document.createElement("div");
+            row.innerHTML="<strong>"+item.path+"</strong><span>"+item.error+"</span>";
+            details.appendChild(row);
           });
-          report.appendChild(details);
+          panel.appendChild(details);
         }
-        container.appendChild(report);
+        container.appendChild(panel);
       }
 
       const note=document.createElement("div");note.className="mlb-local-note";
-      note.innerHTML="<strong>Path only.</strong> Builder recursively detects <code>last.pt</code>, <code>.pt</code>, <code>.pth</code>, <code>.ckpt</code> and MLBricks model bundles. Duplicate paths are ignored. Imported models are added automatically to <strong>Model Repository</strong>.";
+      note.innerHTML=importingData
+        ?"<strong>Path only.</strong> Builder recursively detects Hugging Face <code>save_to_disk()</code> folders, <code>.txt</code>, <code>.csv</code>, <code>.json</code>, <code>.jsonl</code>, <code>.parquet</code>, <code>.arrow</code> and MLBricks dataset bundles. Duplicate paths are ignored. Imported datasets are added automatically to <strong>Data Repository</strong>."
+        :"<strong>Path only.</strong> Builder recursively detects <code>last.pt</code>, <code>.pt</code>, <code>.pth</code>, <code>.ckpt</code> and MLBricks model bundles. Duplicate paths are ignored. Imported models are added automatically to <strong>Model Repository</strong>.";
       container.appendChild(note);
     }
 
@@ -3570,8 +3647,8 @@
       rememberWorkspaceView();
       return {
         format:"mlbricks-builder-design",
-        format_version:"0.7.1",
-        builder_version:"0.7.1",
+        format_version:"0.7.4",
+        builder_version:"0.7.4",
         saved_at:new Date().toISOString(),
         state:sanitizedProjectState()
       };
@@ -3925,7 +4002,7 @@
 
       const detailsSelect=document.createElement("select");detailsSelect.className="mlb-details-select";
       const options=state.active_workspace==="data"
-        ?[["details","Pipeline Details"],["outputs","Output Directory"],["files","Files"],["local","Local / Kaggle Models"],["cloud","Cloud & Repositories"]]
+        ?[["details","Pipeline Details"],["outputs","Output Directory"],["files","Files"],["local","Local / Kaggle Data"],["cloud","Cloud & Repositories"]]
         :[["details","Model Details"],["outputs","Output Directory"],["files","Files"],["local","Local / Kaggle Models"],["cloud","Cloud & Repositories"]];
       options.forEach(([value,label])=>{
         const o=document.createElement("option");o.value=value;o.textContent=label;

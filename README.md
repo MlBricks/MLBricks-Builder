@@ -1211,3 +1211,99 @@ skips duplicate paths and continues past incompatible/older files.
 After import, Builder switches automatically to **Model Repository** so the
 imported models are immediately available for Generate Tokens, Serve Model/API,
 or further training when compatible data is selected.
+
+
+## v0.7.2 — legacy checkpoint recovery + true model repository compilation
+
+### Legacy custom-brick recovery
+
+Older checkpoints (before v0.6.8) may contain the root model architecture but
+not the reusable/nested custom-brick definition table.
+
+When importing such a checkpoint, Builder now:
+
+1. detects the stale/missing custom definition IDs
+2. compares the checkpoint top-level node names/types and edge flow with the
+   model currently open in Builder
+3. only on an exact architecture-shape match, remaps the stale custom IDs to
+   the matching current reusable brick definitions
+4. imports the checkpoint as **Recovered Legacy Checkpoint**
+
+This lets old TinyStories checkpoints restore when the matching TinyStories
+model is already open, even if IDs such as `custom_xxx` changed between sessions.
+
+If the current graph is not an exact structural match, Builder still rejects the
+checkpoint rather than guessing.
+
+### Model Repository correctness
+
+`compile_builder_model()` now compiles the selected repository model's own
+captured `architecture` and `custom_components_snapshot`.
+
+Previously, an imported model could accidentally compile whichever graph was
+currently open in Model Builder. This matters once multiple different models
+exist in Model Repository.
+
+Newly built models now snapshot their custom component definitions as well.
+
+
+## v0.7.3 — path-only recursive data import
+
+The same one-path workflow used by Local / Kaggle Models is now available for
+**Local / Kaggle Data**.
+
+In Data Processing, provide only a base path:
+
+```text
+/kaggle/working
+/kaggle/input
+/kaggle/input/my-dataset
+/content/data
+```
+
+Click **Scan & Import Data**.
+
+Builder recursively scans all subdirectories and detects:
+
+- Hugging Face `Dataset.save_to_disk()` folders
+- Hugging Face `DatasetDict.save_to_disk()` folders
+- TXT
+- CSV
+- JSON
+- JSONL
+- Parquet
+- Arrow
+- MLBricks `.mlbricks.zip` dataset bundles
+
+Compatible datasets are registered automatically in **Data Repository**.
+Duplicate local paths are skipped. One incompatible file does not stop the rest
+of the directory import; it is reported in the import summary.
+
+After the scan, Builder automatically switches to the Data Processing workspace
+and opens **Data Repository**, selecting the most recently imported dataset.
+
+Raw tabular files do not require a column named `text` during import. They can
+be loaded first and then configured/processed inside Data Processing.
+
+
+## v0.7.4 — automatic API port fallback
+
+If the requested API port is already in use (common in Kaggle after a previous
+server attempt), Serve Model/API no longer fails with `Errno 98`.
+
+For a requested port such as `8000`, Builder now tries:
+
+```text
+8000, 8001, 8002, ... 8020
+```
+
+and finally asks the OS for any free port if necessary.
+
+The API Server Status panel shows the actual selected port and all Localhost,
+LAN, Public HTTPS and generated web-app examples use that real port.
+
+Startup errors are now displayed directly as **ERROR** instead of appearing as
+a generic **STOPPED** state.
+
+The Web App Example code block also renders real line breaks instead of literal
+`\n` characters.

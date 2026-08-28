@@ -317,7 +317,13 @@ def _tokenizer_for(meta, *, local_only_first=True):
 
 
 def compile_builder_model(state, model_entry, dataset_meta, runtime, *, progress=None):
-    graph=_root_model(state)
+    # Repository models must compile the architecture captured with that model,
+    # not whichever graph is currently open in Model Builder.
+    graph=copy.deepcopy((model_entry or {}).get("architecture") or _root_model(state))
+    custom_components=copy.deepcopy(state.get("custom_components") or {})
+    custom_components.update(
+        copy.deepcopy((model_entry or {}).get("custom_components_snapshot") or {})
+    )
     device=resolve_device(runtime.get("device","auto"))
     precision,dtype=resolve_precision(runtime.get("precision","auto"),device)
     tokenizer=_tokenizer_for(dataset_meta)
@@ -328,7 +334,7 @@ def compile_builder_model(state, model_entry, dataset_meta, runtime, *, progress
         msg=f"Compiling model on {device}"
         if effective_vocab!=graph_vocab: msg+=f" · vocab {graph_vocab:,} → {effective_vocab:,} to match tokenizer"
         progress({"status":"running","runtime_kind":"train","phase":"compile","overall":1,"message":msg})
-    raw=TensorGraph(nodes=graph.get("nodes") or [],edges=graph.get("edges") or [],custom_components=state.get("custom_components") or {},runtime={**runtime,"device":str(device),"precision":precision},vocab_override=effective_vocab)
+    raw=TensorGraph(nodes=graph.get("nodes") or [],edges=graph.get("edges") or [],custom_components=custom_components,runtime={**runtime,"device":str(device),"precision":precision},vocab_override=effective_vocab)
     raw.to(device)
     params=sum(p.numel() for p in raw.parameters())
     run_model=raw; compile_used=False; compile_error=None

@@ -175,3 +175,49 @@ def scan_model_candidates(
         ],
         "truncated": bool(scan.get("truncated")),
     }
+
+
+def scan_data_candidates(
+    base_path: str | Path,
+    *,
+    max_entries: int = 1000,
+    max_depth: int = 12,
+) -> dict[str, Any]:
+    """Recursively find prepared/raw datasets and MLBricks bundles."""
+    base = Path(base_path).expanduser()
+    if not base.exists():
+        raise FileNotFoundError(f"Local / Kaggle path was not found: {base}")
+    base = base.resolve()
+
+    if base.is_file():
+        info = detect_local_kind(base)
+        entries = []
+        if info["kind"] in {"data_file", "bundle"}:
+            size = base.stat().st_size
+            entries.append({
+                "path": str(base),
+                "name": base.name,
+                "relative": base.name,
+                "root": str(base.parent),
+                "kind": info["kind"],
+                "label": info["label"],
+                "size": size,
+                "size_label": human_size(size),
+                "is_dir": False,
+            })
+        return {"root": str(base.parent), "entries": entries, "truncated": False}
+
+    scan = scan_local_files(
+        [str(base)],
+        max_entries=max_entries,
+        max_depth=max_depth,
+    )
+    entries = [
+        item for item in (scan.get("entries") or [])
+        if item.get("kind") in {"dataset_dir", "data_file", "bundle"}
+    ]
+    return {
+        "root": str(base),
+        "entries": entries,
+        "truncated": bool(scan.get("truncated")),
+    }

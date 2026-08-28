@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import errno
 import os
 import secrets
 import socket
@@ -89,6 +90,8 @@ class ServerInfo:
     remote_notebook: bool
     environment: str | None
     started_at: float
+    requested_port: int | None = None
+    used_port_fallback: bool = False
 
     def to_dict(self, *, include_secret: bool = False) -> dict[str, Any]:
         result = {
@@ -98,6 +101,8 @@ class ServerInfo:
             "api_key_required": self.api_key_required,
             "remote_notebook": self.remote_notebook, "environment": self.environment,
             "started_at": self.started_at,
+            "requested_port": self.requested_port,
+            "used_port_fallback": self.used_port_fallback,
             "health_endpoint": "/health", "generate_endpoint": "/v1/generate",
             "completions_endpoint": "/v1/completions", "models_endpoint": "/v1/models",
         }
@@ -198,11 +203,50 @@ class ModelHTTPRuntime:
         return Handler
 
     def start(self):
+        if self.httpd is not None:
+            return self.info()
+
+        requested_port = int(self.port)
+        candidate_ports = [requested_port] if requested_port == 0 else list(range(requested_port, min(requested_port + 21, 65536)))
+        if requested_port != 0:
+            candidate_ports.append(0)  # final fallback: let the OS choose any free port
+
+        last_error = None
+        used_fallback = False
+        for candidate in candidate_ports:
+            try:
+                self.httpd = ThreadingHTTPServer((self.host, candidate), self._handler_class())
+                self.port = int(self.httpd.server_address[1])
+                used_fallback = self.port != requested_port
+                break
+            except OSError as exc:
+                last_error = exc
+                address_in_use = exc.errno in {
+                    errno.EADDRINUSE,
+                    98,      # Linux
+                    48,      # macOS
+                    10048,   # Windows
+                }
+                if not address_in_use:
+                    raise
+                self.httpd = None
+                continue
+
         if self.httpd is None:
-            self.httpd=ThreadingHTTPServer((self.host,self.port),self._handler_class())
-            self.port=int(self.httpd.server_address[1])
-            self.thread=threading.Thread(target=self.httpd.serve_forever,name=f"mlbricks-server-{self.model_id}",daemon=True)
-            self.thread.start(); self.started_at=time.time()
+            raise OSError(
+                getattr(last_error, "errno", errno.EADDRINUSE),
+                f"Could not bind the model API server. Requested port {requested_port} and fallback ports were unavailable."
+            )
+
+        self.thread = threading.Thread(
+            target=self.httpd.serve_forever,
+            name=f"mlbricks-server-{self.model_id}",
+            daemon=True,
+        )
+        self.thread.start()
+        self.started_at = time.time()
+        self.requested_port = requested_port
+        self.used_port_fallback = used_fallback
         return self.info()
 
     def start_ngrok(self,auth_token=None):
@@ -215,9 +259,22 @@ class ModelHTTPRuntime:
 
     def info(self):
         ip=_lan_ip(); remote,env=remote_notebook_environment()
-        return ServerInfo(self.model_id,self.model_name,self.host,self.port,
-                          f"http://127.0.0.1:{self.port}",f"http://{ip}:{self.port}" if ip else None,
-                          self.public_url,self.api_key_required,self.api_key,remote,env,self.started_at)
+        return ServerInfo(
+            self.model_id,
+            self.model_name,
+            self.host,
+            self.port,
+            f"http://127.0.0.1:{self.port}",
+            f"http://{ip}:{self.port}" if ip else None,
+            self.public_url,
+            self.api_key_required,
+            self.api_key,
+            remote,
+            env,
+            self.started_at,
+            getattr(self, "requested_port", self.port),
+            bool(getattr(self, "used_port_fallback", False)),
+        )
 
     def stop(self):
         public=self.public_url

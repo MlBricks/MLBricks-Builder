@@ -534,8 +534,14 @@ class Builder:
         entry["serve_config"]=safe_config; entry["serve_status"]="running"
         entry["serve_urls"]={"local_url":info.local_url,"lan_url":info.lan_url,"public_url":info.public_url}
         result=info.to_dict(include_secret=True)
+        message = f'Model API running on port {info.port}.'
+        if getattr(info, "used_port_fallback", False):
+            message = (
+                f'Port {getattr(info, "requested_port", config.get("port", 8000))} was busy; '
+                f'Builder automatically started the API on port {info.port}.'
+            )
         if progress_callback: progress_callback({"status":"done","runtime_kind":"serve","phase":"running","overall":100,
-            "message":f'Model API running on port {info.port}.',"model_id":model_id,"serve_info":result,
+            "message":message,"model_id":model_id,"serve_info":result,
             "model_update":{"serve_config":safe_config,"serve_status":"running","serve_urls":entry["serve_urls"]}})
         return result
 
@@ -768,7 +774,7 @@ class Builder:
             root.mkdir(parents=True, exist_ok=True)
             manifest = {
                 "format": "mlbricks-cloud-bundle-v1",
-                "builder_version": "0.7.1",
+                "builder_version": "0.7.4",
                 "content_type": content_type,
             }
 
@@ -973,6 +979,131 @@ class Builder:
             dataset = load_local_dataset(path_obj, text_column=text_column or "", max_rows=None)
         return self._register_local_dataset(dataset, path_obj, tokenizer_name=tokenizer_name, saved_meta=saved_meta)
 
+    @staticmethod
+    def _normalized_model_name(value):
+        return re.sub(r"[^a-z0-9]+", "", str(value or "").lower())
+
+    @staticmethod
+    def _architecture_shape_signature(component):
+        nodes = component.get("nodes") or []
+        id_to_index = {node.get("id"): i for i, node in enumerate(nodes)}
+        node_signature = []
+        for node in nodes:
+            node_signature.append((
+                str(node.get("type") or ""),
+                Builder._normalized_model_name(node.get("name")),
+            ))
+        edges = []
+        for edge in component.get("edges") or []:
+            source = id_to_index.get(edge.get("source"))
+            target = id_to_index.get(edge.get("target"))
+            if source is None or target is None:
+                continue
+            edges.append((
+                source,
+                target,
+                str(edge.get("kind") or "main"),
+            ))
+        return tuple(node_signature), tuple(sorted(edges))
+
+    def _current_model_component(self):
+        model_ws = (self.state.get("workspaces") or {}).get("model") or {}
+        root_id = model_ws.get("root_component_id") or self.state.get("root_component_id")
+        return copy.deepcopy((self.state.get("components") or {}).get(root_id) or {})
+
+    def _recover_legacy_custom_components(self, architecture, embedded_custom):
+        """
+        Old checkpoints saved the root graph but not custom-component definitions.
+        If the currently open Builder graph has the same top-level node/edge shape,
+        remap the stale checkpoint definition IDs to the current matching custom
+        nodes by position/name. This is safe only after exact graph-shape matching.
+        """
+        architecture = copy.deepcopy(architecture or {})
+        embedded_custom = copy.deepcopy(embedded_custom or {})
+        current = self._current_model_component()
+        current_custom = copy.deepcopy(self.state.get("custom_components") or {})
+
+        referenced = {
+            node.get("definition_id")
+            for node in architecture.get("nodes") or []
+            if node.get("type") == "custom" and node.get("definition_id")
+        }
+        available = set(embedded_custom) | set(current_custom)
+        missing = sorted(x for x in referenced if x not in available)
+        if not missing:
+            return architecture, embedded_custom, {
+                "recovered": False,
+                "remapped": {},
+                "source": None,
+            }
+
+        if not current.get("nodes"):
+            return architecture, embedded_custom, {
+                "recovered": False,
+                "remapped": {},
+                "source": None,
+                "missing": missing,
+            }
+
+        if self._architecture_shape_signature(architecture) != self._architecture_shape_signature(current):
+            return architecture, embedded_custom, {
+                "recovered": False,
+                "remapped": {},
+                "source": None,
+                "missing": missing,
+            }
+
+        checkpoint_nodes = architecture.get("nodes") or []
+        current_nodes = current.get("nodes") or []
+        remap = {}
+
+        for old_node, current_node in zip(checkpoint_nodes, current_nodes):
+            if old_node.get("type") != "custom":
+                continue
+            old_id = old_node.get("definition_id")
+            if not old_id or old_id not in missing:
+                continue
+            new_id = current_node.get("definition_id")
+            if not new_id or new_id not in current_custom:
+                return architecture, embedded_custom, {
+                    "recovered": False,
+                    "remapped": {},
+                    "source": None,
+                    "missing": missing,
+                }
+            prior = remap.get(old_id)
+            if prior is not None and prior != new_id:
+                return architecture, embedded_custom, {
+                    "recovered": False,
+                    "remapped": {},
+                    "source": None,
+                    "missing": missing,
+                }
+            remap[old_id] = new_id
+
+        if set(remap) != set(missing):
+            return architecture, embedded_custom, {
+                "recovered": False,
+                "remapped": remap,
+                "source": None,
+                "missing": missing,
+            }
+
+        for node in checkpoint_nodes:
+            if node.get("type") == "custom" and node.get("definition_id") in remap:
+                node["definition_id"] = remap[node["definition_id"]]
+
+        recovered_custom = copy.deepcopy(embedded_custom)
+        for new_id in set(remap.values()):
+            recovered_custom[new_id] = copy.deepcopy(current_custom[new_id])
+
+        return architecture, recovered_custom, {
+            "recovered": True,
+            "remapped": remap,
+            "source": "current_model",
+            "missing": [],
+        }
+
     def _restore_model_checkpoint(self, path):
         import torch
         path_obj = Path(path).expanduser().resolve()
@@ -987,11 +1118,25 @@ class Builder:
         if not architecture.get("nodes"):
             raise RuntimeError("The checkpoint has weights but does not contain a Builder model architecture. This is an older checkpoint. Load the matching Builder project first, then load this checkpoint, or train/save once with MLBricks Builder v0.6.8+.")
         custom_components = copy.deepcopy(package.get("custom_components") or {})
-        referenced = {n.get("definition_id") for n in architecture.get("nodes") or [] if n.get("type") == "custom" and n.get("definition_id")}
+        architecture, custom_components, legacy_recovery = self._recover_legacy_custom_components(
+            architecture,
+            custom_components,
+        )
+        referenced = {
+            n.get("definition_id")
+            for n in architecture.get("nodes") or []
+            if n.get("type") == "custom" and n.get("definition_id")
+        }
         available = set(custom_components) | set(self.state.get("custom_components") or {})
         missing = sorted(x for x in referenced if x not in available)
         if missing:
-            raise RuntimeError("The checkpoint references nested/custom model blocks missing from this older checkpoint: " + ", ".join(missing) + ". Load the matching Builder project first. New v0.6.8 checkpoints embed these definitions automatically.")
+            raise RuntimeError(
+                "The checkpoint references nested/custom model blocks missing from this older checkpoint: "
+                + ", ".join(missing)
+                + ". Builder also tried legacy recovery against the currently open model, "
+                  "but the model architecture did not match exactly. Open/build the matching "
+                  "model project and scan again. New v0.6.8+ checkpoints embed these definitions."
+            )
         model_ws = (self.state.get("workspaces") or {}).get("model") or {}
         root_id = model_ws.get("root_component_id") or self.state.get("root_component_id")
         if not root_id: raise RuntimeError("Model Builder workspace is unavailable.")
@@ -1005,10 +1150,19 @@ class Builder:
             if key in project: current_project[key] = project[key]
         new_id = f"model_{uuid.uuid4().hex[:12]}"
         source_entry.update({
-            "id": new_id, "architecture": copy.deepcopy(architecture), "path": str(path_obj),
-            "checkpoint_path": str(path_obj), "weights_ready": True, "training_status": "trained",
-            "status": "trained", "format": "PyTorch checkpoint", "selected_dataset_id": None,
+            "id": new_id,
+            "architecture": copy.deepcopy(architecture),
+            "custom_components_snapshot": copy.deepcopy(custom_components),
+            "path": str(path_obj),
+            "checkpoint_path": str(path_obj),
+            "weights_ready": True,
+            "training_status": "trained",
+            "status": "trained",
+            "format": "PyTorch checkpoint",
+            "selected_dataset_id": None,
             "local_source": True,
+            "legacy_recovered": bool(legacy_recovery.get("recovered")),
+            "legacy_definition_remap": copy.deepcopy(legacy_recovery.get("remapped") or {}),
         })
         source_entry["trained_steps"] = payload.get("step", source_entry.get("trained_steps"))
         source_entry["tokens_seen"] = payload.get("tokens_seen", source_entry.get("tokens_seen"))
@@ -1054,6 +1208,113 @@ class Builder:
         if kind == "bundle":
             restored = self._restore_cloud_bundle(path_obj); restored["path"] = str(path_obj); return restored
         raise RuntimeError(f"Could not determine how to load {path_obj}. Detected: {info.get('label')}. Choose Dataset, Model, or Project explicitly if needed.")
+
+    def _existing_local_dataset_paths(self):
+        paths = set()
+        for entry in self.state.get("prepared_datasets") or []:
+            for key in ("path", "local_path"):
+                value = entry.get(key)
+                if not value:
+                    continue
+                try:
+                    paths.add(str(Path(value).expanduser().resolve()))
+                except Exception:
+                    paths.add(str(value))
+        return paths
+
+    def import_data_from_local_path(
+        self,
+        base_path,
+        *,
+        max_depth=12,
+        max_entries=1000,
+        progress_callback=None,
+    ):
+        from .local_runtime import scan_data_candidates
+
+        scan = scan_data_candidates(
+            base_path,
+            max_entries=int(max_entries or 1000),
+            max_depth=int(max_depth or 12),
+        )
+        candidates = scan.get("entries") or []
+        existing = self._existing_local_dataset_paths()
+        imported, skipped, errors = [], [], []
+        total = max(len(candidates), 1)
+
+        for index, item in enumerate(candidates, start=1):
+            path = str(Path(item["path"]).expanduser().resolve())
+
+            if progress_callback:
+                progress_callback({
+                    "status": "running",
+                    "runtime_kind": "local",
+                    "phase": "import_data",
+                    "overall": min(90, int((index - 1) / total * 90)),
+                    "message": f'Scanning data {index}/{len(candidates)} · {Path(path).name}',
+                    "current_path": path,
+                })
+
+            if path in existing:
+                skipped.append({"path": path, "reason": "Already imported"})
+                continue
+
+            try:
+                kind = item.get("kind")
+                if kind in {"dataset_dir", "data_file"}:
+                    # Empty text_column means raw CSV/JSON/Parquet files are accepted
+                    # even when their text column has another name. Users can process
+                    # or select the relevant column later in Data Processing.
+                    result = self.load_local_runtime_path(
+                        path,
+                        content_type="dataset",
+                        tokenizer_name="gpt2",
+                        text_column="",
+                    )
+                elif kind == "bundle":
+                    result = self.load_local_runtime_path(path, content_type="auto")
+                    if result.get("content_type") != "dataset":
+                        skipped.append({
+                            "path": path,
+                            "reason": f'Bundle contains {result.get("content_type")}, not dataset',
+                        })
+                        continue
+                else:
+                    skipped.append({"path": path, "reason": "Not a dataset artifact"})
+                    continue
+
+                meta = result.get("dataset") or {}
+                meta["local_path"] = path
+                meta["source_root"] = scan.get("root")
+                meta["repository_source"] = "Local / Kaggle"
+                meta["local_source"] = True
+
+                # Keep the registered state entry synchronized with the metadata
+                # object returned by load_local_runtime_path.
+                for state_meta in self.state.get("prepared_datasets") or []:
+                    if state_meta.get("id") == meta.get("id"):
+                        state_meta.update(copy.deepcopy(meta))
+                        break
+
+                imported.append(copy.deepcopy(meta))
+                existing.add(path)
+            except Exception as exc:
+                errors.append({
+                    "path": path,
+                    "error": f"{type(exc).__name__}: {exc}",
+                })
+
+        return {
+            "root": scan.get("root"),
+            "found": len(candidates),
+            "imported": imported,
+            "imported_count": len(imported),
+            "skipped": skipped,
+            "skipped_count": len(skipped),
+            "errors": errors,
+            "error_count": len(errors),
+            "truncated": bool(scan.get("truncated")),
+        }
 
     def _existing_local_model_paths(self):
         paths = set()
@@ -1166,7 +1427,26 @@ class Builder:
                 message += f' {result["error_count"]} incompatible/older checkpoint(s) reported.'
             emit({
                 "status":"done","runtime_kind":"local","phase":"import_models","overall":100,
-                "message":message,"local_import":result,"state_replace":self.to_dict()
+                "message":message,"local_import":result,"local_import_type":"model","state_replace":self.to_dict()
+            })
+            return result
+
+        if action == "local_import_data":
+            emit({"status":"running","runtime_kind":"local","phase":"import_data","overall":2,"message":"Scanning directory and subdirectories for datasets…"})
+            result = self.import_data_from_local_path(
+                local.get("path"),
+                max_depth=local.get("max_depth") or 12,
+                max_entries=local.get("max_entries") or 1000,
+                progress_callback=emit,
+            )
+            message = f'Imported {result["imported_count"]} dataset{"s" if result["imported_count"] != 1 else ""} from {result["root"]}.'
+            if result["skipped_count"]:
+                message += f' {result["skipped_count"]} duplicate/non-data item(s) skipped.'
+            if result["error_count"]:
+                message += f' {result["error_count"]} incompatible data item(s) reported.'
+            emit({
+                "status":"done","runtime_kind":"local","phase":"import_data","overall":100,
+                "message":message,"local_import":result,"local_import_type":"data","state_replace":self.to_dict()
             })
             return result
 
@@ -1571,8 +1851,8 @@ class Builder:
         available = [k for k, v in self.mlbricks_api.items() if v.get("available")]
         unavailable = {k: v.get("error") for k, v in self.mlbricks_api.items() if not v.get("available")}
         return {
-            "builder_version": "0.7.1",
-            "frontend_version": "0.7.1",
+            "builder_version": "0.7.4",
+            "frontend_version": "0.7.4",
             "mlbricks": info,
             "api_components_available": available,
             "api_components_unavailable": unavailable,
@@ -1593,7 +1873,7 @@ class Builder:
         }).replace("</", "<\\/")
         return f"""
 <style>{css}</style>
-<div id="{html.escape(self._instance_id)}" class="mlb-root" data-mlbricks-builder-version="0.7.1"></div>
+<div id="{html.escape(self._instance_id)}" class="mlb-root" data-mlbricks-builder-version="0.7.4"></div>
 <script>
 try {{ delete window.MLBricksBuilder; }} catch (e) {{ window.MLBricksBuilder = undefined; }}
 {js}
