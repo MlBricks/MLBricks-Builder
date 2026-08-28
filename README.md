@@ -1405,3 +1405,13 @@ That prevented the frontend from mounting and produced a blank dark Builder pane
 
 v0.7.10 rebuilds the Share summary using an array of lines joined with `\n` and
 passes JavaScript syntax validation before packaging.
+
+
+## v0.7.11 — simplify visual Brick Library
+
+`Brick` and `Bricks Model` are no longer shown in the visual **Brick Library**.
+They are MLBricks code-level composition/container APIs, while Builder already
+provides visual composition through **Custom Brick** and the model canvas.
+
+Their underlying catalog/API entries remain available internally so older saved
+Builder projects that already contain these node types can still load and render.

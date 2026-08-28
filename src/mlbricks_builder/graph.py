@@ -422,8 +422,8 @@ def primitive_catalog():
         {"type":"rope","name":"RoPE","icon":"RP","category":"Position","description":"Rotary position transform","accent":"purple","api":[]},
         {"type":"learned_position","name":"Learned Position","icon":"LP","category":"Position","description":"Learned positional embedding","accent":"purple","api":[]},
         {"type":"sinusoidal_position","name":"Sinusoidal Position","icon":"SP","category":"Position","description":"Sinusoidal positional encoding","accent":"purple","api":[]},
-        {"type":"brick","name":"Brick","icon":"BR","category":"Advanced","description":"Composable MLBricks layer container","accent":"cyan","api":[]},
-        {"type":"bricks_model","name":"Bricks Model","icon":"BM","category":"Advanced","description":"Complete MLBricks model container","accent":"cyan","api":[]},
+        {"type":"brick","name":"Brick","icon":"BR","category":"Advanced","description":"Composable MLBricks layer container","accent":"cyan","api":[],"library_hidden":True},
+        {"type":"bricks_model","name":"Bricks Model","icon":"BM","category":"Advanced","description":"Complete MLBricks model container","accent":"cyan","api":[],"library_hidden":True},
         {
             "type": "lm_head",
             "name": "LM Head",
@@ -556,7 +556,7 @@ def new_project(name: str = "Untitled Model"):
     now = datetime.now(timezone.utc).isoformat()
     return {
         "format": "mlbricks-builder",
-        "format_version": "0.7.10",
+        "format_version": "0.7.11",
         "project": {
             "name": name,
             "created_at": now,

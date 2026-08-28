@@ -2504,7 +2504,7 @@
       if(!model)return;
       const config={
         format:"mlbricks-model-config",
-        builder_version:"0.7.10",
+        builder_version:"0.7.11",
         project:cp(state.project||{}),
         model:cp(model),
         selected_dataset:selectedModelDataset(),
@@ -3755,7 +3755,7 @@
       return {
         format:"mlbricks-builder-design",
         format_version:"0.7.5",
-        builder_version:"0.7.10",
+        builder_version:"0.7.11",
         saved_at:new Date().toISOString(),
         state:sanitizedProjectState()
       };
@@ -3801,7 +3801,7 @@
       }
       const payload={
         format:"mlbricks-export",
-        builder_version:"0.7.10",
+        builder_version:"0.7.11",
         workspace:state.active_workspace,
         project:cp(state.project||{}),
         prepared_datasets:cp(state.prepared_datasets||[]),
@@ -3834,7 +3834,7 @@
     function showQuickHelp(){
       const win=(root.ownerDocument&&root.ownerDocument.defaultView)||window;
       const help=[
-        'MLBricks Builder v0.7.10',
+        'MLBricks Builder v0.7.11',
         '',
         '• Add bricks or data steps from the left library.',
         '• Save now asks whether to save BIN or JSON.',
@@ -3975,6 +3975,10 @@
       side.insertBefore(workspaceBox,sr);
 
       const visible=catalog.filter(item=>{
+        // Some MLBricks APIs are code-level composition containers rather than
+        // visual Builder components. Keep them in the catalog/API registry for
+        // backward compatibility, but do not show them in the Brick Library.
+        if(item.library_hidden===true)return false;
         if(itemWorkspace(item)!==state.active_workspace)return false;
         const q=(item.name+" "+item.description+" "+item.category).toLowerCase();
         return !search || q.includes(search.toLowerCase());
