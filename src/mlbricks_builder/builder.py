@@ -13,6 +13,10 @@ from .graph import new_project, primitive_catalog, tinystories_30m_project
 from .runtime import get_mlbricks_info
 from .api_registry import discover_mlbricks_api
 from .runner import execute_data_pipeline, validate_data_pipeline, PipelineValidationError, PipelineStopped
+from .model_runtime import (
+    train_builder_model, load_trained_for_generation, generate_text,
+    TrainingStopped, ModelCompileError,
+)
 
 _STATIC = Path(__file__).parent / "static"
 
@@ -46,6 +50,7 @@ class Builder:
         self._bridge_widgets = None
         self.last_data_result = None
         self.last_run_error = None
+        self.trained_models = {}
         # Actual Dataset/DatasetDict objects stay in Python memory. The serializable
         # metadata lives in state["prepared_datasets"] and is saved with the design.
         self.prepared_datasets = {}
@@ -344,6 +349,107 @@ class Builder:
             self.last_run_error = exc
             raise
 
+    def _model_output(self, model_id):
+        for item in self.state.get("model_outputs") or []:
+            if item.get("id") == model_id:
+                return item
+        raise KeyError(f"Built model not found: {model_id!r}")
+
+    def _dataset_meta(self, dataset_id):
+        for item in self.state.get("prepared_datasets") or []:
+            if item.get("id") == dataset_id:
+                return item
+        raise KeyError(f"Prepared dataset metadata not found: {dataset_id!r}")
+
+    def train_model(self, model_id, *, progress_callback=None):
+        """Compile and really train a supported Builder language model."""
+        entry = self._model_output(model_id)
+        dataset_id = entry.get("selected_dataset_id")
+        if not dataset_id:
+            raise RuntimeError("Select a prepared training dataset first.")
+        meta = self._dataset_meta(dataset_id)
+        dataset = self.get_prepared_dataset(dataset_id)
+        config = dict(entry.get("training_config") or {})
+        self._stop_event.clear()
+        def emit(payload):
+            if progress_callback:
+                enriched = dict(payload or {})
+                enriched.setdefault("model_id", model_id)
+                progress_callback(enriched)
+
+        result = train_builder_model(
+            state=self.state, model_entry=entry, dataset=dataset, dataset_meta=meta,
+            config=config, progress=emit, stop_event=self._stop_event,
+        )
+        update = result["model_update"]
+        entry.update(update)
+        self.trained_models[model_id] = {
+            "compiled": result["compiled"], "tokenizer": result["tokenizer"],
+            "runtime": dict(config),
+        }
+        payload = {
+            "status":"done","runtime_kind":"train","phase":"done","overall":100,
+            "message":f'Training complete: {entry.get("name", "model")}',
+            "model_id":model_id,"model_update":update,
+            "sample_text":result.get("last_sample"),
+        }
+        if progress_callback: progress_callback(payload)
+        return update
+
+    def generate_model(self, model_id, *, progress_callback=None):
+        """Generate tokens from a trained Builder language model."""
+        entry = self._model_output(model_id)
+        if not entry.get("weights_ready"):
+            raise RuntimeError("This model has no trained/loaded weights yet.")
+        dataset_id = entry.get("selected_dataset_id")
+        meta = self._dataset_meta(dataset_id) if dataset_id else {}
+        config = dict(entry.get("generation_config") or {})
+        self._stop_event.clear()
+
+        def emit(payload):
+            if progress_callback:
+                enriched = dict(payload or {})
+                enriched.setdefault("model_id", model_id)
+                progress_callback(enriched)
+        cached = self.trained_models.get(model_id)
+        if cached is not None:
+            compiled, tokenizer = cached["compiled"], cached["tokenizer"]
+            previous_runtime = cached.get("runtime") or {}
+            runtime_keys = ("device", "backend", "execution_mode", "compile_mode", "precision")
+            runtime_changed = any(str(previous_runtime.get(k, "auto")) != str(config.get(k, "auto")) for k in runtime_keys)
+            if runtime_changed:
+                compiled, tokenizer = load_trained_for_generation(
+                    state=self.state, model_entry=entry, dataset_meta=meta, config=config,
+                    checkpoint_path=entry.get("checkpoint_path"), progress=emit,
+                )
+                self.trained_models[model_id] = {"compiled":compiled,"tokenizer":tokenizer,"runtime":dict(config)}
+        else:
+            compiled, tokenizer = load_trained_for_generation(
+                state=self.state, model_entry=entry, dataset_meta=meta, config=config,
+                checkpoint_path=entry.get("checkpoint_path"), progress=emit,
+            )
+            self.trained_models[model_id] = {"compiled":compiled,"tokenizer":tokenizer,"runtime":dict(config)}
+        context = int(entry.get("context_length") or self.state.get("project",{}).get("context_length") or 512)
+        text, count = generate_text(
+            compiled.model, tokenizer, config.get("prompt", "Once upon a time"),
+            max_new_tokens=int(config.get("max_new_tokens",128)), context=context,
+            device=compiled.device, precision=compiled.precision,
+            temperature=float(config.get("temperature",0.8)),
+            top_k=int(config.get("top_k",50)) if config.get("top_k") is not None else None,
+            top_p=float(config.get("top_p",0.95)) if config.get("top_p") is not None else None,
+            seed=int(config.get("seed",42)), progress=emit, stop_event=self._stop_event,
+        )
+        entry["last_generation"] = text
+        entry["generated_at"] = datetime.now(timezone.utc).isoformat()
+        payload={
+            "status":"done","runtime_kind":"generate","phase":"done","overall":100,
+            "message":f"Generated {count} tokens.","model_id":model_id,
+            "generated_tokens":count,"generated_text":text,
+            "model_update":{"last_generation":text,"generated_at":entry["generated_at"]},
+        }
+        if progress_callback: emit(payload)
+        return text
+
     def stop(self):
         """Request that the current pipeline stop after the active step."""
         self._stop_event.set()
@@ -389,15 +495,31 @@ class Builder:
         self._stop_event.clear()
         self.last_run_error = None
 
+        command = self.state.get("_runtime_command") or {}
+        action = str(command.get("action") or "data").lower()
+        model_id = command.get("model_id")
+
         def worker():
             try:
-                self.last_data_result = self.run_data_pipeline(
-                    progress_callback=self._publish_bridge_progress,
-                )
-            except PipelineStopped:
-                pass
+                if action == "train":
+                    self.train_model(model_id, progress_callback=self._publish_bridge_progress)
+                elif action == "generate":
+                    self.generate_model(model_id, progress_callback=self._publish_bridge_progress)
+                else:
+                    self.last_data_result = self.run_data_pipeline(
+                        progress_callback=self._publish_bridge_progress,
+                    )
+            except (PipelineStopped, TrainingStopped):
+                self._publish_bridge_progress({
+                    "status":"stopped","runtime_kind":action,"overall":0,
+                    "message":f"{action.title()} stopped."
+                })
             except Exception as exc:
                 self.last_run_error = exc
+                self._publish_bridge_progress({
+                    "status":"error","runtime_kind":action,"overall":0,
+                    "message":f"{type(exc).__name__}: {exc}"
+                })
 
         self._run_thread = threading.Thread(
             target=worker,
@@ -458,8 +580,8 @@ class Builder:
         available = [k for k, v in self.mlbricks_api.items() if v.get("available")]
         unavailable = {k: v.get("error") for k, v in self.mlbricks_api.items() if not v.get("available")}
         return {
-            "builder_version": "0.6.1",
-            "frontend_version": "0.6.1",
+            "builder_version": "0.6.3",
+            "frontend_version": "0.6.3",
             "mlbricks": info,
             "api_components_available": available,
             "api_components_unavailable": unavailable,
@@ -480,7 +602,7 @@ class Builder:
         }).replace("</", "<\\/")
         return f"""
 <style>{css}</style>
-<div id="{html.escape(self._instance_id)}" class="mlb-root" data-mlbricks-builder-version="0.6.1"></div>
+<div id="{html.escape(self._instance_id)}" class="mlb-root" data-mlbricks-builder-version="0.6.3"></div>
 <script>
 try {{ delete window.MLBricksBuilder; }} catch (e) {{ window.MLBricksBuilder = undefined; }}
 {js}

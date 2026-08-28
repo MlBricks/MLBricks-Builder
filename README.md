@@ -847,3 +847,106 @@ the Train/Generate buttons functional as configuration workflows, but does **not
 fake actual model training or generation: the MLBricks graph compiler/model
 executor still needs to be connected before Start Training or Generate can run
 real model computation.
+
+
+## v0.6.2 — real training + generation executor
+
+`Start Training` is now connected to the Python kernel. It no longer stops at
+"Training configuration saved".
+
+For supported text language-model graphs, Builder now:
+
+- compiles the visual graph into a real `torch.nn.Module` using MLBricks layers
+- consumes the selected prepared `train` / validation splits
+- runs AdamW / Adam / SGD optimization
+- supports step, token and epoch budgets
+- gradient accumulation
+- warmup
+- selected CPU / CUDA device
+- Auto / Native / PyTorch ESA backend policy
+- eager or `torch.compile` execution
+- fp32 / fp16 / bf16 autocast
+- validation cadence and validation-step limits
+- validation sample generation
+- checkpointing and final checkpoint output
+- live step/loss/validation/token progress in the runtime panel
+- Stop Training
+
+After training, the built model is marked `weights_ready`, the final checkpoint
+is registered on the model output, and **Generate Tokens** becomes executable.
+Generation uses the configured prompt, token count, sampling settings, device,
+execution mode and precision and streams generated text back into the runtime
+panel.
+
+### Current executable graph coverage
+
+The first real compiler deliberately supports the components needed by the
+TinyStories ESA starter and similar language models:
+
+- Text Input / Text Output
+- Embedding
+- ESA
+- RMSNorm / LayerNorm
+- FFN
+- Residual
+- Dropout
+- LM Head
+- nested custom bricks composed from those parts
+
+Unsupported advanced model bricks fail with a clear compiler error instead of
+pretending to train.
+
+The executor automatically expands the runtime vocabulary when the prepared
+Hugging Face tokenizer is larger than the visual Embedding/LM Head vocabulary,
+so token IDs cannot index outside the model embedding table.
+
+
+## v0.6.3 — Training Status + Generation Status tabs
+
+The runtime workspace no longer uses a `← Model Graph` button. Training and
+generation are organized as two-tab workflows:
+
+- **Training Setup** / **Training Status**
+- **Generation Setup** / **Generation Status**
+
+Clicking **Start Training** automatically switches to Training Status. Clicking
+**Generate Tokens** automatically switches to Generation Status.
+
+### Training Status
+
+Shows live Python-kernel events:
+
+- progress percentage
+- step / max steps
+- train loss
+- latest validation loss
+- best validation loss
+- tokens seen
+- elapsed time
+- validation schedule
+- validation generated sample
+- chronological training log
+- checkpoint events and latest checkpoint path
+- output directory
+- weights/training status
+- Stop Training
+
+Validation completion and checkpoint saves are now explicit runtime events, so
+they appear in the status/log view rather than being hidden inside a generic
+step message.
+
+### Generation Status
+
+Uses the same pattern and shows:
+
+- generated tokens / requested tokens
+- live percentage
+- prompt
+- live/final generated text
+- temperature / top-k / top-p / seed
+- runtime/device/backend/execution/compile/precision
+- generation event log
+- Stop Generation
+
+Runtime progress events now carry the built model id so status/history is kept
+on the correct model even when multiple built models exist.
