@@ -1429,7 +1429,7 @@
       // Build the closing script tag by concatenation so builder.js itself never
       // contains a raw script end tag while generated HTML receives a real one.
       const closeScript="</"+"script>";
-      return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MLBricks : AIBuilder</title><style>'+cssText+'</style><style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#0b1118}body{padding:0}.mlb-root{width:100vw!important;height:100vh!important;min-height:0!important;max-height:none!important;min-width:0!important;border-radius:0!important;border:0!important;box-shadow:none!important}</style></head><body><div id="'+targetId+'" class="mlb-root" data-mlbricks-builder-version="0.7.28"></div><script>'+jsText+closeScript+'<script>window.MLBricksBuilder.mount(document.getElementById('+JSON.stringify(targetId)+'),'+safePayload+');'+closeScript+'</body></html>';
+      return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MLBricks : AIBuilder</title><style>'+cssText+'</style><style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#0b1118}body{padding:0}.mlb-root{width:100vw!important;height:100vh!important;min-height:0!important;max-height:none!important;min-width:0!important;border-radius:0!important;border:0!important;box-shadow:none!important}</style></head><body><div id="'+targetId+'" class="mlb-root" data-mlbricks-builder-version="0.7.29"></div><script>'+jsText+closeScript+'<script>window.MLBricksBuilder.mount(document.getElementById('+JSON.stringify(targetId)+'),'+safePayload+');'+closeScript+'</body></html>';
     }
 
     function openFullWindow(){
@@ -3156,7 +3156,7 @@
       if(!model)return;
       const config={
         format:"mlbricks-model-config",
-        builder_version:"0.7.28",
+        builder_version:"0.7.29",
         project:cp(state.project||{}),
         model:cp(model),
         selected_dataset:selectedModelDataset(),
@@ -3235,81 +3235,80 @@
       canvas.classList.add("gallery-active");
       const outer=document.createElement("div");outer.className="mlb-central-gallery";
 
+      const head=document.createElement("div");head.className="mlb-gallery-page-head";
+      const copy=document.createElement("div");copy.className="mlb-gallery-page-copy";
+      copy.innerHTML="<strong>GALLERY</strong><span>Prebuilt MLBricks models, reusable components, data pipelines, and your saved designs.</span>";
+      const close=btn("×","mlb-gallery-page-close");close.title="Close Gallery";close.addEventListener("click",closeGallery);
+      head.append(copy,close);outer.appendChild(head);
+
+      const tabsRow=document.createElement("div");tabsRow.className="mlb-gallery-tabs-row";
       const tabs=document.createElement("div");tabs.className="mlb-central-gallery-tabs";
       [["models","Models"],["components","Components"],["data","Data"]].forEach(([key,label])=>{
         const b=btn(label,"mlb-central-gallery-tab"+(galleryWorkspace.tab===key?" active":""));
         b.addEventListener("click",()=>{galleryWorkspace.tab=key;draw();});tabs.appendChild(b);
       });
-      outer.appendChild(tabs);
+      tabsRow.appendChild(tabs);
 
-      const tools=document.createElement("div");tools.className="mlb-central-gallery-tools";
-      const contextText=document.createElement("span");
-      contextText.textContent=galleryWorkspace.tab==="models"?"Browse prebuilt models or save the current model.":galleryWorkspace.tab==="components"?"Browse reusable building blocks or save the custom brick you are editing.":"Browse prebuilt data pipelines or save the current data workflow.";
-      tools.appendChild(contextText);
       let canSave=false,saveLabel="";
       if(galleryWorkspace.tab==="models"&&state.active_workspace==="model"&&current(state)?.kind!=="custom_edit"){canSave=true;saveLabel="+ Save Current Model";}
       if(galleryWorkspace.tab==="components"&&current(state)?.kind==="custom_edit"){canSave=true;saveLabel="+ Save Current Component";}
       if(galleryWorkspace.tab==="data"&&state.active_workspace==="data"){canSave=true;saveLabel="+ Save Current Data";}
-      if(canSave){const save=btn(saveLabel,"mlb-gallery-save");save.addEventListener("click",saveCurrentToGallery);tools.appendChild(save);}
-      outer.appendChild(tools);
+      if(canSave){const save=btn(saveLabel,"mlb-gallery-save mlb-gallery-page-save");save.addEventListener("click",saveCurrentToGallery);tabsRow.appendChild(save);}
+      outer.appendChild(tabsRow);
 
-      const body=document.createElement("div");body.className="mlb-central-gallery-body";
-      const makeSection=(heading,countText,kind="")=>{
-        const s=document.createElement("section");s.className="mlb-central-gallery-section"+(kind?" "+kind:"");
-        const sh=document.createElement("div");sh.className="mlb-central-gallery-section-head";
-        sh.innerHTML="<strong>"+heading+"</strong><span>"+countText+"</span>";s.appendChild(sh);return s;
+      const body=document.createElement("div");body.className="mlb-gallery-tile-grid";
+      const preview=(kind,labels)=>{
+        const p=document.createElement("div");p.className="mlb-gallery-preview "+kind;
+        labels.forEach((label,i)=>{
+          const n=document.createElement("span");n.className="mlb-gallery-preview-node";n.textContent=label;p.appendChild(n);
+          if(i<labels.length-1){const a=document.createElement("i");a.textContent="→";p.appendChild(a);}
+        });
+        return p;
       };
-      const empty=(text)=>{const e=document.createElement("div");e.className="mlb-central-gallery-empty";e.textContent=text;return e;};
-      const card=(name,meta,tag,actions)=>{
-        const c=document.createElement("div");c.className="mlb-central-gallery-card";
-        const icon=document.createElement("div");icon.className="mlb-central-gallery-icon";icon.textContent=tag;
-        const info=document.createElement("div");info.className="mlb-central-gallery-card-info";info.innerHTML="<strong>"+name+"</strong><span>"+meta+"</span>";
-        const acts=document.createElement("div");acts.className="mlb-central-gallery-card-actions";actions.forEach(a=>acts.appendChild(a));
-        c.append(icon,info,acts);return c;
+      const makeTile=(opts)=>{
+        const tile=document.createElement("article");tile.className="mlb-gallery-tile"+(opts.featured?" featured":"");
+        tile.appendChild(preview(opts.kind||"model",opts.preview||[opts.tag||"ML"]));
+        const content=document.createElement("div");content.className="mlb-gallery-tile-content";
+        const tag=document.createElement("span");tag.className="mlb-gallery-kind "+(opts.kind||"model");tag.textContent=opts.tag||String(opts.kind||"ITEM").toUpperCase();
+        const title=document.createElement("strong");title.className="mlb-gallery-tile-title";title.textContent=opts.name;
+        const meta=document.createElement("p");meta.textContent=opts.meta||"";
+        const actions=document.createElement("div");actions.className="mlb-gallery-tile-actions";(opts.actions||[]).forEach(a=>actions.appendChild(a));
+        content.append(tag,title,meta,actions);tile.appendChild(content);return tile;
+      };
+      const emptyTile=(title,text)=>{
+        const tile=document.createElement("article");tile.className="mlb-gallery-tile empty";
+        const content=document.createElement("div");content.className="mlb-gallery-tile-content";
+        const t=document.createElement("strong");t.className="mlb-gallery-tile-title";t.textContent=title;
+        const p=document.createElement("p");p.textContent=text;content.append(t,p);tile.appendChild(content);return tile;
       };
       const openAndClose=(fn)=>()=>{galleryWorkspace.open=false;bottomExpanded=galleryPreviousBottomExpanded;fn();};
 
       if(galleryWorkspace.tab==="models"){
-        const samples=makeSection("PREBUILT MODELS","1 available","featured");
-        const load=btn("Open Model","mlb-gallery-action sample");load.addEventListener("click",openAndClose(loadTinyStories));
-        samples.appendChild(card("TinyStories 30M","6 layers · Context 512 · Batch 16 · ~30M parameters","MODEL",[load]));
-        body.appendChild(samples);
-
-        const mine=makeSection("MY MODELS",(state.gallery.models||[]).length+" saved");
-        if(!(state.gallery.models||[]).length)mine.appendChild(empty("Models you save to Gallery will appear here."));
+        const load=btn("Open","mlb-gallery-action sample");load.addEventListener("click",openAndClose(loadTinyStories));
+        body.appendChild(makeTile({featured:true,kind:"model",tag:"MODEL",name:"TinyStories 30M",meta:"Compact language model sample · 6 layers · Context 512 · Batch 16 · ~30M parameters",preview:["Embedding","Layer ×6","LM Head","Output"],actions:[load]}));
         (state.gallery.models||[]).forEach(entry=>{
-          const load=btn("Open","mlb-gallery-action");load.addEventListener("click",openAndClose(()=>loadGalleryModel(entry)));
+          const open=btn("Open","mlb-gallery-action");open.addEventListener("click",openAndClose(()=>loadGalleryModel(entry)));
           const remove=btn("Remove","mlb-gallery-action danger");remove.addEventListener("click",()=>removeGalleryEntry("models",entry.id));
-          mine.appendChild(card(entry.name,((entry.architecture?.nodes||[]).length)+" components · "+(entry.saved_at?new Date(entry.saved_at).toLocaleDateString():"Saved"),"MODEL",[load,remove]));
+          body.appendChild(makeTile({kind:"model",tag:"MODEL",name:entry.name,meta:((entry.architecture?.nodes||[]).length)+" components · "+(entry.saved_at?new Date(entry.saved_at).toLocaleDateString():"Saved"),preview:["Input","Blocks","Head","Output"],actions:[open,remove]}));
         });
-        body.appendChild(mine);
+        if(!(state.gallery.models||[]).length)body.appendChild(emptyTile("My Models","Models you save to Gallery will appear here."));
       }else if(galleryWorkspace.tab==="components"){
-        const samples=makeSection("PREBUILT COMPONENTS","More coming","featured");
-        samples.appendChild(empty("Reusable MLBricks component templates will appear here as the Gallery grows."));
-        body.appendChild(samples);
-
-        const mine=makeSection("MY COMPONENTS",(state.gallery.components||[]).length+" saved");
-        if(!(state.gallery.components||[]).length)mine.appendChild(empty("Custom bricks you save to Gallery will appear here."));
+        body.appendChild(emptyTile("Prebuilt Components","Reusable MLBricks component templates will appear here as the Gallery grows."));
         (state.gallery.components||[]).forEach(entry=>{
           const add=btn("Add to My Bricks","mlb-gallery-action");add.addEventListener("click",()=>addGalleryComponent(entry));
           const remove=btn("Remove","mlb-gallery-action danger");remove.addEventListener("click",()=>removeGalleryEntry("components",entry.id));
-          mine.appendChild(card(entry.name,((entry.definition?.nodes||[]).length)+" blocks · "+(entry.saved_at?new Date(entry.saved_at).toLocaleDateString():"Saved"),"COMP",[add,remove]));
+          body.appendChild(makeTile({kind:"component",tag:"COMPONENT",name:entry.name,meta:((entry.definition?.nodes||[]).length)+" blocks · "+(entry.saved_at?new Date(entry.saved_at).toLocaleDateString():"Saved"),preview:["Input","Blocks","Output"],actions:[add,remove]}));
         });
-        body.appendChild(mine);
+        if(!(state.gallery.components||[]).length)body.appendChild(emptyTile("My Components","Custom bricks you save to Gallery will appear here."));
       }else{
-        const samples=makeSection("PREBUILT DATA","1 available","featured");
-        const load=btn("Open Pipeline","mlb-gallery-action sample");load.addEventListener("click",openAndClose(loadTextDataStarter));
-        samples.appendChild(card("TinyStories Text Pipeline","Hugging Face → Text Processing → Train 90% · Validation 5% · Test 5% → GPT-2 Tokenize → Prepared Dataset","DATA",[load]));
-        body.appendChild(samples);
-
-        const mine=makeSection("MY DATA",(state.gallery.data||[]).length+" saved");
-        if(!(state.gallery.data||[]).length)mine.appendChild(empty("Data pipelines you save to Gallery will appear here."));
+        const load=btn("Load","mlb-gallery-action sample");load.addEventListener("click",openAndClose(loadTextDataStarter));
+        body.appendChild(makeTile({featured:true,kind:"data",tag:"DATA",name:"TinyStories Text Pipeline",meta:"Ready-to-edit data workflow for TinyStories training.",preview:["HF Source","Clean","Split","Tokenize","Data"],actions:[load]}));
         (state.gallery.data||[]).forEach(entry=>{
-          const load=btn("Open","mlb-gallery-action");load.addEventListener("click",openAndClose(()=>loadGalleryData(entry)));
+          const open=btn("Open","mlb-gallery-action");open.addEventListener("click",openAndClose(()=>loadGalleryData(entry)));
           const remove=btn("Remove","mlb-gallery-action danger");remove.addEventListener("click",()=>removeGalleryEntry("data",entry.id));
-          mine.appendChild(card(entry.name,((entry.architecture?.nodes||[]).length)+" steps · "+(entry.saved_at?new Date(entry.saved_at).toLocaleDateString():"Saved"),"DATA",[load,remove]));
+          body.appendChild(makeTile({kind:"data",tag:"DATA",name:entry.name,meta:((entry.architecture?.nodes||[]).length)+" steps · "+(entry.saved_at?new Date(entry.saved_at).toLocaleDateString():"Saved"),preview:["Source","Process","Split","Output"],actions:[open,remove]}));
         });
-        body.appendChild(mine);
+        if(!(state.gallery.data||[]).length)body.appendChild(emptyTile("My Data","Data pipelines you save to Gallery will appear here."));
       }
 
       outer.appendChild(body);canvas.appendChild(outer);
@@ -3318,10 +3317,14 @@
     function renderCentralCloud(canvas){
       canvas.classList.add("gallery-active","cloud-active");
       const outer=document.createElement("div");outer.className="mlb-central-cloud";
+      const head=document.createElement("div");head.className="mlb-cloud-page-head";
+      const copy=document.createElement("div");copy.className="mlb-cloud-page-copy";
+      copy.innerHTML="<strong>CLOUD & REPOSITORIES</strong><span>Connect providers, push or load models, datasets, reusable components, and projects.</span>";
+      const close=btn("×","mlb-gallery-page-close");close.title="Close Cloud & Repositories";close.addEventListener("click",closeCloudWorkspace);
+      head.append(copy,close);outer.appendChild(head);
       const body=document.createElement("div");body.className="mlb-central-cloud-body";
       renderCloudView(body,false);
-      outer.appendChild(body);
-      canvas.appendChild(outer);
+      outer.appendChild(body);canvas.appendChild(outer);
     }
 
     function renderLocalView(container){
@@ -3486,7 +3489,7 @@
     function renderProviderCredentials(card){
       const p=cloudForm.provider;
       const title=document.createElement("div");title.className="mlb-cloud-subtitle";
-      title.textContent="SESSION CREDENTIALS";card.appendChild(title);
+      title.textContent="🔑  SESSION CREDENTIALS";card.appendChild(title);
 
       if(p==="huggingface"){
         card.appendChild(cloudField(
@@ -3599,88 +3602,43 @@
       container.classList.add("mlb-cloud-view");
       if(showHead){
         const head=document.createElement("div");head.className="mlb-cloud-head";
-        head.innerHTML="<div><strong>CLOUD & REPOSITORIES</strong><span>Push and load Builder data, models and projects</span></div>"+
-          "<span class='mlb-cloud-badge'>CLOUD</span>";
+        head.innerHTML="<div><strong>CLOUD & REPOSITORIES</strong><span>Push and load Builder data, models and projects</span></div><span class='mlb-cloud-badge'>CLOUD</span>";
         container.appendChild(head);
       }
 
+      const providerCard=document.createElement("section");providerCard.className="mlb-cloud-card mlb-cloud-provider-card";
+      const providerTitle=document.createElement("div");providerTitle.className="mlb-cloud-section-title";providerTitle.innerHTML="<span>☁</span><strong>PROVIDER & CONNECTION</strong>";providerCard.appendChild(providerTitle);
       const providerBar=document.createElement("div");providerBar.className="mlb-cloud-provider-bar";
       providerBar.appendChild(cloudSelect("Provider",cloudForm.provider,[
-        {value:"huggingface",label:"Hugging Face"},
-        {value:"github",label:"GitHub"},
-        {value:"aws",label:"AWS S3"},
-        {value:"gcp",label:"Google Cloud Storage"},
-        {value:"azure",label:"Azure Blob Storage"}
+        {value:"huggingface",label:"Hugging Face"},{value:"github",label:"GitHub"},{value:"aws",label:"AWS S3"},{value:"gcp",label:"Google Cloud Storage"},{value:"azure",label:"Azure Blob Storage"}
       ],v=>{cloudForm.provider=v;cloudStatus[v]=cloudStatus[v]||{};draw();}));
       const status=cloudStatus[cloudForm.provider]||{};
-      const indicator=document.createElement("div");
-      indicator.className="mlb-cloud-status "+(status.ok||status.authenticated?"ok":status.message?"warn":"idle");
-      indicator.innerHTML="<strong>"+providerLabel(cloudForm.provider)+"</strong><span>"+(status.message||"Connection not checked")+"</span>";
-      const check=btn("Check Connection","mlb-cloud-check");
-      check.addEventListener("click",()=>requestCloudCommand("cloud_status",{
-        provider:cloudForm.provider,
-        credentials:currentCloudCredentials(),
-        region:cloudForm.region
-      }));
-      providerBar.append(indicator,check);container.appendChild(providerBar);
+      const indicator=document.createElement("div");indicator.className="mlb-cloud-status "+(status.ok||status.authenticated?"ok":status.message?"warn":"idle");
+      indicator.innerHTML="<strong>Connection</strong><span>"+(status.message||providerLabel(cloudForm.provider)+" · not checked")+"</span>";
+      const check=btn("Check Connection","mlb-cloud-check");check.addEventListener("click",()=>requestCloudCommand("cloud_status",{provider:cloudForm.provider,credentials:currentCloudCredentials(),region:cloudForm.region}));
+      providerBar.append(indicator,check);providerCard.appendChild(providerBar);container.appendChild(providerCard);
 
-      const credentials=document.createElement("div");credentials.className="mlb-cloud-card credentials";
-      renderProviderCredentials(credentials);
-      container.appendChild(credentials);
+      const credentials=document.createElement("section");credentials.className="mlb-cloud-card credentials";
+      renderProviderCredentials(credentials);container.appendChild(credentials);
 
       const grid=document.createElement("div");grid.className="mlb-cloud-grid";
-
-      const push=document.createElement("div");push.className="mlb-cloud-card";
-      const pt=document.createElement("div");pt.className="mlb-cloud-card-title";
-      pt.innerHTML="<strong>↑ PUSH</strong><span>Send local Builder content to "+providerLabel(cloudForm.provider)+"</span>";
-      push.appendChild(pt);
-      push.appendChild(cloudSelect("Content Type",cloudForm.push_type,[
-        {value:"dataset",label:"Prepared Dataset"},
-        {value:"model",label:"Built / Trained Model"},
-        {value:"project",label:"Builder Project"}
-      ],v=>{cloudForm.push_type=v;cloudForm.push_artifact="";draw();}));
-      const artifacts=cloudArtifactOptions(cloudForm.push_type);
-      if(!cloudForm.push_artifact&&artifacts.length)cloudForm.push_artifact=artifacts[0].id;
-      push.appendChild(cloudSelect("Local Content",cloudForm.push_artifact,
-        artifacts.length?artifacts.map(x=>({value:x.id,label:x.name+" — "+x.detail})):[{value:"",label:"Nothing available yet"}],
-        v=>cloudForm.push_artifact=v
-      ));
+      const push=document.createElement("section");push.className="mlb-cloud-card";
+      const pt=document.createElement("div");pt.className="mlb-cloud-card-title";pt.innerHTML="<strong>↑ PUSH</strong><span>Send local Builder content to "+providerLabel(cloudForm.provider)+"</span>";push.appendChild(pt);
+      push.appendChild(cloudSelect("Content Type",cloudForm.push_type,[{value:"dataset",label:"Prepared Dataset"},{value:"model",label:"Built / Trained Model"},{value:"project",label:"Builder Project"}],v=>{cloudForm.push_type=v;cloudForm.push_artifact="";draw();}));
+      const artifacts=cloudArtifactOptions(cloudForm.push_type);if(!cloudForm.push_artifact&&artifacts.length)cloudForm.push_artifact=artifacts[0].id;
+      push.appendChild(cloudSelect("Local Content",cloudForm.push_artifact,artifacts.length?artifacts.map(x=>({value:x.id,label:x.name+" — "+x.detail})):[{value:"",label:"Nothing available yet"}],v=>cloudForm.push_artifact=v));
       providerTargetFields(push);
       if(cloudForm.provider==="huggingface"){
-        const privacy=document.createElement("label");privacy.className="mlb-cloud-private";
-        const box=document.createElement("input");box.type="checkbox";box.checked=!!cloudForm.private;
-        box.addEventListener("change",()=>cloudForm.private=box.checked);
-        const text=document.createElement("span");text.innerHTML="<strong>Private repository</strong><small>Uncheck to publish publicly</small>";
-        privacy.append(box,text);push.appendChild(privacy);
+        const privacy=document.createElement("label");privacy.className="mlb-cloud-private";const box=document.createElement("input");box.type="checkbox";box.checked=!!cloudForm.private;box.addEventListener("change",()=>cloudForm.private=box.checked);
+        const text=document.createElement("span");text.innerHTML="<strong>Private repository</strong><small>Uncheck to publish publicly</small>";privacy.append(box,text);push.appendChild(privacy);
       }
-      const pushBtn=btn("↑ Push","mlb-cloud-primary");
-      pushBtn.disabled=!artifacts.length;
-      pushBtn.addEventListener("click",()=>{
-        requestCloudCommand("cloud_push",cloudCommandConfig(cloudForm.push_type,cloudForm.push_artifact));
-      });
-      push.appendChild(pushBtn);grid.appendChild(push);
+      const pushBtn=btn("↑ Push","mlb-cloud-primary");pushBtn.disabled=!artifacts.length;pushBtn.addEventListener("click",()=>requestCloudCommand("cloud_push",cloudCommandConfig(cloudForm.push_type,cloudForm.push_artifact)));push.appendChild(pushBtn);grid.appendChild(push);
 
-      const load=document.createElement("div");load.className="mlb-cloud-card";
-      const lt=document.createElement("div");lt.className="mlb-cloud-card-title";
-      lt.innerHTML="<strong>↓ LOAD</strong><span>Restore content from "+providerLabel(cloudForm.provider)+"</span>";
-      load.appendChild(lt);
-      load.appendChild(cloudSelect("Content Type",cloudForm.load_type,[
-        {value:"dataset",label:"Prepared Dataset"},
-        {value:"model",label:"MLBricks Builder Model"},
-        {value:"project",label:"Builder Project"}
-      ],v=>cloudForm.load_type=v));
-      providerTargetFields(load);
-      const loadBtn=btn("↓ Load","mlb-cloud-primary secondary");
-      loadBtn.addEventListener("click",()=>{
-        requestCloudCommand("cloud_load",cloudCommandConfig(cloudForm.load_type,null));
-      });
-      load.appendChild(loadBtn);grid.appendChild(load);
-
+      const load=document.createElement("section");load.className="mlb-cloud-card";
+      const lt=document.createElement("div");lt.className="mlb-cloud-card-title";lt.innerHTML="<strong>↓ LOAD</strong><span>Restore content from "+providerLabel(cloudForm.provider)+"</span>";load.appendChild(lt);
+      load.appendChild(cloudSelect("Content Type",cloudForm.load_type,[{value:"dataset",label:"Prepared Dataset"},{value:"model",label:"MLBricks Builder Model"},{value:"project",label:"Builder Project"}],v=>cloudForm.load_type=v));
+      providerTargetFields(load);const loadBtn=btn("↓ Load","mlb-cloud-primary secondary");loadBtn.addEventListener("click",()=>requestCloudCommand("cloud_load",cloudCommandConfig(cloudForm.load_type,null)));load.appendChild(loadBtn);grid.appendChild(load);
       container.appendChild(grid);
-
-      const note=document.createElement("div");note.className="mlb-cloud-note";
-      note.innerHTML="<strong>Cloud behavior:</strong> Hugging Face uses native dataset/model repositories. GitHub, S3, GCS and Azure store an MLBricks bundle containing the selected project, dataset or model. Large model checkpoints are better suited to object storage/Hugging Face than GitHub.";
-      container.appendChild(note);
     }
 
 
@@ -4575,7 +4533,7 @@
       return {
         format:"mlbricks-builder-design",
         format_version:"0.7.5",
-        builder_version:"0.7.28",
+        builder_version:"0.7.29",
         saved_at:new Date().toISOString(),
         state:sanitizedProjectState()
       };
@@ -4621,7 +4579,7 @@
       }
       const payload={
         format:"mlbricks-export",
-        builder_version:"0.7.28",
+        builder_version:"0.7.29",
         workspace:state.active_workspace,
         project:cp(state.project||{}),
         prepared_datasets:cp(state.prepared_datasets||[]),
@@ -4638,7 +4596,7 @@
     async function shareWorkspace(){
       const lines=[
         "MLBricks Builder — "+(state.project?.name||workspaceName()),
-        "Version: 0.7.28",
+        "Version: 0.7.29",
         "Workspace: "+workspaceName(),
         "Nodes: "+(current(state).nodes||[]).length,
         "Connections: "+(current(state).edges||[]).length
@@ -4654,7 +4612,7 @@
     function showQuickHelp(){
       const win=(root.ownerDocument&&root.ownerDocument.defaultView)||window;
       const help=[
-        'MLBricks Builder v0.7.28',
+        'MLBricks Builder v0.7.29',
         '',
         '• Add bricks or data steps from the left library.',
         '• Export downloads a model config or workspace export file.',
@@ -4745,7 +4703,7 @@
 
       // Top bar
       const top=document.createElement("div");top.className="mlb-topbar";
-      const frontendVersion=root.dataset.mlbricksBuilderVersion||"0.7.28";
+      const frontendVersion=root.dataset.mlbricksBuilderVersion||"0.7.29";
 
       const topLeft=document.createElement("div");topLeft.className="mlb-top-left";
       const logo=document.createElement("div");logo.className="mlb-logo";logo.innerHTML='<span class="mlb-logo-mark">◇</span>MLBricks Builder <span class="mlb-beta">v'+frontendVersion+'</span>';
@@ -4771,6 +4729,9 @@
 
       // Primary execution controls stay visually centered in the full window.
       const primary=document.createElement("div");primary.className="mlb-top-primary";
+      const modeSwitch=document.createElement("div");modeSwitch.className="mlb-top-mode-switch";
+      const galleryBtn=btn("▦ Gallery","mlb-dark-btn mlb-top-gallery-btn"+(galleryWorkspace.open?" active":""));galleryBtn.title="Open prebuilt Models, Components and Data";galleryBtn.addEventListener("click",()=>galleryWorkspace.open?closeGallery():openGallery(galleryWorkspace.tab));
+      modeSwitch.appendChild(galleryBtn);
       const modelRuntimeBusy=state.active_workspace==="model" && execution.status==="running" &&
         (execution.runtime_kind==="train"||execution.runtime_kind==="generate");
       const run=state.active_workspace==="model"
@@ -4782,8 +4743,17 @@
           )
         :btn("▶ Run Data","mlb-run mlb-build");
       run.disabled=modelRuntimeBusy;
-      run.addEventListener("click",state.active_workspace==="model"?requestModelBuild:requestRun);
-      primary.appendChild(run);
+      run.addEventListener("click",()=>{
+        if(galleryWorkspace.open){closeGallery();return;}
+        if(cloudWorkspace.open){closeCloudWorkspace();return;}
+        (state.active_workspace==="model"?requestModelBuild:requestRun)();
+      });
+      run.classList.add("mlb-top-build-tab");
+      if(!galleryWorkspace.open&&!cloudWorkspace.open)run.classList.add("active");
+      modeSwitch.appendChild(run);
+      const cloudBtn=btn("▰ Repositories","mlb-dark-btn mlb-top-cloud-btn"+(cloudWorkspace.open?" active":""));cloudBtn.title="Open Cloud & Repositories";cloudBtn.addEventListener("click",()=>cloudWorkspace.open?closeCloudWorkspace():openCloudWorkspace());
+      modeSwitch.appendChild(cloudBtn);
+      primary.appendChild(modeSwitch);
 
       const stopBtn=btn("□ Stop","mlb-stop mlb-center-stop");
       stopBtn.addEventListener("click",requestStop);
@@ -4791,8 +4761,6 @@
       top.appendChild(primary);
 
       const acts=document.createElement("div");acts.className="mlb-top-actions";
-      const galleryBtn=btn("▦ Gallery","mlb-dark-btn mlb-top-gallery-btn"+(galleryWorkspace.open?" active":""));galleryBtn.title="Open prebuilt Models, Components and Data";galleryBtn.addEventListener("click",()=>openGallery(galleryWorkspace.tab));
-      const cloudBtn=btn("☁ Cloud & Repositories","mlb-dark-btn mlb-top-cloud-btn"+(cloudWorkspace.open?" active":""));cloudBtn.title="Open Cloud & Repositories";cloudBtn.addEventListener("click",openCloudWorkspace);
       const undoBtn=btn("↶ Undo","mlb-dark-btn mlb-history-btn");undoBtn.disabled=undoStack.length===0;undoBtn.title="Undo last model edit";undoBtn.addEventListener("click",undo);
       const redoBtn=btn("↷ Redo","mlb-dark-btn mlb-history-btn");redoBtn.disabled=redoStack.length===0;redoBtn.title="Redo last undone edit";redoBtn.addEventListener("click",redo);
       const clearBtn=btn("↻ Clear","mlb-dark-btn");clearBtn.disabled=layoutIsLocked();clearBtn.addEventListener("click",()=>{
@@ -4811,7 +4779,7 @@
         fullBtn.title="Open MLBricks Builder in a separate full-window browser tab";
         fullBtn.addEventListener("click",activateFullWindowLink);
       }
-      acts.append(galleryBtn,cloudBtn,undoBtn,redoBtn,clearBtn,loadBtn,exportBtn,shareBtn);
+      acts.append(undoBtn,redoBtn,clearBtn,loadBtn,exportBtn,shareBtn);
       if(fullBtn)acts.appendChild(fullBtn);
       top.appendChild(acts);
       root.appendChild(top);
@@ -4968,7 +4936,7 @@
         const zp=btn("+");zp.addEventListener("click",()=>{zoom=Math.min(1.5,zoom+.1);draw();});
         z.append(zm,zs,zp);toolbar.appendChild(z);
       }
-      main.appendChild(toolbar);
+      if(!galleryWorkspace.open&&!cloudWorkspace.open)main.appendChild(toolbar);
 
       const canvas=document.createElement("div");canvas.className="mlb-canvas"+((runtimePanel||galleryWorkspace.open||cloudWorkspace.open)?" runtime-active":"");
       if(galleryWorkspace.open){
@@ -5150,7 +5118,7 @@
         details.appendChild(panels);
       }
 
-      main.appendChild(details);
+      if(!galleryWorkspace.open&&!cloudWorkspace.open)main.appendChild(details);
 
       // Inspector
       const ins=document.createElement("aside");ins.className="mlb-inspector";

@@ -1605,3 +1605,12 @@ The separate-tab launcher is configured for `https://builder.mlbricks.io/`. Depl
 - Added a top-level **Cloud & Repositories** button beside Gallery and moved the cloud provider controls into the center workspace.
 - Removed Cloud & Repositories from the bottom drawer selector.
 - Full Window now opens the working Builder immediately and only upgrades to `https://builder.mlbricks.io/` after the hosted launcher proves it is deployed, preventing the visible URL-to-`about:blank` bounce.
+
+
+## v0.7.29 — Gallery + Repositories center workspaces
+
+- Gallery, Build, and Repositories are now a centered segmented top control with no overlap.
+- Gallery is a full center workspace with Models, Components, and Data tabs plus visual cards.
+- Cloud & Repositories is a full center workspace with provider/connection, session credentials, Push, and Load sections.
+- Gallery/Repositories hide the secondary graph toolbar and bottom drawer while open so the center workspace gets the full available area.
+- Close buttons return to the Builder canvas without changing the current graph.
