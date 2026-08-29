@@ -1804,3 +1804,196 @@
   height:16px!important;
   display:block!important;
 }
+
+
+/* ------------------------------------------------------------------
+   v0.7.35 header polish — balanced vertical spacing + branded Build action
+   ------------------------------------------------------------------ */
+.mlb-topbar{
+  height:60px!important;
+  flex:0 0 60px!important;
+  padding:0 16px!important;
+  align-items:center!important;
+  box-sizing:border-box!important;
+}
+.mlb-top-left,
+.mlb-top-primary,
+.mlb-top-actions{
+  align-self:center!important;
+}
+.mlb-logo{height:41px!important}
+.mlb-logo-brand{
+  width:191px!important;
+  height:41px!important;
+  flex:0 0 191px!important;
+}
+.mlb-beta{margin-top:3px!important}
+
+/* 40px actions inside a 60px bar => 10px breathing room above and below. */
+.mlb-top-primary>.mlb-top-build-tab,
+.mlb-top-primary>.mlb-top-gallery-btn{
+  height:40px!important;
+  min-height:40px!important;
+}
+
+/* MLBricks gold Build button. */
+.mlb-top-primary>.mlb-top-build-tab{
+  min-width:118px!important;
+  color:#fff8e8!important;
+  border:1px solid #e2a23a!important;
+  background:linear-gradient(180deg,#d99a27 0%,#b96f10 100%)!important;
+  box-shadow:0 7px 18px rgba(196,118,16,.24),inset 0 1px 0 rgba(255,255,255,.22)!important;
+  text-shadow:0 1px 1px rgba(54,31,0,.28)!important;
+}
+.mlb-top-primary>.mlb-top-build-tab:hover:not(:disabled){
+  transform:translateY(-1px)!important;
+  border-color:#f1bd59!important;
+  background:linear-gradient(180deg,#eba93a 0%,#c87a14 100%)!important;
+  box-shadow:0 9px 22px rgba(196,118,16,.32),inset 0 1px 0 rgba(255,255,255,.26)!important;
+}
+.mlb-top-primary>.mlb-top-build-tab:active:not(:disabled){
+  transform:translateY(0)!important;
+  background:linear-gradient(180deg,#bf7c18 0%,#a85f0b 100%)!important;
+}
+.mlb-top-primary>.mlb-top-build-tab .mlb-action-icon{
+  color:#fff4d6!important;
+  filter:drop-shadow(0 1px 1px rgba(60,32,0,.28));
+}
+.mlb-top-primary>.mlb-top-build-tab .mlb-action-icon svg{
+  width:17px!important;
+  height:17px!important;
+  stroke-width:1.85!important;
+}
+
+
+/* ------------------------------------------------------------------
+   v0.7.35 UI consistency patch — outline Build/Fetch + uniform action heights
+   ------------------------------------------------------------------ */
+
+/* Build / Fetch: same outlined language as the other top actions, no solid fill. */
+.mlb-top-primary>.mlb-top-build-tab{
+  min-width:118px!important;
+  height:40px!important;
+  min-height:40px!important;
+  padding:0 17px!important;
+  border:1px solid #b87a26!important;
+  border-radius:10px!important;
+  background:#121820!important;
+  color:#f2c06d!important;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.035)!important;
+  text-shadow:none!important;
+}
+.mlb-top-primary>.mlb-top-build-tab:hover:not(:disabled){
+  transform:translateY(-1px)!important;
+  border-color:#dda145!important;
+  background:#1c1a16!important;
+  color:#ffd38a!important;
+  box-shadow:0 7px 18px rgba(172,111,30,.14),inset 0 1px 0 rgba(255,255,255,.05)!important;
+}
+.mlb-top-primary>.mlb-top-build-tab:active:not(:disabled){
+  transform:translateY(0)!important;
+  background:#171713!important;
+}
+.mlb-top-primary>.mlb-top-build-tab .mlb-action-icon{
+  color:#efb75c!important;
+  filter:none!important;
+}
+.mlb-top-primary>.mlb-top-build-tab .mlb-action-icon svg{
+  width:16px!important;
+  height:16px!important;
+  stroke-width:1.9!important;
+}
+
+/* Build / Stop / Gallery share the same control height and vertical rhythm. */
+.mlb-top-primary>.mlb-top-build-tab,
+.mlb-top-primary>.mlb-center-stop,
+.mlb-top-primary>.mlb-top-gallery-btn{
+  height:40px!important;
+  min-height:40px!important;
+  box-sizing:border-box!important;
+  display:inline-flex!important;
+  align-items:center!important;
+  justify-content:center!important;
+  gap:8px!important;
+  border-radius:10px!important;
+  padding-top:0!important;
+  padding-bottom:0!important;
+  font-size:12px!important;
+  font-weight:800!important;
+  line-height:1!important;
+}
+.mlb-top-primary>.mlb-center-stop{
+  min-width:96px!important;
+  padding-left:16px!important;
+  padding-right:16px!important;
+  border:1px solid #71434b!important;
+  background:#181417!important;
+  color:#ef9aa4!important;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.03)!important;
+}
+.mlb-top-primary>.mlb-center-stop:hover:not(:disabled){
+  border-color:#965660!important;
+  background:#21171a!important;
+  color:#ffabb4!important;
+}
+.mlb-top-primary>.mlb-center-stop .mlb-action-icon{
+  width:16px!important;height:16px!important;flex:0 0 16px!important;
+}
+.mlb-top-primary>.mlb-center-stop .mlb-action-icon svg{
+  width:16px!important;height:16px!important;
+}
+
+/* The second toolbar is one visual layer: every control uses the same 34px height. */
+.mlb-toolbar{
+  height:50px!important;
+  flex:0 0 50px!important;
+  align-items:center!important;
+}
+.mlb-toolbar>.mlb-workspace-badge,
+.mlb-toolbar>.mlb-layout-toggle,
+.mlb-toolbar>.mlb-kernel-badge,
+.mlb-toolbar>.mlb-run-live,
+.mlb-toolbar>.mlb-data-ready-chip,
+.mlb-toolbar>.mlb-tool,
+.mlb-toolbar>.mlb-toggle,
+.mlb-toolbar>.mlb-zoom>button,
+.mlb-toolbar>.mlb-zoom>span{
+  height:34px!important;
+  min-height:34px!important;
+  box-sizing:border-box!important;
+}
+.mlb-toolbar>.mlb-workspace-badge,
+.mlb-toolbar>.mlb-layout-toggle,
+.mlb-toolbar>.mlb-kernel-badge,
+.mlb-toolbar>.mlb-run-live,
+.mlb-toolbar>.mlb-data-ready-chip,
+.mlb-toolbar>.mlb-tool,
+.mlb-toolbar>.mlb-toggle{
+  display:inline-flex!important;
+  align-items:center!important;
+}
+.mlb-toolbar>.mlb-workspace-badge{padding:0 10px!important}
+.mlb-toolbar>.mlb-layout-toggle{padding:0 11px!important}
+.mlb-toolbar>.mlb-kernel-badge{padding:0 10px!important}
+.mlb-toolbar>.mlb-run-live{padding:0 10px!important}
+.mlb-toolbar>.mlb-data-ready-chip{
+  padding:0 10px!important;
+  justify-content:center!important;
+  flex-direction:row!important;
+}
+.mlb-toolbar>.mlb-toggle{padding:0 2px!important}
+.mlb-toolbar>.mlb-zoom{height:34px!important;align-items:stretch!important}
+.mlb-toolbar>.mlb-zoom>button{
+  width:38px!important;
+  padding:0!important;
+  display:inline-flex!important;
+  align-items:center!important;
+  justify-content:center!important;
+}
+.mlb-toolbar>.mlb-zoom>span{
+  min-width:58px!important;
+  padding:0 10px!important;
+  display:inline-flex!important;
+  align-items:center!important;
+  justify-content:center!important;
+}
