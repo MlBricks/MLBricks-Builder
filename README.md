@@ -1590,10 +1590,18 @@ Gallery is now a first-class center workspace, opened from the top toolbar befor
 The separate-tab launcher is configured for `https://builder.mlbricks.io/`. Deploy `web/builder.mlbricks.io/index.html` at that origin. The launcher contains no model runtime; it receives the current Builder UI from the already-open notebook and keeps Python execution bridged through that notebook tab. If the hosted launcher is unavailable, Builder falls back to the working `about:blank` injected tab rather than failing.
 
 
-## v0.7.27 — Gallery blank-screen fix + hosted AIBuilder URL
+## v0.7.28 — Gallery blank-screen fix + hosted AIBuilder URL
 
 - Fixed the v0.7.26 startup regression where the generic button helper referenced an undefined Gallery item, causing a blank/black Builder screen.
 - Gallery remains a center workspace with Models / Components / Data tabs.
 - Full-window launch is configured for `https://builder.mlbricks.io/` when its launcher page is deployed.
 - Added `web/builder.mlbricks.io/index.html`, the static launcher to deploy at that origin.
 - If the hosted launcher is unavailable, Builder safely falls back to the working injected `about:blank` tab rather than breaking.
+
+
+## v0.7.28 — Center Cloud workspace + launcher stability
+
+- Removed the large Gallery title/subtitle banner; Gallery now opens directly into Models / Components / Data tabs.
+- Added a top-level **Cloud & Repositories** button beside Gallery and moved the cloud provider controls into the center workspace.
+- Removed Cloud & Repositories from the bottom drawer selector.
+- Full Window now opens the working Builder immediately and only upgrades to `https://builder.mlbricks.io/` after the hosted launcher proves it is deployed, preventing the visible URL-to-`about:blank` bounce.

@@ -14,7 +14,14 @@
   <div class="boot">Opening MLBricks AIBuilder…</div>
   <script>
   (()=>{
-    const ready=()=>{try{if(window.opener&&!window.opener.closed)window.opener.postMessage({__mlbricks_builder_launcher__:true,type:"ready"},"*");}catch(_){}};
+    const params=new URLSearchParams(location.search);
+    const probeToken=params.get("mlb_probe")||"";
+    const ready=()=>{
+      const message={__mlbricks_builder_launcher__:true,type:"ready"};
+      if(probeToken)message.probe_token=probeToken;
+      try{if(window.opener&&!window.opener.closed)window.opener.postMessage(message,"*");}catch(_){}
+      try{if(window.parent&&window.parent!==window)window.parent.postMessage(message,"*");}catch(_){}
+    };
     window.addEventListener("message",event=>{
       const msg=event.data||{};
       if(msg.__mlbricks_builder_launcher__!==true||msg.type!=="bootstrap"||typeof msg.html!=="string")return;
