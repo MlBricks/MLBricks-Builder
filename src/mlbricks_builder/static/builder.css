@@ -2033,3 +2033,8 @@
   justify-content:center!important;
   line-height:1!important;
 }
+
+
+/* v0.7.35 patch — 2px top breathing room for node badges */
+.mlb-node .index{top:9px!important;}
+.mlb-node .node-icon{top:9px!important;}
