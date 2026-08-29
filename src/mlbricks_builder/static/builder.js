@@ -4412,18 +4412,20 @@
         let posClass="";
 
         if(i===0){
-          // Top lane: ports live ON the top edge, input on left half / output on right half.
+          // Top lane: keep the port centre exactly on the node border at every size/zoom.
           const left = side==="in" ? 28 : 72;
-          style='left:'+left+'%;top:-6px;transform:translateX(-50%)';
+          style='left:'+left+'%;top:0;transform:translate(-50%,-50%)';
           posClass="top-edge";
         }else if(i===1){
-          // Main lane: conventional side-center input/output.
-          style='top:50%;transform:translateY(-50%)';
+          // Main lane: keep the port centre exactly on the left/right border.
+          style=side==="in"
+            ? 'left:0;top:50%;transform:translate(-50%,-50%)'
+            : 'right:0;top:50%;transform:translate(50%,-50%)';
           posClass="middle-side";
         }else{
-          // Bottom lane: ports live ON the bottom edge, input on left half / output on right half.
+          // Bottom lane: keep the port centre exactly on the node border at every size/zoom.
           const left = side==="in" ? 28 : 72;
-          style='left:'+left+'%;bottom:-6px;top:auto;transform:translateX(-50%)';
+          style='left:'+left+'%;bottom:0;top:auto;transform:translate(-50%,50%)';
           posClass="bottom-edge";
         }
 
@@ -4458,6 +4460,9 @@
     }
 
     function drawEdges(wrap,flow){
+      // Redrawing must be idempotent because canvas/window resize can move ports.
+      const previous=wrap.querySelector(":scope > .mlb-edge-layer");
+      if(previous)previous.remove();
       const svg=document.createElementNS("http://www.w3.org/2000/svg","svg");
       svg.setAttribute("class","mlb-edge-layer");
       const scaledRect=wrap.getBoundingClientRect();
@@ -5108,6 +5113,33 @@
         wrap.style.width=Math.ceil(baseW*zoom)+"px";
         wrap.style.height=Math.ceil(baseH*zoom)+"px";
         drawEdges(wrap,flow);
+
+        // Port/edge coordinates are pixel geometry. Recompute whenever the canvas,
+        // graph wrapper, nodes, browser window, or detached-tab viewport changes.
+        // This prevents lines/ports drifting after resize or zoom changes.
+        if(root._mlbEdgeResizeObserver){
+          try{root._mlbEdgeResizeObserver.disconnect();}catch(_e){}
+        }
+        if(typeof ResizeObserver!=="undefined"){
+          const ro=new ResizeObserver(()=>{
+            if(!wrap.isConnected||!flow.isConnected)return;
+            if(root._mlbEdgeResizeRaf)cancelAnimationFrame(root._mlbEdgeResizeRaf);
+            root._mlbEdgeResizeRaf=requestAnimationFrame(()=>drawEdges(wrap,flow));
+          });
+          ro.observe(canvas);ro.observe(wrap);ro.observe(flow);
+          flow.querySelectorAll(".mlb-node").forEach(node=>ro.observe(node));
+          root._mlbEdgeResizeObserver=ro;
+        }
+        if(root._mlbWindowResizeHandler){
+          try{window.removeEventListener("resize",root._mlbWindowResizeHandler);}catch(_e){}
+        }
+        root._mlbWindowResizeHandler=()=>{
+          if(!wrap.isConnected||!flow.isConnected)return;
+          if(root._mlbEdgeResizeRaf)cancelAnimationFrame(root._mlbEdgeResizeRaf);
+          root._mlbEdgeResizeRaf=requestAnimationFrame(()=>drawEdges(wrap,flow));
+        };
+        window.addEventListener("resize",root._mlbWindowResizeHandler,{passive:true});
+
         const pos=workspaceScroll[state.active_workspace]||{left:0,top:0};
         canvas.scrollLeft=pos.left||0;
         canvas.scrollTop=pos.top||0;

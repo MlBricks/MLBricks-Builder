@@ -1659,3 +1659,9 @@ The separate-tab launcher is configured for `https://builder.mlbricks.io/`. Depl
 - Adds the supplied metallic MLBricks network/share mark to the Builder top-left brand area.
 - Uses the same mark as the detached Builder tab favicon.
 - Keeps the v0.7.34 Inspector, Cloud connection alignment, and uniform Data toolbar fixes.
+
+## v0.7.35 — Resize-stable connectors
+
+- Keeps top, main, and bottom connector dots centred exactly on node borders.
+- Recomputes SVG edge paths when the canvas, nodes, detached window, or browser viewport resizes.
+- Prevents connector dots/lines drifting or becoming distorted after resizing the Builder canvas.

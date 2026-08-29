@@ -1790,3 +1790,14 @@
 .mlb-toolbar .mlb-kernel-badge{padding:0 8px}
 .mlb-toolbar .mlb-run-live{padding:0 8px}
 .mlb-toolbar .mlb-data-ready-chip{padding:3px 8px}
+
+
+/* ------------------------------------------------------------------
+   v0.7.35 — resize-stable six-port geometry
+   ------------------------------------------------------------------ */
+/* Inline geometry places each port centre on the node border. These
+   rules remove legacy offsets that could distort the layout on resize. */
+.mlb-port.middle-side.in{left:0}
+.mlb-port.middle-side.out{right:0}
+.mlb-port.top-edge,.mlb-port.bottom-edge{right:auto}
+.mlb-edge-layer{transform:none!important;transform-origin:0 0}
