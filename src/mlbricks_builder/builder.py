@@ -375,10 +375,12 @@ class Builder:
         last_progress = {}
 
         def relay(payload):
+            enriched = dict(payload or {})
+            enriched.setdefault("runtime_kind", "data")
             last_progress.clear()
-            last_progress.update(payload or {})
+            last_progress.update(enriched)
             if progress_callback:
-                progress_callback(payload)
+                progress_callback(enriched)
 
         try:
             self.last_data_result = execute_data_pipeline(
@@ -391,6 +393,7 @@ class Builder:
             final_payload = dict(last_progress or {})
             final_payload.update({
                 "status": "done",
+                "runtime_kind": "data",
                 "overall": 100,
                 "message": f'Data ready: {metadata["name"]}',
                 "prepared_dataset": metadata,
@@ -841,7 +844,7 @@ class Builder:
             root.mkdir(parents=True, exist_ok=True)
             manifest = {
                 "format": "mlbricks-cloud-bundle-v1",
-                "builder_version": "0.7.32",
+                "builder_version": "0.7.33",
                 "content_type": content_type,
             }
 
@@ -1997,8 +2000,8 @@ class Builder:
         available = [k for k, v in self.mlbricks_api.items() if v.get("available")]
         unavailable = {k: v.get("error") for k, v in self.mlbricks_api.items() if not v.get("available")}
         return {
-            "builder_version": "0.7.32",
-            "frontend_version": "0.7.32",
+            "builder_version": "0.7.33",
+            "frontend_version": "0.7.33",
             "mlbricks": info,
             "api_components_available": available,
             "api_components_unavailable": unavailable,
@@ -2022,7 +2025,7 @@ class Builder:
         }).replace("</", "<\\/")
         return f"""
 <style>{css}</style>
-<div id="{html.escape(self._instance_id)}" class="mlb-root" data-mlbricks-builder-version="0.7.32"></div>
+<div id="{html.escape(self._instance_id)}" class="mlb-root" data-mlbricks-builder-version="0.7.33"></div>
 <script>
 try {{ delete window.MLBricksBuilder; }} catch (e) {{ window.MLBricksBuilder = undefined; }}
 {js}

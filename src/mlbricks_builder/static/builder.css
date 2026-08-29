@@ -1735,3 +1735,23 @@
   .mlb-gallery-page-actions{gap:5px}
   .mlb-gallery-file-action{min-width:62px!important;padding:0 7px!important}
 }
+
+
+/* ------------------------------------------------------------------
+   v0.7.33 — Fetch/Stop lifecycle + two-column Components/Data Gallery
+   ------------------------------------------------------------------ */
+.mlb-central-gallery-body.components-tab,
+.mlb-central-gallery-body.data-tab{
+  display:block!important;overflow-y:auto!important;overflow-x:hidden!important;
+}
+.mlb-central-gallery-section.saved-components,
+.mlb-central-gallery-section.saved-data{margin-bottom:0!important}
+.mlb-central-gallery-card-grid.saved-component-grid,
+.mlb-central-gallery-card-grid.saved-data-grid{
+  grid-template-columns:repeat(2,minmax(0,1fr));
+}
+.mlb-center-stop[style*="display: none"]{display:none!important}
+@media(max-width:1050px){
+  .mlb-central-gallery-card-grid.saved-component-grid,
+  .mlb-central-gallery-card-grid.saved-data-grid{grid-template-columns:1fr}
+}

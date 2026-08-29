@@ -1015,8 +1015,9 @@
       });
       execution={
         status:"running",
+        runtime_kind:"data",
         overall:0,
-        message:"Starting Python pipeline…",
+        message:"Fetching data with Python pipeline…",
         nodes:queued
       };
       applyExecutionProgress(execution);
@@ -1030,8 +1031,8 @@
         const ok=clickBridgeButton(runButton);
         if(!ok){
           execution={
-            status:"error",overall:0,
-            message:"Could not activate the Python Run control.",
+            status:"error",runtime_kind:"data",overall:0,
+            message:"Could not activate the Python data control.",
             nodes:queued
           };
           applyExecutionProgress(execution);
@@ -1237,8 +1238,17 @@
             ?(execution.runtime_kind==="train"?"◆ Training":"◆ Generating")
             :(execution.status==="running"?"◆ Building":"◆ Build");
         }else{
-          run.textContent=execution.status==="running"?"▶ Running":"▶ Run Data";
+          const dataBusy=execution.status==="running"&&execution.runtime_kind==="data";
+          run.textContent=dataBusy?"⇩ Fetching":"⇩ Fetch Data";
+          run.disabled=dataBusy;
         }
+      }
+      const centerStop=root.querySelector(".mlb-center-stop");
+      if(centerStop){
+        const dataBusy=state.active_workspace==="data"&&execution.status==="running"&&execution.runtime_kind==="data";
+        const modelBusy=state.active_workspace==="model"&&execution.status==="running"&&
+          (execution.runtime_kind==="train"||execution.runtime_kind==="generate");
+        centerStop.style.display=(dataBusy||modelBusy)?"inline-flex":"none";
       }
     }
 
@@ -1429,7 +1439,7 @@
       // Build the closing script tag by concatenation so builder.js itself never
       // contains a raw script end tag while generated HTML receives a real one.
       const closeScript="</"+"script>";
-      return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MLBricks : AIBuilder</title><style>'+cssText+'</style><style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#0b1118}body{padding:0}.mlb-root{width:100vw!important;height:100vh!important;min-height:0!important;max-height:none!important;min-width:0!important;border-radius:0!important;border:0!important;box-shadow:none!important}</style></head><body><div id="'+targetId+'" class="mlb-root" data-mlbricks-builder-version="0.7.32"></div><script>'+jsText+closeScript+'<script>window.MLBricksBuilder.mount(document.getElementById('+JSON.stringify(targetId)+'),'+safePayload+');'+closeScript+'</body></html>';
+      return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MLBricks : AIBuilder</title><style>'+cssText+'</style><style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#0b1118}body{padding:0}.mlb-root{width:100vw!important;height:100vh!important;min-height:0!important;max-height:none!important;min-width:0!important;border-radius:0!important;border:0!important;box-shadow:none!important}</style></head><body><div id="'+targetId+'" class="mlb-root" data-mlbricks-builder-version="0.7.33"></div><script>'+jsText+closeScript+'<script>window.MLBricksBuilder.mount(document.getElementById('+JSON.stringify(targetId)+'),'+safePayload+');'+closeScript+'</body></html>';
     }
 
     function openFullWindow(){
@@ -3156,7 +3166,7 @@
       if(!model)return;
       const config={
         format:"mlbricks-model-config",
-        builder_version:"0.7.32",
+        builder_version:"0.7.33",
         project:cp(state.project||{}),
         model:cp(model),
         selected_dataset:selectedModelDataset(),
@@ -3319,31 +3329,43 @@
         }
         body.appendChild(mine);
       }else if(galleryWorkspace.tab==="components"){
-        const samples=makeSection("PREBUILT COMPONENTS","More coming","featured");
+        body.classList.add("components-tab");
+        const samples=makeSection("PREBUILT COMPONENTS","More coming","featured full-width");
         samples.appendChild(empty("Reusable MLBricks component templates will appear here as the Gallery grows."));
         body.appendChild(samples);
 
-        const mine=makeSection("MY COMPONENTS",(state.gallery.components||[]).length+" saved");
+        const mine=makeSection("MY COMPONENTS",(state.gallery.components||[]).length+" saved","full-width saved-components");
         if(!(state.gallery.components||[]).length)mine.appendChild(empty("Custom bricks you save to Gallery will appear here."));
-        (state.gallery.components||[]).forEach(entry=>{
-          const add=btn("Add to My Bricks","mlb-gallery-action");add.addEventListener("click",()=>addGalleryComponent(entry));
-          const remove=btn("Remove","mlb-gallery-action danger");remove.addEventListener("click",()=>removeGalleryEntry("components",entry.id));
-          mine.appendChild(card(entry.name,((entry.definition?.nodes||[]).length)+" blocks · "+(entry.saved_at?new Date(entry.saved_at).toLocaleDateString():"Saved"),"COMP",[add,remove]));
-        });
+        else{
+          const savedGrid=document.createElement("div");savedGrid.className="mlb-central-gallery-card-grid saved-component-grid";
+          (state.gallery.components||[]).forEach(entry=>{
+            const add=btn("Add to My Bricks","mlb-gallery-action");add.addEventListener("click",()=>addGalleryComponent(entry));
+            const remove=btn("Remove","mlb-gallery-action danger");remove.addEventListener("click",()=>removeGalleryEntry("components",entry.id));
+            savedGrid.appendChild(card(entry.name,((entry.definition?.nodes||[]).length)+" blocks · "+(entry.saved_at?new Date(entry.saved_at).toLocaleDateString():"Saved"),"COMP",[add,remove]));
+          });
+          mine.appendChild(savedGrid);
+        }
         body.appendChild(mine);
       }else{
-        const samples=makeSection("PREBUILT DATA","1 available","featured");
+        body.classList.add("data-tab");
+        const samples=makeSection("PREBUILT DATA","1 available","featured full-width");
         const load=btn("Open Pipeline","mlb-gallery-action sample");load.addEventListener("click",openAndClose(loadTextDataStarter));
-        samples.appendChild(card("TinyStories Text Pipeline","Hugging Face → Text Processing → Train 90% · Validation 5% · Test 5% → GPT-2 Tokenize → Prepared Dataset","DATA",[load]));
+        const sampleGrid=document.createElement("div");sampleGrid.className="mlb-central-gallery-card-grid prebuilt-grid";
+        sampleGrid.appendChild(card("TinyStories Text Pipeline","Hugging Face → Text Processing → Train 90% · Validation 5% · Test 5% → GPT-2 Tokenize → Prepared Dataset","DATA",[load]));
+        samples.appendChild(sampleGrid);
         body.appendChild(samples);
 
-        const mine=makeSection("MY DATA",(state.gallery.data||[]).length+" saved");
+        const mine=makeSection("MY DATA",(state.gallery.data||[]).length+" saved","full-width saved-data");
         if(!(state.gallery.data||[]).length)mine.appendChild(empty("Data pipelines you save to Gallery will appear here."));
-        (state.gallery.data||[]).forEach(entry=>{
-          const load=btn("Open","mlb-gallery-action");load.addEventListener("click",openAndClose(()=>loadGalleryData(entry)));
-          const remove=btn("Remove","mlb-gallery-action danger");remove.addEventListener("click",()=>removeGalleryEntry("data",entry.id));
-          mine.appendChild(card(entry.name,((entry.architecture?.nodes||[]).length)+" steps · "+(entry.saved_at?new Date(entry.saved_at).toLocaleDateString():"Saved"),"DATA",[load,remove]));
-        });
+        else{
+          const savedGrid=document.createElement("div");savedGrid.className="mlb-central-gallery-card-grid saved-data-grid";
+          (state.gallery.data||[]).forEach(entry=>{
+            const load=btn("Open","mlb-gallery-action");load.addEventListener("click",openAndClose(()=>loadGalleryData(entry)));
+            const remove=btn("Remove","mlb-gallery-action danger");remove.addEventListener("click",()=>removeGalleryEntry("data",entry.id));
+            savedGrid.appendChild(card(entry.name,((entry.architecture?.nodes||[]).length)+" steps · "+(entry.saved_at?new Date(entry.saved_at).toLocaleDateString():"Saved"),"DATA",[load,remove]));
+          });
+          mine.appendChild(savedGrid);
+        }
         body.appendChild(mine);
       }
 
@@ -4569,7 +4591,7 @@
       return {
         format:"mlbricks-builder-design",
         format_version:"0.7.5",
-        builder_version:"0.7.32",
+        builder_version:"0.7.33",
         saved_at:new Date().toISOString(),
         state:sanitizedProjectState()
       };
@@ -4615,7 +4637,7 @@
       }
       const payload={
         format:"mlbricks-export",
-        builder_version:"0.7.32",
+        builder_version:"0.7.33",
         workspace:state.active_workspace,
         project:cp(state.project||{}),
         prepared_datasets:cp(state.prepared_datasets||[]),
@@ -4632,7 +4654,7 @@
     async function shareWorkspace(){
       const lines=[
         "MLBricks Builder — "+(state.project?.name||workspaceName()),
-        "Version: 0.7.32",
+        "Version: 0.7.33",
         "Workspace: "+workspaceName(),
         "Nodes: "+(current(state).nodes||[]).length,
         "Connections: "+(current(state).edges||[]).length
@@ -4648,7 +4670,7 @@
     function showQuickHelp(){
       const win=(root.ownerDocument&&root.ownerDocument.defaultView)||window;
       const help=[
-        'MLBricks Builder v0.7.32',
+        'MLBricks Builder v0.7.33',
         '',
         '• Add bricks or data steps from the left library.',
         '• Export downloads a model config or workspace export file.',
@@ -4738,7 +4760,7 @@
 
       // Top bar
       const top=document.createElement("div");top.className="mlb-topbar";
-      const frontendVersion=root.dataset.mlbricksBuilderVersion||"0.7.32";
+      const frontendVersion=root.dataset.mlbricksBuilderVersion||"0.7.33";
 
       const topLeft=document.createElement("div");topLeft.className="mlb-top-left";
       const logo=document.createElement("div");logo.className="mlb-logo";logo.innerHTML='<span class="mlb-logo-mark">◇</span>MLBricks Builder <span class="mlb-beta">v'+frontendVersion+'</span>';
@@ -4773,7 +4795,7 @@
               :"◆ Build",
             "mlb-run mlb-build mlb-top-build-tab"+(modelRuntimeBusy?" runtime-busy "+execution.runtime_kind:"")
           )
-        :btn("▶ Run Data","mlb-run mlb-build mlb-top-build-tab");
+        :btn("⇩ Fetch Data","mlb-run mlb-build mlb-top-build-tab");
       run.disabled=modelRuntimeBusy;
       run.addEventListener("click",()=>{
         if(galleryWorkspace.open){closeGallery();return;}
@@ -4782,14 +4804,17 @@
       });
       primary.appendChild(run);
 
+      const dataFetchBusy=state.active_workspace==="data"&&execution.status==="running"&&execution.runtime_kind==="data";
+      const stopBtn=btn("□ Stop","mlb-stop mlb-center-stop");
+      stopBtn.addEventListener("click",requestStop);
+      stopBtn.style.display=(dataFetchBusy||modelRuntimeBusy)?"inline-flex":"none";
+      // Keep the hidden control mounted for Data so it appears instantly beside Fetch when work starts.
+      if(state.active_workspace==="data" || modelRuntimeBusy)primary.appendChild(stopBtn);
+
       const galleryBtn=btn("▦ Gallery","mlb-dark-btn mlb-top-gallery-btn"+(galleryWorkspace.open?" active":""));
       galleryBtn.title="Open prebuilt Models, Components and Data";
       galleryBtn.addEventListener("click",()=>galleryWorkspace.open?closeGallery():openGallery(galleryWorkspace.tab));
       primary.appendChild(galleryBtn);
-
-      const stopBtn=btn("□ Stop","mlb-stop mlb-center-stop");
-      stopBtn.addEventListener("click",requestStop);
-      if(state.active_workspace==="data" || modelRuntimeBusy)primary.appendChild(stopBtn);
       top.appendChild(primary);
 
       const acts=document.createElement("div");acts.className="mlb-top-actions";

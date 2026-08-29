@@ -1631,6 +1631,14 @@ The separate-tab launcher is configured for `https://builder.mlbricks.io/`. Depl
 - Removed Share and placed Cloud & Repositories in its former top-right slot.
 
 
+
+## v0.7.33 — Fetch lifecycle and two-column Components/Data Gallery
+
+- Data action is now **Fetch Data**.
+- **Stop** appears beside Fetch Data only while the data pipeline is actively running.
+- Gallery **Components** and **Data** saved items use the same two-column layout as saved Models.
+- Data progress is explicitly tagged as the data runtime so toolbar state stays accurate.
+
 ## v0.7.32 — Two-column saved models and Gallery file actions
 
 - Saved models now flow across both Gallery columns instead of being confined to one side.
