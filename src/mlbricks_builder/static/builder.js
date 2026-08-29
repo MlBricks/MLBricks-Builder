@@ -4840,6 +4840,7 @@
       // Keep the hidden control mounted for Data so it appears instantly beside Fetch when work starts.
       if(state.active_workspace==="data" || modelRuntimeBusy)primary.appendChild(stopBtn);
 
+      // Header polish patch: keep action icons visible for Build/Gallery.
       const galleryBtn=actionBtn("Gallery","mlb-dark-btn mlb-top-gallery-btn"+(galleryWorkspace.open?" active":""),"gallery");
       galleryBtn.title="Open prebuilt Models, Components and Data";
       galleryBtn.addEventListener("click",()=>galleryWorkspace.open?closeGallery():openGallery(galleryWorkspace.tab));
