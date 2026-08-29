@@ -117,7 +117,7 @@ def primitive_catalog():
             "description": "Load a file already available in the notebook",
             "accent": "green",
             "api": [
-                {"key": "path", "label": "Path", "type": "text", "value": "/kaggle/input/..."},
+                {"key": "path", "label": "Path", "type": "text", "value": "."},
                 {"key": "format", "label": "Format", "type": "select", "value": "auto", "options": ["auto", "txt", "csv", "json", "jsonl", "parquet"]},
                 {"key": "text_column", "label": "Text Column", "type": "text", "value": "text"},
                 {"key": "max_rows", "label": "Max Rows (0 = All)", "type": "number", "value": 0}
@@ -261,7 +261,7 @@ def primitive_catalog():
                 {"key": "dataset_name", "label": "Dataset Name", "type": "text", "value": "Prepared Dataset",
                  "help": "Use different names to keep multiple prepared datasets."},
                 {"key": "save_to_disk", "label": "Save To Disk", "type": "select", "value": "false", "options": ["false", "true"]},
-                {"key": "path", "label": "Save Path", "type": "text", "value": "/kaggle/working/prepared_dataset"}
+                {"key": "path", "label": "Save Path", "type": "text", "value": "mlbricks/data/prepared_dataset"}
             ],
         },
         {
@@ -539,7 +539,7 @@ def _default_data_processing_graph():
     output = _node("prepared_dataset", "Prepared Dataset", {
         "dataset_name": "TinyStories Prepared",
         "save_to_disk": "false",
-        "path": "/kaggle/working/prepared_dataset",
+        "path": "mlbricks/data/prepared_dataset",
     })
     nodes = [source, clean, split, tokenize, output]
     edges = [
@@ -556,7 +556,7 @@ def new_project(name: str = "Untitled Model"):
     now = datetime.now(timezone.utc).isoformat()
     return {
         "format": "mlbricks-builder",
-        "format_version": "0.7.17",
+        "format_version": "0.7.21",
         "project": {
             "name": name,
             "created_at": now,

@@ -64,8 +64,44 @@ class Builder:
         self.prepared_datasets = {}
         self.state.setdefault("prepared_datasets", [])
         self.runtime_capabilities = self._detect_runtime_capabilities()
-        from .local_runtime import detect_local_environment
+        from .local_runtime import detect_local_environment, ensure_mlbricks_workspace
         self.local_environment = detect_local_environment()
+        self.local_environment["paths"] = ensure_mlbricks_workspace(self.local_environment)
+        actual_root = Path(self.local_environment["paths"]["root"]).parent
+        expected_root = Path(self.local_environment.get("workspace_root") or self.local_environment.get("default_root") or actual_root)
+        if actual_root != expected_root:
+            self.local_environment["workspace_root"] = str(actual_root)
+            self.local_environment["default_root"] = str(actual_root)
+            roots = [str(actual_root), *(self.local_environment.get("roots") or [])]
+            self.local_environment["roots"] = list(dict.fromkeys(roots))
+        self._apply_local_workspace_defaults()
+
+    def _apply_local_workspace_defaults(self):
+        """Replace legacy Kaggle-only defaults with this session's workspace paths."""
+        paths = self.local_environment.get("paths") or {}
+        workspace_root = self.local_environment.get("workspace_root") or self.local_environment.get("default_root") or "."
+        data_default = str(Path(paths.get("data") or (Path(workspace_root) / "mlbricks" / "data")) / "prepared_dataset")
+
+        for item in self.catalog:
+            for field in item.get("api") or []:
+                if item.get("type") == "local_dataset" and field.get("key") == "path":
+                    current = str(field.get("value") or "")
+                    if current == "." or current.startswith("/kaggle/"):
+                        field["value"] = str(workspace_root)
+                if item.get("type") == "prepared_dataset" and field.get("key") == "path":
+                    current = str(field.get("value") or "")
+                    if current == "mlbricks/data/prepared_dataset" or current.startswith("/kaggle/"):
+                        field["value"] = data_default
+
+        for component in (self.state.get("components") or {}).values():
+            for node in component.get("nodes") or []:
+                params = node.setdefault("params", {})
+                local_path = str(params.get("path") or "")
+                if node.get("type") == "local_dataset" and (local_path == "." or local_path.startswith("/kaggle/")):
+                    params["path"] = str(workspace_root)
+                prepared_path = str(params.get("path") or "")
+                if node.get("type") == "prepared_dataset" and (prepared_path == "mlbricks/data/prepared_dataset" or prepared_path.startswith("/kaggle/")):
+                    params["path"] = data_default
 
     def _detect_runtime_capabilities(self):
         """Detect devices/runtime choices available in this Python session."""
@@ -805,7 +841,7 @@ class Builder:
             root.mkdir(parents=True, exist_ok=True)
             manifest = {
                 "format": "mlbricks-cloud-bundle-v1",
-                "builder_version": "0.7.17",
+                "builder_version": "0.7.21",
                 "content_type": content_type,
             }
 
@@ -1961,8 +1997,8 @@ class Builder:
         available = [k for k, v in self.mlbricks_api.items() if v.get("available")]
         unavailable = {k: v.get("error") for k, v in self.mlbricks_api.items() if not v.get("available")}
         return {
-            "builder_version": "0.7.17",
-            "frontend_version": "0.7.17",
+            "builder_version": "0.7.21",
+            "frontend_version": "0.7.21",
             "mlbricks": info,
             "api_components_available": available,
             "api_components_unavailable": unavailable,
@@ -1986,7 +2022,7 @@ class Builder:
         }).replace("</", "<\\/")
         return f"""
 <style>{css}</style>
-<div id="{html.escape(self._instance_id)}" class="mlb-root" data-mlbricks-builder-version="0.7.17"></div>
+<div id="{html.escape(self._instance_id)}" class="mlb-root" data-mlbricks-builder-version="0.7.21"></div>
 <script>
 try {{ delete window.MLBricksBuilder; }} catch (e) {{ window.MLBricksBuilder = undefined; }}
 {js}

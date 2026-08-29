@@ -1539,3 +1539,15 @@ directly into that tab.
 - the original notebook tab remains the Python execution host
 - the existing MessageChannel / postMessage / BroadcastChannel bridge is kept
   unchanged
+
+## v0.7.21 — readable AIBuilder workspace
+
+- Full-window browser tab title is now **MLBricks : AIBuilder**. The browser address remains `about:blank` by design because a script-injected tab cannot claim a custom URL without a real hosted origin.
+- Raised tiny 5–9 px UI text to readable sizes across the Builder, Inspector, runtime views, repositories, Gallery and Local Environment panels.
+- Enlarged sidebars, nodes and key controls to match the new typography.
+- Build / Training / Generating and Stop are centered in the top bar.
+- Removed the `?` Help and gear Settings buttons from the top-right toolbar.
+- Local Environment Base Path now defaults to the current writable workspace root.
+- Builder creates `<workspace>/mlbricks/` with `models/`, `data/`, `training/`, `projects/` and `exports/` directories.
+- Default model training output is under `mlbricks/models/`; prepared datasets default under `mlbricks/data/`.
+

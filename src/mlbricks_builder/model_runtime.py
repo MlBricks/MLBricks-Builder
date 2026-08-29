@@ -477,7 +477,7 @@ def train_builder_model(*,state,model_entry,dataset,dataset_meta,config,progress
     validate_every=runtime_int(config.get("validate_every"),100,"Validate Every N Steps",minimum=0)
     val_steps=runtime_int(config.get("validation_steps"),20,"Validation Steps",minimum=1)
     checkpoint_every=runtime_int(config.get("checkpoint_every"),500,"Checkpoint Every N Steps",minimum=0)
-    output=Path(str(config.get("output_dir") or "/kaggle/working/mlbricks_training"))/_safe_name(model_entry.get("name","model"));output.mkdir(parents=True,exist_ok=True);(output/'checkpoints').mkdir(exist_ok=True)
+    output=Path(str(config.get("output_dir") or "mlbricks/models"))/_safe_name(model_entry.get("name","model"));output.mkdir(parents=True,exist_ok=True);(output/'checkpoints').mkdir(exist_ok=True)
     builder_package={
         "format":"mlbricks-builder-checkpoint-v1",
         "builder_version":"0.6.8",

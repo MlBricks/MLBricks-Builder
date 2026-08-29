@@ -49,7 +49,8 @@
     let popoutSyncTimer=null;
     const runtimeCaps=cp(payload.runtime_capabilities||{devices:[{id:"auto",label:"Auto"},{id:"cpu",label:"CPU"}]});
     const localEnvironment=cp(payload.local_environment||{kind:"python",name:"Python / Jupyter Environment",roots:["."],default_root:"."});
-    const localDefaultRoot=localEnvironment.default_root||(localEnvironment.roots||[])[0]||".";
+    const localDefaultRoot=localEnvironment.workspace_root||localEnvironment.default_root||(localEnvironment.roots||[])[0]||".";
+    const localPaths=cp(localEnvironment.paths||{});
     let runtimePanel=null;
     let execution={status:"idle",overall:0,message:"Ready",nodes:{}};
     let localFiles={roots:[],entries:[],truncated:false};
@@ -1315,7 +1316,7 @@
       // Build the closing script tag by concatenation so builder.js itself never
       // contains a raw script end tag while generated HTML receives a real one.
       const closeScript="</"+"script>";
-      return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MLBricks Builder · '+String(state.project?.name||"Full Window")+'</title><style>'+cssText+'</style><style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#0b1118}body{padding:0}.mlb-root{width:100vw!important;height:100vh!important;min-height:0!important;max-height:none!important;min-width:0!important;border-radius:0!important;border:0!important;box-shadow:none!important}</style></head><body><div id="'+targetId+'" class="mlb-root" data-mlbricks-builder-version="0.7.20"></div><script>'+jsText+closeScript+'<script>window.MLBricksBuilder.mount(document.getElementById('+JSON.stringify(targetId)+'),'+safePayload+');'+closeScript+'</body></html>';
+      return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MLBricks : AIBuilder</title><style>'+cssText+'</style><style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#0b1118}body{padding:0}.mlb-root{width:100vw!important;height:100vh!important;min-height:0!important;max-height:none!important;min-width:0!important;border-radius:0!important;border:0!important;box-shadow:none!important}</style></head><body><div id="'+targetId+'" class="mlb-root" data-mlbricks-builder-version="0.7.21"></div><script>'+jsText+closeScript+'<script>window.MLBricksBuilder.mount(document.getElementById('+JSON.stringify(targetId)+'),'+safePayload+');'+closeScript+'</body></html>';
     }
 
     function openFullWindow(){
@@ -1338,6 +1339,7 @@
           popup.document.open();
           popup.document.write(page);
           popup.document.close();
+          try{popup.document.title="MLBricks : AIBuilder";}catch(_){}
         }
       }catch(_){
         try{if(popup && !popup.closed)popup.close();}catch(__){}
@@ -2088,7 +2090,7 @@
         execution_mode:"eager",
         compile_mode:"reduce-overhead",
         precision:"auto",
-        output_dir:"/kaggle/working/mlbricks_training",
+        output_dir:localPaths.models||((localDefaultRoot.replace(/[\\/]+$/,"")||".")+"/mlbricks/models"),
       };
     }
 
@@ -3003,7 +3005,7 @@
       if(!model)return;
       const config={
         format:"mlbricks-model-config",
-        builder_version:"0.7.17",
+        builder_version:"0.7.21",
         project:cp(state.project||{}),
         model:cp(model),
         selected_dataset:selectedModelDataset(),
@@ -3057,8 +3059,8 @@
       const head=document.createElement("div");head.className="mlb-local-head";
       const copyHead=document.createElement("div");
       copyHead.innerHTML=importingData
-        ?"<strong>LOCAL ENVIRONMENT DATA IMPORT</strong><span>Detected "+localEnvironment.name+". Builder scans its available filesystem roots and imports compatible datasets automatically.</span>"
-        :"<strong>LOCAL ENVIRONMENT MODEL IMPORT</strong><span>Detected "+localEnvironment.name+". Builder scans its available filesystem roots and imports compatible models automatically.</span>";
+        ?"<strong>LOCAL ENVIRONMENT DATA IMPORT</strong><span>Detected "+localEnvironment.name+". Base Path starts at the current workspace root. Builder can also scan other available environment roots.</span>"
+        :"<strong>LOCAL ENVIRONMENT MODEL IMPORT</strong><span>Detected "+localEnvironment.name+". Base Path starts at the current workspace root. Builder can also scan other available environment roots.</span>";
       const badge=document.createElement("span");badge.className="mlb-local-badge";badge.textContent=String(localEnvironment.name||"AUTO").toUpperCase();
       head.append(copyHead,badge);container.appendChild(head);
 
@@ -3071,9 +3073,10 @@
       input.addEventListener("input",()=>localForm[pathKey]=input.value);
       field.appendChild(input);
 
-      const button=btn(importingData?"Scan Environment Data":"Scan Environment Models","mlb-local-load");
+      const button=btn(importingData?"Scan Current Data":"Scan Current Models","mlb-local-load");
       button.addEventListener("click",()=>{
-        requestLocalCommand(action,{environment_scan:true,roots:cp(localEnvironment.roots||[]),max_depth:12,max_entries:1000});
+        const path=String(localForm[pathKey]||localDefaultRoot).trim()||localDefaultRoot;
+        requestLocalCommand(action,{path,max_depth:12,max_entries:1000});
       });
       const pathButton=btn("Scan This Path","mlb-local-load secondary");
       pathButton.addEventListener("click",()=>{
@@ -3085,7 +3088,7 @@
       box.append(field,buttons);container.appendChild(box);
 
       const examples=document.createElement("div");examples.className="mlb-local-path-examples";
-      const quickPaths=(localEnvironment.roots||[]);
+      const quickPaths=[localDefaultRoot,...(localEnvironment.roots||[])].filter((value,index,array)=>value&&array.indexOf(value)===index);
       quickPaths.forEach(value=>{
         const chip=document.createElement("button");chip.textContent=value;
         chip.addEventListener("click",()=>{localForm[pathKey]=value;draw();});
@@ -3579,7 +3582,7 @@
       if(node.type==="local_dataset"){
         return "from mlbricks_builder.data import load_local_dataset\n\n"+
           varname+" = load_local_dataset(\n"+
-          "    "+arg("path","/kaggle/input/...")+",\n"+
+          "    "+arg("path",localDefaultRoot)+",\n"+
           "    format="+arg("format","auto")+", text_column="+arg("text_column","text")+",\n"+
           "    max_rows="+(Number(p.max_rows||0)>0?pythonValue(Number(p.max_rows)):"None")+",\n)";
       }
@@ -3632,7 +3635,7 @@
         return "# Registered in Builder as: "+String(p.dataset_name||"Prepared Dataset")+"\n"+
           "from mlbricks_builder.data import prepared_dataset_output\n\n"+
           "prepared = prepared_dataset_output(\n"+
-          "    dataset, save_to_disk="+arg("save_to_disk","false")+", path="+arg("path","/kaggle/working/prepared_dataset")+",\n)";
+          "    dataset, save_to_disk="+arg("save_to_disk","false")+", path="+arg("path",(localPaths.data||"mlbricks/data")+"/prepared_dataset")+",\n)";
       }
       return "";
     }
@@ -4294,7 +4297,7 @@
       return {
         format:"mlbricks-builder-design",
         format_version:"0.7.5",
-        builder_version:"0.7.17",
+        builder_version:"0.7.21",
         saved_at:new Date().toISOString(),
         state:sanitizedProjectState()
       };
@@ -4340,7 +4343,7 @@
       }
       const payload={
         format:"mlbricks-export",
-        builder_version:"0.7.17",
+        builder_version:"0.7.21",
         workspace:state.active_workspace,
         project:cp(state.project||{}),
         prepared_datasets:cp(state.prepared_datasets||[]),
@@ -4357,7 +4360,7 @@
     async function shareWorkspace(){
       const lines=[
         "MLBricks Builder — "+(state.project?.name||workspaceName()),
-        "Version: 0.7.17",
+        "Version: 0.7.21",
         "Workspace: "+workspaceName(),
         "Nodes: "+(current(state).nodes||[]).length,
         "Connections: "+(current(state).edges||[]).length
@@ -4373,7 +4376,7 @@
     function showQuickHelp(){
       const win=(root.ownerDocument&&root.ownerDocument.defaultView)||window;
       const help=[
-        'MLBricks Builder v0.7.17',
+        'MLBricks Builder v0.7.21',
         '',
         '• Add bricks or data steps from the left library.',
         '• Export downloads a model config or workspace export file.',
@@ -4460,12 +4463,17 @@
 
       // Top bar
       const top=document.createElement("div");top.className="mlb-topbar";
-      const frontendVersion=root.dataset.mlbricksBuilderVersion||"0.7.6";
-      const logo=document.createElement("div");logo.className="mlb-logo";logo.innerHTML='<span class="mlb-logo-mark">◇</span>MLBricks Builder <span class="mlb-beta">v'+frontendVersion+'</span>';top.appendChild(logo);
-      const title=document.createElement("div");title.className="mlb-project-title";title.textContent=state.project?.name||"Untitled";top.appendChild(title);
-      const saved=document.createElement("div");saved.className="mlb-save-state";saved.textContent="• Saved";top.appendChild(saved);
-      const sp=document.createElement("div");sp.className="mlb-topspacer";top.appendChild(sp);
-      const acts=document.createElement("div");acts.className="mlb-top-actions";
+      const frontendVersion=root.dataset.mlbricksBuilderVersion||"0.7.21";
+
+      const topLeft=document.createElement("div");topLeft.className="mlb-top-left";
+      const logo=document.createElement("div");logo.className="mlb-logo";logo.innerHTML='<span class="mlb-logo-mark">◇</span>MLBricks Builder <span class="mlb-beta">v'+frontendVersion+'</span>';
+      const title=document.createElement("div");title.className="mlb-project-title";title.textContent=state.project?.name||"Untitled";
+      const saved=document.createElement("div");saved.className="mlb-save-state";saved.textContent="• Saved";
+      topLeft.append(logo,title,saved);
+      top.appendChild(topLeft);
+
+      // Primary execution controls stay visually centered in the full window.
+      const primary=document.createElement("div");primary.className="mlb-top-primary";
       const modelRuntimeBusy=state.active_workspace==="model" && execution.status==="running" &&
         (execution.runtime_kind==="train"||execution.runtime_kind==="generate");
       const run=state.active_workspace==="model"
@@ -4475,9 +4483,17 @@
               :"◆ Build",
             "mlb-run mlb-build"+(modelRuntimeBusy?" runtime-busy "+execution.runtime_kind:"")
           )
-        :btn("▶ Run Data","mlb-run");
+        :btn("▶ Run Data","mlb-run mlb-build");
       run.disabled=modelRuntimeBusy;
       run.addEventListener("click",state.active_workspace==="model"?requestModelBuild:requestRun);
+      primary.appendChild(run);
+
+      const stopBtn=btn("□ Stop","mlb-stop mlb-center-stop");
+      stopBtn.addEventListener("click",requestStop);
+      if(state.active_workspace==="data" || modelRuntimeBusy)primary.appendChild(stopBtn);
+      top.appendChild(primary);
+
+      const acts=document.createElement("div");acts.className="mlb-top-actions";
       const undoBtn=btn("↶ Undo","mlb-dark-btn mlb-history-btn");undoBtn.disabled=undoStack.length===0;undoBtn.title="Undo last model edit";undoBtn.addEventListener("click",undo);
       const redoBtn=btn("↷ Redo","mlb-dark-btn mlb-history-btn");redoBtn.disabled=redoStack.length===0;redoBtn.title="Redo last undone edit";redoBtn.addEventListener("click",redo);
       const clearBtn=btn("↻ Clear","mlb-dark-btn");clearBtn.disabled=layoutIsLocked();clearBtn.addEventListener("click",()=>{
@@ -4496,12 +4512,9 @@
         fullBtn.title="Open MLBricks Builder in a separate full-window browser tab";
         fullBtn.addEventListener("click",activateFullWindowLink);
       }
-      const helpBtn=btn("?","mlb-dark-btn");helpBtn.title="Quick help";helpBtn.addEventListener("click",showQuickHelp);
-      const settingsBtn=btn("⚙","mlb-dark-btn");settingsBtn.title="Project settings";settingsBtn.addEventListener("click",openBuilderSettings);
-      const stopBtn=btn("□ Stop","mlb-stop");stopBtn.addEventListener("click",requestStop);
-      acts.appendChild(run);
-      if(state.active_workspace==="data")acts.appendChild(stopBtn);
-      acts.append(undoBtn,redoBtn,clearBtn,loadBtn,exportBtn,shareBtn);if(fullBtn)acts.appendChild(fullBtn);acts.append(helpBtn,settingsBtn);top.appendChild(acts);
+      acts.append(undoBtn,redoBtn,clearBtn,loadBtn,exportBtn,shareBtn);
+      if(fullBtn)acts.appendChild(fullBtn);
+      top.appendChild(acts);
       root.appendChild(top);
 
       const shell=document.createElement("div");shell.className="mlb-shell";

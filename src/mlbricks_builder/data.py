@@ -622,7 +622,7 @@ def prepared_dataset_output(
     dataset,
     *,
     save_to_disk: bool = False,
-    path: str = "/kaggle/working/prepared_dataset",
+    path: str = "mlbricks/data/prepared_dataset",
 ):
     """Return prepared data and optionally persist Dataset/DatasetDict objects."""
     if save_to_disk:

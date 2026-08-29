@@ -93,59 +93,120 @@ def _existing_unique_paths(candidates: list[Path]) -> list[Path]:
 
 
 def detect_local_environment() -> dict[str, Any]:
-    """Describe the notebook/Python filesystem that Builder can actually scan."""
+    """Describe the notebook/Python filesystem Builder can scan and write to.
+
+    ``workspace_root`` is the current writable notebook workspace. It is used as
+    the default Base Path in the UI. Environment-specific read-only/input roots
+    can still appear in ``roots`` for explicit environment scans.
+    """
     cwd = Path.cwd()
+    home = Path.home()
 
     if os.environ.get("KAGGLE_KERNEL_RUN_TYPE") or Path("/kaggle").exists():
         kind, name = "kaggle", "Kaggle"
-        candidates = [Path("/kaggle/working"), Path("/kaggle/input")]
+        workspace_root = Path("/kaggle/working") if Path("/kaggle/working").exists() else cwd
+        candidates = [workspace_root, Path("/kaggle/input")]
     elif os.environ.get("COLAB_RELEASE_TAG") or os.environ.get("COLAB_GPU") or "google.colab" in os.sys.modules:
         kind, name = "colab", "Google Colab"
-        candidates = [Path("/content"), Path("/content/drive/MyDrive")]
+        workspace_root = Path("/content") if Path("/content").exists() else cwd
+        candidates = [workspace_root, Path("/content/drive/MyDrive")]
     elif os.environ.get("LIGHTNING_CLOUD_URL") or Path("/teamspace").exists():
         kind, name = "lightning", "Lightning AI"
-        candidates = [cwd, Path("/teamspace/studios/this_studio"), Path("/teamspace")]
+        workspace_root = cwd if str(cwd) != "/" else Path("/teamspace/studios/this_studio")
+        candidates = [workspace_root, Path("/teamspace/studios/this_studio"), Path("/teamspace")]
     elif os.environ.get("CODESPACES"):
         kind, name = "codespaces", "GitHub Codespaces"
-        candidates = [cwd, Path("/workspaces")]
+        workspace_root = cwd if str(cwd) != "/" else Path("/workspaces")
+        candidates = [workspace_root, Path("/workspaces")]
     elif os.environ.get("SAGEMAKER_REGION") or Path("/home/ec2-user/SageMaker").exists():
         kind, name = "sagemaker", "Amazon SageMaker"
-        candidates = [cwd, Path("/home/ec2-user/SageMaker")]
+        workspace_root = cwd if str(cwd) != "/" else Path("/home/ec2-user/SageMaker")
+        candidates = [workspace_root, Path("/home/ec2-user/SageMaker")]
     elif Path("/workspace").exists() and cwd != Path("/"):
         kind, name = "cloud_workspace", "Cloud Workspace"
-        candidates = [cwd, Path("/workspace")]
+        workspace_root = cwd
+        candidates = [workspace_root, Path("/workspace")]
     else:
         kind, name = "python", "Python / Jupyter Environment"
-        # The current working directory is the safest generic root. Include the
-        # user's home only when cwd is not already the home directory.
-        home = Path.home()
-        # Some notebook kernels start with cwd="/". Scanning the whole root
-        # filesystem would be noisy and expensive, so use the user home instead.
-        candidates = [home] if str(cwd) == "/" else [cwd]
+        # Do not use filesystem root as the default writable workspace.
+        workspace_root = home if str(cwd) == "/" else cwd
+        candidates = [workspace_root]
         try:
-            if cwd.resolve() != home.resolve() and str(cwd) != "/":
+            if workspace_root.resolve() != home.resolve():
                 candidates.append(home)
         except Exception:
-            if str(cwd) != "/":
-                candidates.append(home)
+            candidates.append(home)
 
     roots = _existing_unique_paths(candidates)
     if not roots:
-        roots = [cwd]
+        roots = [workspace_root]
+
+    try:
+        workspace_root = workspace_root.expanduser().resolve()
+    except Exception:
+        workspace_root = workspace_root.expanduser()
+
     resolved_roots = []
-    for p in roots:
+    for path in roots:
         try:
-            resolved_roots.append(str(p.resolve()))
+            resolved_roots.append(str(path.resolve()))
         except Exception:
-            resolved_roots.append(str(p))
+            resolved_roots.append(str(path))
+
+    mlbricks_root = workspace_root / "mlbricks"
+    paths = {
+        "root": str(mlbricks_root),
+        "models": str(mlbricks_root / "models"),
+        "data": str(mlbricks_root / "data"),
+        "training": str(mlbricks_root / "training"),
+        "projects": str(mlbricks_root / "projects"),
+        "exports": str(mlbricks_root / "exports"),
+    }
 
     return {
         "kind": kind,
         "name": name,
         "roots": resolved_roots,
-        "default_root": resolved_roots[0] if resolved_roots else str(cwd),
+        "workspace_root": str(workspace_root),
+        "default_root": str(workspace_root),
         "cwd": str(cwd),
+        "paths": paths,
     }
+
+
+def ensure_mlbricks_workspace(environment: dict[str, Any] | None = None) -> dict[str, str]:
+    """Create Builder's standard artifact directories in the current workspace."""
+    env = environment or detect_local_environment()
+    paths = dict(env.get("paths") or {})
+    if not paths:
+        root = Path(env.get("workspace_root") or env.get("default_root") or Path.cwd()) / "mlbricks"
+        paths = {
+            "root": str(root),
+            "models": str(root / "models"),
+            "data": str(root / "data"),
+            "training": str(root / "training"),
+            "projects": str(root / "projects"),
+            "exports": str(root / "exports"),
+        }
+    try:
+        for value in paths.values():
+            Path(value).expanduser().mkdir(parents=True, exist_ok=True)
+        return paths
+    except OSError:
+        # A few hosted runtimes expose a read-only cwd. Keep Builder usable by
+        # falling back to the user's writable home directory only in that case.
+        root = Path.home() / "mlbricks"
+        fallback = {
+            "root": str(root),
+            "models": str(root / "models"),
+            "data": str(root / "data"),
+            "training": str(root / "training"),
+            "projects": str(root / "projects"),
+            "exports": str(root / "exports"),
+        }
+        for value in fallback.values():
+            Path(value).mkdir(parents=True, exist_ok=True)
+        return fallback
 
 
 def _root_candidates() -> list[Path]:
