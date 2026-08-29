@@ -1560,7 +1560,7 @@ directly into that tab.
 - The detached tab title is `MLbricks : AIBuider`. The browser address remains `about:blank`; browsers do not permit a script to replace the address bar with arbitrary non-URL text.
 
 
-## v0.7.23 — stable editing and clearer data controls
+## v0.7.24 — stable editing and clearer data controls
 
 - Removed the top-toolbar **Rename Layout** and **Gallery** buttons. Gallery remains available from the workspace drawer.
 - The model/project title is now editable inline from the top bar, similar to notebook title editing.
@@ -1568,3 +1568,13 @@ directly into that tab.
 - Inspector scroll position is preserved per selected node/output so edits and actions no longer jump the right panel to the top.
 - Training dataset selector uses compact dataset names so the native option menu stays contained.
 - Split preview is slightly larger and the old numeric-only preset buttons are replaced with themed, explicit Train / Validation / Test labels.
+
+
+## v0.7.24 — sample models and data moved to Gallery
+
+- Removed TinyStories 30M and Default Data Pipeline sample shortcuts from the canvas toolbar.
+- Added built-in **Sample Models** and **Sample Data** sections to Gallery.
+- TinyStories 30M now loads from Gallery.
+- The TinyStories text-processing pipeline now loads from Gallery.
+- Data Processing pipelines can now be saved to and loaded from **My Data Pipelines** in Gallery.
+- Bottom workspace sample cards now open Gallery instead of loading a preset directly.

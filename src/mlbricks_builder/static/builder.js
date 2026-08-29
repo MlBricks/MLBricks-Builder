@@ -135,9 +135,10 @@
       if(!Array.isArray(state.prepared_datasets))state.prepared_datasets=[];
       if(!Array.isArray(state.model_outputs))state.model_outputs=[];
       if(!Array.isArray(state.project_files))state.project_files=[];
-      if(!state.gallery||typeof state.gallery!=="object")state.gallery={components:[],models:[]};
+      if(!state.gallery||typeof state.gallery!=="object")state.gallery={components:[],models:[],data:[]};
       if(!Array.isArray(state.gallery.components))state.gallery.components=[];
       if(!Array.isArray(state.gallery.models))state.gallery.models=[];
+      if(!Array.isArray(state.gallery.data))state.gallery.data=[];
       if(!state.layout_locks||typeof state.layout_locks!=="object")state.layout_locks={};
       if(!state.workspaces){
         const modelRoot=state.root_component_id;
@@ -393,7 +394,7 @@
         const store=(root.ownerDocument?.defaultView||window).localStorage;
         const parsed=JSON.parse(store.getItem(galleryStorageKey)||"null");
         if(!parsed)return;
-        ["components","models"].forEach(kind=>{
+        ["components","models","data"].forEach(kind=>{
           const existing=new Set((state.gallery[kind]||[]).map(x=>x.id));
           (parsed[kind]||[]).forEach(item=>{if(item?.id&&!existing.has(item.id))state.gallery[kind].push(cp(item));});
         });
@@ -431,8 +432,18 @@
         });
         persistGallery();setStatus(name+" saved to Component Gallery.");draw();return;
       }
+      if(state.active_workspace==="data"){
+        const pipeline=current(state);if(!pipeline)return;
+        const name=askGalleryName("data",pipeline.name||"Data Pipeline","Save data pipeline to Gallery as:");
+        if(!name)return;
+        state.gallery.data.push({
+          id:uid("gallery_data"),name,kind:"data",saved_at:new Date().toISOString(),
+          architecture:cp(pipeline)
+        });
+        persistGallery();setStatus(name+" saved to Data Gallery.");draw();return;
+      }
       if(state.active_workspace!=="model"){
-        setStatus("Gallery currently stores custom components and models. Open Model Builder to save a model.");return;
+        setStatus("Open Model Builder or Data Processing to save the current design to Gallery.");return;
       }
       const model=modelRootComponent();if(!model)return;
       const name=askGalleryName("models",state.project?.name||model.name||"My Model","Save model to Gallery as:");
@@ -473,6 +484,25 @@
       state.breadcrumbs=[{id:rootId,name:entry.name}];
       state.workspaces.model.view_component_id=rootId;state.workspaces.model.breadcrumbs=cp(state.breadcrumbs);
       selected=null;pendingPort=null;setStatus(entry.name+" loaded from Gallery.");draw();
+    }
+
+    function loadGalleryData(entry){
+      if(!entry?.architecture)return;
+      checkpoint("Load data pipeline from Gallery");
+      rememberWorkspaceView();
+      state.active_workspace="data";
+      const ws=state.workspaces.data;
+      const rootId=ws.root_component_id;
+      const architecture=cp(entry.architecture);
+      architecture.id=rootId;architecture.name=entry.name;architecture.kind="data";
+      state.components[rootId]=architecture;
+      state.view_component_id=rootId;
+      state.breadcrumbs=[{id:rootId,name:entry.name}];
+      ws.view_component_id=rootId;ws.breadcrumbs=cp(state.breadcrumbs);
+      selected=null;pendingPort=null;
+      execution={status:"idle",overall:0,message:"Ready",nodes:{}};
+      switchingWorkspace=true;
+      setStatus(entry.name+" loaded from Gallery.");draw();
     }
 
     function removeGalleryEntry(kind,id){
@@ -1350,7 +1380,7 @@
       // Build the closing script tag by concatenation so builder.js itself never
       // contains a raw script end tag while generated HTML receives a real one.
       const closeScript="</"+"script>";
-      return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MLbricks : AIBuider</title><style>'+cssText+'</style><style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#0b1118}body{padding:0}.mlb-root{width:100vw!important;height:100vh!important;min-height:0!important;max-height:none!important;min-width:0!important;border-radius:0!important;border:0!important;box-shadow:none!important}</style></head><body><div id="'+targetId+'" class="mlb-root" data-mlbricks-builder-version="0.7.23"></div><script>'+jsText+closeScript+'<script>window.MLBricksBuilder.mount(document.getElementById('+JSON.stringify(targetId)+'),'+safePayload+');'+closeScript+'</body></html>';
+      return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MLbricks : AIBuider</title><style>'+cssText+'</style><style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#0b1118}body{padding:0}.mlb-root{width:100vw!important;height:100vh!important;min-height:0!important;max-height:none!important;min-width:0!important;border-radius:0!important;border:0!important;box-shadow:none!important}</style></head><body><div id="'+targetId+'" class="mlb-root" data-mlbricks-builder-version="0.7.24"></div><script>'+jsText+closeScript+'<script>window.MLBricksBuilder.mount(document.getElementById('+JSON.stringify(targetId)+'),'+safePayload+');'+closeScript+'</body></html>';
     }
 
     function openFullWindow(){
@@ -3041,7 +3071,7 @@
       if(!model)return;
       const config={
         format:"mlbricks-model-config",
-        builder_version:"0.7.23",
+        builder_version:"0.7.24",
         project:cp(state.project||{}),
         model:cp(model),
         selected_dataset:selectedModelDataset(),
@@ -3058,13 +3088,36 @@
     function renderGalleryView(container){
       container.className="mlb-gallery-view";
       const head=document.createElement("div");head.className="mlb-gallery-head";
-      const title=document.createElement("div");title.innerHTML="<strong>MY GALLERY</strong><span>Reusable components and model designs saved by you.</span>";
-      const save=btn(current(state)?.kind==="custom_edit"?"+ Save Current Component":"+ Save Current Model","mlb-gallery-save");
+      const title=document.createElement("div");title.innerHTML="<strong>GALLERY</strong><span>Sample models and data, plus reusable designs saved by you.</span>";
+      const saveLabel=current(state)?.kind==="custom_edit"?"+ Save Current Component":(state.active_workspace==="data"?"+ Save Current Data":"+ Save Current Model");
+      const save=btn(saveLabel,"mlb-gallery-save");
       save.addEventListener("click",saveCurrentToGallery);head.append(title,save);container.appendChild(head);
 
       const grid=document.createElement("div");grid.className="mlb-gallery-grid";
-      const componentSection=document.createElement("section");componentSection.className="mlb-gallery-section";
-      const ct=document.createElement("div");ct.className="mlb-gallery-section-title";ct.innerHTML="<strong>MY COMPONENTS</strong><span>"+(state.gallery.components||[]).length+" saved</span>";componentSection.appendChild(ct);
+      const makeSection=(heading,countText,extraClass="")=>{
+        const section=document.createElement("section");section.className="mlb-gallery-section"+(extraClass?" "+extraClass:"");
+        const st=document.createElement("div");st.className="mlb-gallery-section-title";st.innerHTML="<strong>"+heading+"</strong><span>"+countText+"</span>";section.appendChild(st);return section;
+      };
+      const makeSampleCard=(name,meta,actionLabel,onLoad)=>{
+        const card=document.createElement("div");card.className="mlb-gallery-card mlb-gallery-sample-card";
+        const info=document.createElement("div");info.innerHTML="<strong>"+name+"</strong><span>"+meta+"</span>";
+        const acts=document.createElement("div");const load=btn(actionLabel,"mlb-gallery-action sample");load.addEventListener("click",onLoad);acts.append(load);card.append(info,acts);return card;
+      };
+
+      // Built-in examples live only in Gallery so the canvas toolbar stays clean.
+      // Add future examples to these registries rather than adding toolbar buttons.
+      const builtInSampleModels=[
+        {name:"TinyStories 30M",meta:"6 layers · Context 512 · Batch 16 · ~30M parameters",action:"Load Model",load:loadTinyStories}
+      ];
+      const builtInSampleData=[
+        {name:"TinyStories Text Pipeline",meta:"Hugging Face → Text Processing → Train 90% · Validation 5% · Test 5% → GPT-2 Tokenize → Prepared Dataset",action:"Load Pipeline",load:loadTextDataStarter}
+      ];
+      const sampleModels=makeSection("SAMPLE MODELS",builtInSampleModels.length+" built-in","sample");
+      builtInSampleModels.forEach(item=>sampleModels.appendChild(makeSampleCard(item.name,item.meta,item.action,item.load)));
+      const sampleData=makeSection("SAMPLE DATA",builtInSampleData.length+" built-in","sample");
+      builtInSampleData.forEach(item=>sampleData.appendChild(makeSampleCard(item.name,item.meta,item.action,item.load)));
+
+      const componentSection=makeSection("MY COMPONENTS",(state.gallery.components||[]).length+" saved");
       if(!(state.gallery.components||[]).length){const e=document.createElement("div");e.className="mlb-gallery-empty";e.textContent="Open a Custom Brick and save it here for reuse.";componentSection.appendChild(e);}
       (state.gallery.components||[]).forEach(entry=>{
         const card=document.createElement("div");card.className="mlb-gallery-card";
@@ -3072,16 +3125,24 @@
         const acts=document.createElement("div");const add=btn("Add to My Bricks","mlb-gallery-action");add.addEventListener("click",()=>addGalleryComponent(entry));const remove=btn("Remove","mlb-gallery-action danger");remove.addEventListener("click",()=>removeGalleryEntry("components",entry.id));acts.append(add,remove);card.append(meta,acts);componentSection.appendChild(card);
       });
 
-      const modelSection=document.createElement("section");modelSection.className="mlb-gallery-section";
-      const mt=document.createElement("div");mt.className="mlb-gallery-section-title";mt.innerHTML="<strong>MY MODELS</strong><span>"+(state.gallery.models||[]).length+" saved</span>";modelSection.appendChild(mt);
+      const modelSection=makeSection("MY MODELS",(state.gallery.models||[]).length+" saved");
       if(!(state.gallery.models||[]).length){const e=document.createElement("div");e.className="mlb-gallery-empty";e.textContent="Save your current Model Builder layout to keep it for later.";modelSection.appendChild(e);}
       (state.gallery.models||[]).forEach(entry=>{
         const card=document.createElement("div");card.className="mlb-gallery-card";
         const meta=document.createElement("div");meta.innerHTML="<strong>"+entry.name+"</strong><span>"+((entry.architecture?.nodes||[]).length)+" components · "+(entry.saved_at?new Date(entry.saved_at).toLocaleDateString():"Saved")+"</span>";
         const acts=document.createElement("div");const load=btn("Load to Canvas","mlb-gallery-action");load.addEventListener("click",()=>loadGalleryModel(entry));const remove=btn("Remove","mlb-gallery-action danger");remove.addEventListener("click",()=>removeGalleryEntry("models",entry.id));acts.append(load,remove);card.append(meta,acts);modelSection.appendChild(card);
       });
-      grid.append(componentSection,modelSection);container.appendChild(grid);
-      const note=document.createElement("div");note.className="mlb-gallery-note";note.textContent="Gallery is stored in the Builder project and is also mirrored to browser storage when available.";container.appendChild(note);
+
+      const dataSection=makeSection("MY DATA PIPELINES",(state.gallery.data||[]).length+" saved");
+      if(!(state.gallery.data||[]).length){const e=document.createElement("div");e.className="mlb-gallery-empty";e.textContent="Save a Data Processing pipeline here for reuse.";dataSection.appendChild(e);}
+      (state.gallery.data||[]).forEach(entry=>{
+        const card=document.createElement("div");card.className="mlb-gallery-card";
+        const meta=document.createElement("div");meta.innerHTML="<strong>"+entry.name+"</strong><span>"+((entry.architecture?.nodes||[]).length)+" steps · "+(entry.saved_at?new Date(entry.saved_at).toLocaleDateString():"Saved")+"</span>";
+        const acts=document.createElement("div");const load=btn("Load Pipeline","mlb-gallery-action");load.addEventListener("click",()=>loadGalleryData(entry));const remove=btn("Remove","mlb-gallery-action danger");remove.addEventListener("click",()=>removeGalleryEntry("data",entry.id));acts.append(load,remove);card.append(meta,acts);dataSection.appendChild(card);
+      });
+
+      grid.append(sampleModels,sampleData,componentSection,modelSection,dataSection);container.appendChild(grid);
+      const note=document.createElement("div");note.className="mlb-gallery-note";note.textContent="Built-in samples stay available in Gallery. Your saved items are stored in the Builder project and mirrored to browser storage when available.";container.appendChild(note);
     }
 
     function renderLocalView(container){
@@ -4333,7 +4394,7 @@
       return {
         format:"mlbricks-builder-design",
         format_version:"0.7.5",
-        builder_version:"0.7.23",
+        builder_version:"0.7.24",
         saved_at:new Date().toISOString(),
         state:sanitizedProjectState()
       };
@@ -4379,7 +4440,7 @@
       }
       const payload={
         format:"mlbricks-export",
-        builder_version:"0.7.23",
+        builder_version:"0.7.24",
         workspace:state.active_workspace,
         project:cp(state.project||{}),
         prepared_datasets:cp(state.prepared_datasets||[]),
@@ -4396,7 +4457,7 @@
     async function shareWorkspace(){
       const lines=[
         "MLBricks Builder — "+(state.project?.name||workspaceName()),
-        "Version: 0.7.23",
+        "Version: 0.7.24",
         "Workspace: "+workspaceName(),
         "Nodes: "+(current(state).nodes||[]).length,
         "Connections: "+(current(state).edges||[]).length
@@ -4412,7 +4473,7 @@
     function showQuickHelp(){
       const win=(root.ownerDocument&&root.ownerDocument.defaultView)||window;
       const help=[
-        'MLBricks Builder v0.7.23',
+        'MLBricks Builder v0.7.24',
         '',
         '• Add bricks or data steps from the left library.',
         '• Export downloads a model config or workspace export file.',
@@ -4503,7 +4564,7 @@
 
       // Top bar
       const top=document.createElement("div");top.className="mlb-topbar";
-      const frontendVersion=root.dataset.mlbricksBuilderVersion||"0.7.23";
+      const frontendVersion=root.dataset.mlbricksBuilderVersion||"0.7.24";
 
       const topLeft=document.createElement("div");topLeft.className="mlb-top-left";
       const logo=document.createElement("div");logo.className="mlb-logo";logo.innerHTML='<span class="mlb-logo-mark">◇</span>MLBricks Builder <span class="mlb-beta">v'+frontendVersion+'</span>';
@@ -4685,12 +4746,6 @@
         lockToggle.addEventListener("click",toggleLayoutLock);
         toolbar.append(lockToggle);
 
-        if(state.active_workspace==="model"){
-          const demo=btn("★ TinyStories 30M","mlb-tool");demo.addEventListener("click",loadTinyStories);toolbar.appendChild(demo);
-        }else{
-          const demo=btn("★ Default Data Pipeline","mlb-tool");demo.addEventListener("click",loadTextDataStarter);toolbar.appendChild(demo);
-        }
-
         if(state.active_workspace==="data"){
           const kernel=document.createElement("div");kernel.className="mlb-kernel-badge";
           toolbar.appendChild(kernel);
@@ -4751,7 +4806,7 @@
         }else if(state.active_workspace==="data"){
           e.innerHTML="<strong>Build your data pipeline step by step.</strong><br><br>Start with Hugging Face, Kaggle, URL, Local or Manual Data.";
         }else{
-          e.innerHTML="<strong>Build your model layer by layer.</strong><br><br>Add a brick from the left or load TinyStories 30M.";
+          e.innerHTML="<strong>Build your model layer by layer.</strong><br><br>Add a brick from the left or open Gallery to load a sample model.";
         }
         flow.appendChild(e);
       }else{
@@ -4794,7 +4849,7 @@
       hint.textContent=pendingPort
         ?"Choose the matching lane: Top ↔ Top, Main ↔ Main, Bottom ↔ Bottom."
         :(state.active_workspace==="data"
-          ?"Build left to right: one Data Source → Processing → Train/Val/Test → Tokenize → Prepared Dataset. Use Default Data Pipeline to reset."
+          ?"Build left to right: one Data Source → Processing → Train/Val/Test → Tokenize → Prepared Dataset. Open Gallery to load a sample pipeline."
           :"Select a node before adding a brick to insert after it. Use Move Left / Move Right in Inspector to reorder. Main flow rewires automatically.");
       canvas.appendChild(hint);
       main.appendChild(canvas);
@@ -4877,8 +4932,8 @@
         const p4=document.createElement("div");p4.className="mlb-bottom-card";
 
         if(state.active_workspace==="data"){
-          p1.innerHTML='<div class="mlb-bottom-title">STARTER</div><div class="mlb-preset-card"><strong>★ Default Data Pipeline</strong>Hugging Face → Clean → Train/Val/Test → Tokenize → Output</div>';
-          p1.querySelector(".mlb-preset-card").addEventListener("click",loadTextDataStarter);
+          p1.innerHTML='<div class="mlb-bottom-title">GALLERY</div><div class="mlb-preset-card"><strong>▦ Sample & Saved Data</strong>Open sample data pipelines or reuse pipelines saved by you.</div>';
+          p1.querySelector(".mlb-preset-card").addEventListener("click",openGallery);
           p2.innerHTML='<div class="mlb-bottom-title">PIPELINE INFO</div><div class="mlb-stat-row"><span>Steps</span><strong>'+current(state).nodes.length+'</strong></div><div class="mlb-stat-row"><span>Connections</span><strong>'+(current(state).edges||[]).length+'</strong></div><div class="mlb-stat-row"><span>Workspace</span><strong>Data</strong></div><div class="mlb-stat-row"><span>Status</span><strong class="mlb-good">✓ Designed</strong></div>';
           const latestData=latestPreparedDataset();
           p3.innerHTML=latestData
@@ -4890,8 +4945,8 @@
             :'<div class="mlb-bottom-title">PROCESSING</div><div class="mlb-stat-row"><span>Text</span><strong>Clean / Tokenize</strong></div><div class="mlb-stat-row"><span>Image</span><strong>Resize / Crop</strong></div><div class="mlb-stat-row"><span>Audio</span><strong>Resample / Normalize</strong></div><div class="mlb-stat-row"><span>Split</span><strong>Train / Val / Test</strong></div>';
           p4.innerHTML='<div class="mlb-bottom-title">FLOW</div><div class="mlb-stat-row"><span>Main</span><strong>Processing order</strong></div><div class="mlb-stat-row"><span>Skip</span><strong>Optional branch</strong></div><div class="mlb-stat-row"><span>Extra</span><strong>Aux data</strong></div>';
         }else{
-          p1.innerHTML='<div class="mlb-bottom-title">PRESETS</div><div class="mlb-preset-card"><strong>★ TinyStories 30M (6L)</strong>Context 512 · Batch 16<br>~30M parameters</div>';
-          p1.querySelector(".mlb-preset-card").addEventListener("click",loadTinyStories);
+          p1.innerHTML='<div class="mlb-bottom-title">GALLERY</div><div class="mlb-preset-card"><strong>▦ Sample & Saved Models</strong>Open sample architectures or reuse models saved by you.</div>';
+          p1.querySelector(".mlb-preset-card").addEventListener("click",openGallery);
           p2.innerHTML='<div class="mlb-bottom-title">GRAPH INFO</div><div class="mlb-stat-row"><span>Layers</span><strong>'+current(state).nodes.length+'</strong></div><div class="mlb-stat-row"><span>Connections</span><strong>'+(current(state).edges||[]).length+'</strong></div><div class="mlb-stat-row"><span>Context</span><strong>'+(state.project?.context_length||"—")+'</strong></div><div class="mlb-stat-row"><span>Batch Size</span><strong>'+(state.project?.batch_size||"—")+'</strong></div><div class="mlb-stat-row"><span>Status</span><strong class="mlb-good">Design Ready</strong></div>';
           p3.innerHTML='<div class="mlb-bottom-title">COMPUTE ESTIMATE</div><div class="mlb-stat-row"><span>Target Params</span><strong>'+(state.project?.estimated_parameters||"—")+'</strong></div><div class="mlb-stat-row"><span>Dataset</span><strong>'+(state.project?.dataset||"—")+'</strong></div><div class="mlb-stat-row"><span>Precision</span><strong>float16</strong></div><div class="mlb-stat-row"><span>Backend</span><strong>MLBricks</strong></div>';
           p4.innerHTML='<div class="mlb-bottom-title">CONNECTION LANES</div><div class="mlb-stat-row"><span>Skip</span><strong>Top Out → Top In</strong></div><div class="mlb-stat-row"><span>Main</span><strong>Middle Out → Middle In</strong></div><div class="mlb-stat-row"><span>Extra</span><strong>Bottom Out → Bottom In</strong></div><div class="mlb-stat-row"><span>Remove</span><strong>Inspector → Remove</strong></div>';

@@ -1408,14 +1408,22 @@
 
 
 /* ------------------------------------------------------------------
-   v0.7.23 — inline model naming, clearer split presets, stable UI focus
+   v0.7.24 — inline model naming, clearer split presets, stable UI focus
    ------------------------------------------------------------------ */
 .mlb-toolbar{flex-wrap:nowrap;min-width:0}
 .mlb-workspace-badge{flex:0 0 auto}
 .mlb-training-data-select{min-width:0!important;max-width:100%!important}
 
-/* v0.7.23 — contained training dataset selector */
+/* v0.7.24 — contained training dataset selector */
 .mlb-field .mlb-training-data-select{display:block;width:100%;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mlb-search::placeholder{color:#6f7f90;opacity:1}
 .mlb-search:focus{border-color:#5f73a8;box-shadow:0 0 0 2px rgba(95,115,168,.12)}
 .mlb-toolbar .mlb-tool,.mlb-workspace-badge{white-space:nowrap}
+
+
+/* v0.7.24 — samples belong in Gallery, not the canvas toolbar */
+.mlb-gallery-section.sample{border-color:#51438d;background:linear-gradient(180deg,#151529 0%,#111820 100%)}
+.mlb-gallery-sample-card{border-color:#4f4384;background:#17172a}
+.mlb-gallery-action.sample{border-color:#6653c5;background:#241f49;color:#d9d1ff;font-weight:700}
+.mlb-gallery-action.sample:hover{background:#30285e;border-color:#806be2}
+@media(min-width:1450px){.mlb-gallery-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
