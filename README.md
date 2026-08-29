@@ -1622,3 +1622,10 @@ The separate-tab launcher is configured for `https://builder.mlbricks.io/`. Depl
 - Top-center controls are separate `Build`, `Gallery`, and `Cloud & Repositories` buttons instead of a segmented switch.
 - Restores the compact Gallery/Repositories banner treatment while keeping close actions.
 - Cloud & Repositories remains a center workspace and scrolls independently when content exceeds the available height.
+
+
+## v0.7.31 — Fixed Gallery sizing and Cloud action placement
+
+- Gallery banner/tabs keep a fixed height; only Gallery contents scroll as collections grow.
+- Restored compact v0.7.27-style Gallery model cards with parameters, batch and block metadata.
+- Removed Share and placed Cloud & Repositories in its former top-right slot.

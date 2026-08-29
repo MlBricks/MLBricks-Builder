@@ -1647,3 +1647,60 @@
   .mlb-top-primary>.mlb-top-gallery-btn{min-width:86px;padding:0 10px!important}
   .mlb-top-primary>.mlb-top-cloud-btn{min-width:154px;padding:0 10px!important;font-size:10.5px}
 }
+
+
+/* ------------------------------------------------------------------
+   v0.7.31 — fixed Gallery card sizing + content-only scroll
+   ------------------------------------------------------------------ */
+.mlb-central-gallery{
+  position:absolute!important;inset:0!important;
+  display:flex!important;flex-direction:column!important;
+  overflow:hidden!important;min-height:0!important;
+}
+.mlb-gallery-page-head{
+  flex:0 0 68px!important;min-height:68px!important;max-height:68px!important;
+  box-sizing:border-box!important;padding:14px 20px!important;
+}
+.mlb-gallery-tabs-row{
+  flex:0 0 43px!important;min-height:43px!important;max-height:43px!important;
+  box-sizing:border-box!important;
+}
+.mlb-central-gallery-body{
+  flex:1 1 auto!important;min-height:0!important;height:auto!important;max-height:none!important;
+  overflow-y:auto!important;overflow-x:hidden!important;
+  padding:16px 18px 30px!important;
+  display:grid!important;grid-template-columns:repeat(auto-fit,minmax(330px,1fr))!important;
+  align-content:start!important;align-items:start!important;gap:14px!important;
+  scrollbar-gutter:stable both-edges;overscroll-behavior:contain;
+}
+.mlb-central-gallery-body::-webkit-scrollbar{width:10px}
+.mlb-central-gallery-body::-webkit-scrollbar-thumb{background:#35485a;border-radius:8px;border:2px solid #0b1219}
+.mlb-central-gallery-body::-webkit-scrollbar-track{background:#0b1219}
+.mlb-central-gallery-section{
+  align-self:start!important;min-width:0!important;height:auto!important;min-height:0!important;
+  flex:none!important;
+}
+.mlb-central-gallery-card{
+  min-height:64px!important;height:auto!important;flex:none!important;
+  grid-template-columns:42px minmax(0,1fr) auto!important;
+  padding:10px!important;box-sizing:border-box!important;
+}
+.mlb-central-gallery-icon{width:42px!important;height:42px!important;min-width:42px!important;min-height:42px!important}
+.mlb-central-gallery-card-info strong{font-size:12px!important}
+.mlb-central-gallery-card-info span{font-size:10px!important;line-height:1.35!important}
+
+/* Build + Gallery remain centered. Cloud & Repositories replaces Share on the right. */
+.mlb-top-primary>.mlb-top-cloud-btn{display:none!important}
+.mlb-top-actions>.mlb-top-cloud-action{
+  display:inline-flex!important;align-items:center;justify-content:center;
+  height:32px!important;min-width:154px!important;max-width:190px!important;
+  padding:0 10px!important;border:1px solid #4f7da2!important;border-radius:7px!important;
+  background:#101c27!important;color:#d7efff!important;font-size:10.5px!important;font-weight:800!important;
+  white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important;
+}
+.mlb-top-actions>.mlb-top-cloud-action:hover,.mlb-top-actions>.mlb-top-cloud-action.active{
+  border-color:#70a5cf!important;background:#172b3c!important;color:#fff!important;
+}
+@media(max-width:1180px){
+  .mlb-top-actions>.mlb-top-cloud-action{min-width:118px!important;max-width:140px!important}
+}
