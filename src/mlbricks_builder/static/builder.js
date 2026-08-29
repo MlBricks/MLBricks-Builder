@@ -1,5 +1,3 @@
-
-try { delete window.MLBricksBuilder; } catch (e) { window.MLBricksBuilder = undefined; }
 (function(){
   // Always overwrite any renderer left by an older notebook output.
   // Kaggle keeps browser globals even when Python modules are reinstalled.
@@ -42,7 +40,6 @@ try { delete window.MLBricksBuilder; } catch (e) { window.MLBricksBuilder = unde
     let lastInspectorRenderKey=null;
     const bridge=payload.bridge||null;
     const isPopout=!!(bridge&&(bridge.mode==="broadcast"||bridge.mode==="popout"));
-    root.dataset.popout=isPopout?"true":"false";
     const popoutChannelName=(bridge&&bridge.channel)||("mlbricks-builder-"+(payload.instance_id||root.id||"session"));
     let popoutChannel=null;
     let popoutHostConnected=!isPopout;
@@ -342,21 +339,6 @@ try { delete window.MLBricksBuilder; } catch (e) { window.MLBricksBuilder = unde
       if(!raw) return "ML";
       if(raw==="SPLIT") return "SPLT";
       return raw.length>4 ? raw.slice(0,4) : raw;
-    }
-
-    function selectedTypeHeader(node,publicName){
-      const wrap=document.createElement("div");
-      wrap.className="mlb-selected";
-      const display=String(nodeDisplayName(node)||"").trim();
-      const apiName=String(publicName||"Custom").trim();
-      if(display && apiName && display.toLowerCase()===apiName.toLowerCase()){
-        wrap.classList.add("single");
-        const pill=document.createElement("span");pill.className="mlb-pill";pill.textContent=apiName;wrap.appendChild(pill);
-      }else{
-        const strong=document.createElement("strong");strong.textContent=display||apiName;wrap.appendChild(strong);
-        const pill=document.createElement("span");pill.className="mlb-pill";pill.textContent=apiName;wrap.appendChild(pill);
-      }
-      return wrap;
     }
 
     function layoutNameExists(name,exceptId=null){
@@ -1252,12 +1234,13 @@ try { delete window.MLBricksBuilder; } catch (e) { window.MLBricksBuilder = unde
         run.classList.toggle("generate",runtimeBusy&&execution.runtime_kind==="generate");
         run.disabled=execution.status==="running";
         if(state.active_workspace==="model"){
-          run.textContent=runtimeBusy
-            ?(execution.runtime_kind==="train"?"◆ Training":"◆ Generating")
-            :(execution.status==="running"?"◆ Building":"◆ Build");
+          const label=runtimeBusy
+            ?(execution.runtime_kind==="train"?"Training":"Generating")
+            :(execution.status==="running"?"Building":"Build");
+          setActionButtonContent(run,runtimeBusy?"activity":"build",label);
         }else{
           const dataBusy=execution.status==="running"&&execution.runtime_kind==="data";
-          run.textContent=dataBusy?"⇩ Fetching":"⇩ Fetch Data";
+          setActionButtonContent(run,dataBusy?"activity":"fetch",dataBusy?"Fetching":"Fetch Data");
           run.disabled=dataBusy;
         }
       }
@@ -1457,7 +1440,7 @@ try { delete window.MLBricksBuilder; } catch (e) { window.MLBricksBuilder = unde
       // Build the closing script tag by concatenation so builder.js itself never
       // contains a raw script end tag while generated HTML receives a real one.
       const closeScript="</"+"script>";
-      return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MLBricks : AIBuilder</title><style>'+cssText+'</style><style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#0b1118}body{padding:0}.mlb-root{width:100vw!important;height:100vh!important;min-height:0!important;max-height:none!important;min-width:0!important;border-radius:0!important;border:0!important;box-shadow:none!important}</style></head><body><div id="'+targetId+'" class="mlb-root" data-mlbricks-builder-version="0.7.35"></div><script>'+jsText+closeScript+'<script>window.MLBricksBuilder.mount(document.getElementById('+JSON.stringify(targetId)+'),'+safePayload+');'+closeScript+'</body></html>';
+      return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MLBricks : AIBuilder</title><style>'+cssText+'</style><style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#0b1118}body{padding:0}.mlb-root{width:100vw!important;height:100vh!important;min-height:0!important;max-height:none!important;min-width:0!important;border-radius:0!important;border:0!important;box-shadow:none!important}</style></head><body><div id="'+targetId+'" class="mlb-root" data-mlbricks-builder-version="0.7.34"></div><script>'+jsText+closeScript+'<script>window.MLBricksBuilder.mount(document.getElementById('+JSON.stringify(targetId)+'),'+safePayload+');'+closeScript+'</body></html>';
     }
 
     function openFullWindow(){
@@ -1559,6 +1542,30 @@ try { delete window.MLBricksBuilder; } catch (e) { window.MLBricksBuilder = unde
     }
 
     function btn(text,cls){const b=document.createElement("button");b.type="button";b.className=cls||"";b.textContent=text;return b;}
+
+    function uiIcon(name){
+      const common='viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"';
+      const paths={
+        build:'<svg '+common+'><path d="M12 3 4.5 7.2 12 11.5l7.5-4.3L12 3Z"/><path d="m4.5 12 7.5 4.3 7.5-4.3"/><path d="m4.5 16.8 7.5 4.2 7.5-4.2"/></svg>',
+        gallery:'<svg '+common+'><rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"/></svg>',
+        fetch:'<svg '+common+'><ellipse cx="12" cy="5.5" rx="7.5" ry="3"/><path d="M4.5 5.5v6c0 1.65 3.36 3 7.5 3 1.15 0 2.24-.1 3.2-.3"/><path d="M4.5 11.5v6c0 1.65 3.36 3 7.5 3 1.18 0 2.3-.11 3.28-.32"/><path d="M18 13v7"/><path d="m15.2 17.3 2.8 2.8 2.8-2.8"/></svg>',
+        stop:'<svg '+common+'><rect x="6.5" y="6.5" width="11" height="11" rx="1.8"/></svg>',
+        cloud:'<svg '+common+'><path d="M7.3 18.5h10.6a4.1 4.1 0 0 0 .4-8.18A6.4 6.4 0 0 0 6.1 8.9a4.8 4.8 0 0 0 1.2 9.6Z"/><path d="M12 10.5v5"/><path d="m9.7 13.2 2.3 2.3 2.3-2.3"/></svg>',
+        activity:'<svg '+common+'><path d="M3.5 12h4l2-5 4 10 2-5h5"/></svg>'
+      };
+      return paths[name]||paths.build;
+    }
+
+    function setActionButtonContent(button,icon,label){
+      if(!button)return;
+      button.innerHTML='<span class="mlb-action-icon">'+uiIcon(icon)+'</span><span class="mlb-action-label"></span>';
+      const text=button.querySelector('.mlb-action-label');if(text)text.textContent=label;
+      button.setAttribute('aria-label',label);
+    }
+
+    function actionBtn(label,cls,icon){
+      const b=btn('',cls);setActionButtonContent(b,icon,label);return b;
+    }
     function portLabel(side,index){
       const lane=["Skip","Main","Extra"][index] || ("Lane "+(index+1));
       return lane+" "+(side==="in"?"In":"Out");
@@ -3184,7 +3191,7 @@ try { delete window.MLBricksBuilder; } catch (e) { window.MLBricksBuilder = unde
       if(!model)return;
       const config={
         format:"mlbricks-model-config",
-        builder_version:"0.7.35",
+        builder_version:"0.7.34",
         project:cp(state.project||{}),
         model:cp(model),
         selected_dataset:selectedModelDataset(),
@@ -3685,16 +3692,17 @@ try { delete window.MLBricksBuilder; } catch (e) { window.MLBricksBuilder = unde
       const providerCard=document.createElement("section");providerCard.className="mlb-cloud-card mlb-cloud-provider-card";
       const providerTitle=document.createElement("div");providerTitle.className="mlb-cloud-section-title";providerTitle.innerHTML="<span>☁</span><strong>PROVIDER & CONNECTION</strong>";providerCard.appendChild(providerTitle);
       const providerBar=document.createElement("div");providerBar.className="mlb-cloud-provider-bar";
-      providerBar.appendChild(cloudSelect("Provider",cloudForm.provider,[
+      const providerField=cloudSelect("Provider",cloudForm.provider,[
         {value:"huggingface",label:"Hugging Face"},{value:"github",label:"GitHub"},{value:"aws",label:"AWS S3"},{value:"gcp",label:"Google Cloud Storage"},{value:"azure",label:"Azure Blob Storage"}
-      ],v=>{cloudForm.provider=v;cloudStatus[v]=cloudStatus[v]||{};draw();}));
+      ],v=>{cloudForm.provider=v;cloudStatus[v]=cloudStatus[v]||{};draw();});
       const status=cloudStatus[cloudForm.provider]||{};
-      const connectionField=document.createElement("div");connectionField.className="mlb-cloud-connection-field";
-      const connectionLabel=document.createElement("label");connectionLabel.textContent="Connection";connectionField.appendChild(connectionLabel);
+      const connectionField=document.createElement("div");connectionField.className="mlb-cloud-field mlb-cloud-connection-field";
+      const connectionLabel=document.createElement("label");connectionLabel.textContent="Connection";
       const indicator=document.createElement("div");indicator.className="mlb-cloud-status "+(status.ok||status.authenticated?"ok":status.message?"warn":"idle");
-      const connectionText=document.createElement("span");connectionText.textContent=status.message||providerLabel(cloudForm.provider)+" · not checked";indicator.appendChild(connectionText);connectionField.appendChild(indicator);
+      const connectionText=document.createElement("span");connectionText.textContent=status.message||providerLabel(cloudForm.provider)+" · not checked";
+      indicator.appendChild(connectionText);connectionField.append(connectionLabel,indicator);
       const check=btn("Check Connection","mlb-cloud-check");check.addEventListener("click",()=>requestCloudCommand("cloud_status",{provider:cloudForm.provider,credentials:currentCloudCredentials(),region:cloudForm.region}));
-      providerBar.append(connectionField,check);providerCard.appendChild(providerBar);container.appendChild(providerCard);
+      providerBar.append(providerField,connectionField,check);providerCard.appendChild(providerBar);container.appendChild(providerCard);
 
       const credentials=document.createElement("section");credentials.className="mlb-cloud-card credentials";
       renderProviderCredentials(credentials);container.appendChild(credentials);
@@ -4611,7 +4619,7 @@ try { delete window.MLBricksBuilder; } catch (e) { window.MLBricksBuilder = unde
       return {
         format:"mlbricks-builder-design",
         format_version:"0.7.5",
-        builder_version:"0.7.35",
+        builder_version:"0.7.34",
         saved_at:new Date().toISOString(),
         state:sanitizedProjectState()
       };
@@ -4657,7 +4665,7 @@ try { delete window.MLBricksBuilder; } catch (e) { window.MLBricksBuilder = unde
       }
       const payload={
         format:"mlbricks-export",
-        builder_version:"0.7.35",
+        builder_version:"0.7.34",
         workspace:state.active_workspace,
         project:cp(state.project||{}),
         prepared_datasets:cp(state.prepared_datasets||[]),
@@ -4674,7 +4682,7 @@ try { delete window.MLBricksBuilder; } catch (e) { window.MLBricksBuilder = unde
     async function shareWorkspace(){
       const lines=[
         "MLBricks Builder — "+(state.project?.name||workspaceName()),
-        "Version: 0.7.35",
+        "Version: 0.7.34",
         "Workspace: "+workspaceName(),
         "Nodes: "+(current(state).nodes||[]).length,
         "Connections: "+(current(state).edges||[]).length
@@ -4690,7 +4698,7 @@ try { delete window.MLBricksBuilder; } catch (e) { window.MLBricksBuilder = unde
     function showQuickHelp(){
       const win=(root.ownerDocument&&root.ownerDocument.defaultView)||window;
       const help=[
-        'MLBricks Builder v0.7.35',
+        'MLBricks Builder v0.7.34',
         '',
         '• Add bricks or data steps from the left library.',
         '• Export downloads a model config or workspace export file.',
@@ -4780,13 +4788,10 @@ try { delete window.MLBricksBuilder; } catch (e) { window.MLBricksBuilder = unde
 
       // Top bar
       const top=document.createElement("div");top.className="mlb-topbar";
-      const frontendVersion=root.dataset.mlbricksBuilderVersion||"0.7.35";
+      const frontendVersion=root.dataset.mlbricksBuilderVersion||"0.7.34";
 
       const topLeft=document.createElement("div");topLeft.className="mlb-top-left";
-      const logo=document.createElement("div");logo.className="mlb-logo";
-      const logoImg=document.createElement("img");logoImg.className="mlb-logo-img";logoImg.src=payload.brand_logo||"";logoImg.alt="MLBricks AI Builder";logoImg.draggable=false;
-      const versionBadge=document.createElement("span");versionBadge.className="mlb-beta";versionBadge.textContent="v"+frontendVersion;
-      logo.append(logoImg,versionBadge);
+      const logo=document.createElement("div");logo.className="mlb-logo";logo.innerHTML='<span class="mlb-logo-mark">◇</span>MLBricks Builder <span class="mlb-beta">v'+frontendVersion+'</span>';
       const title=document.createElement("div");
       title.className="mlb-project-title mlb-project-title-editable";
       title.textContent=state.project?.name||"Untitled Model";
@@ -4812,13 +4817,14 @@ try { delete window.MLBricksBuilder; } catch (e) { window.MLBricksBuilder = unde
       const modelRuntimeBusy=state.active_workspace==="model" && execution.status==="running" &&
         (execution.runtime_kind==="train"||execution.runtime_kind==="generate");
       const run=state.active_workspace==="model"
-        ?btn(
+        ?actionBtn(
             modelRuntimeBusy
-              ?(execution.runtime_kind==="train"?"◆ Training":"◆ Generating")
-              :"◆ Build",
-            "mlb-run mlb-build mlb-top-build-tab"+(modelRuntimeBusy?" runtime-busy "+execution.runtime_kind:"")
+              ?(execution.runtime_kind==="train"?"Training":"Generating")
+              :"Build",
+            "mlb-run mlb-build mlb-top-build-tab"+(modelRuntimeBusy?" runtime-busy "+execution.runtime_kind:""),
+            modelRuntimeBusy?"activity":"build"
           )
-        :btn("⇩ Fetch Data","mlb-run mlb-build mlb-top-build-tab");
+        :actionBtn("Fetch Data","mlb-run mlb-build mlb-top-build-tab","fetch");
       run.disabled=modelRuntimeBusy;
       run.addEventListener("click",()=>{
         if(galleryWorkspace.open){closeGallery();return;}
@@ -4828,13 +4834,13 @@ try { delete window.MLBricksBuilder; } catch (e) { window.MLBricksBuilder = unde
       primary.appendChild(run);
 
       const dataFetchBusy=state.active_workspace==="data"&&execution.status==="running"&&execution.runtime_kind==="data";
-      const stopBtn=btn("□ Stop","mlb-stop mlb-center-stop");
+      const stopBtn=actionBtn("Stop","mlb-stop mlb-center-stop","stop");
       stopBtn.addEventListener("click",requestStop);
       stopBtn.style.display=(dataFetchBusy||modelRuntimeBusy)?"inline-flex":"none";
       // Keep the hidden control mounted for Data so it appears instantly beside Fetch when work starts.
       if(state.active_workspace==="data" || modelRuntimeBusy)primary.appendChild(stopBtn);
 
-      const galleryBtn=btn("▦ Gallery","mlb-dark-btn mlb-top-gallery-btn"+(galleryWorkspace.open?" active":""));
+      const galleryBtn=actionBtn("Gallery","mlb-dark-btn mlb-top-gallery-btn"+(galleryWorkspace.open?" active":""),"gallery");
       galleryBtn.title="Open prebuilt Models, Components and Data";
       galleryBtn.addEventListener("click",()=>galleryWorkspace.open?closeGallery():openGallery(galleryWorkspace.tab));
       primary.appendChild(galleryBtn);
@@ -4848,7 +4854,7 @@ try { delete window.MLBricksBuilder; } catch (e) { window.MLBricksBuilder = unde
         const c=current(state);if(!c.nodes.length&&!c.edges.length)return;
         checkpoint("Clear graph");c.nodes=[];c.edges=[];selected=null;pendingPort=null;setStatus("Graph cleared.");draw();
       });
-      const cloudBtn=btn("☁ Cloud & Repositories","mlb-dark-btn mlb-top-cloud-btn mlb-top-cloud-action"+(cloudWorkspace.open?" active":""));
+      const cloudBtn=actionBtn("Cloud & Repositories","mlb-dark-btn mlb-top-cloud-btn mlb-top-cloud-action"+(cloudWorkspace.open?" active":""),"cloud");
       cloudBtn.title="Open Cloud & Repositories";
       cloudBtn.addEventListener("click",()=>cloudWorkspace.open?closeCloudWorkspace():openCloudWorkspace());
       const fullBtn=!isPopout?document.createElement("a"):null;
@@ -4955,9 +4961,7 @@ try { delete window.MLBricksBuilder; } catch (e) { window.MLBricksBuilder = unde
       // Main
       const main=document.createElement("main");main.className="mlb-main";
       const toolbar=document.createElement("div");toolbar.className="mlb-toolbar";
-      const workspaceBadge=document.createElement("div");
-      const normalWorkspaceTitle=!galleryWorkspace.open&&!cloudWorkspace.open&&!runtimePanel;
-      workspaceBadge.className=normalWorkspaceTitle?"mlb-workspace-title":"mlb-workspace-badge";
+      const workspaceBadge=document.createElement("div");workspaceBadge.className="mlb-workspace-badge";
       workspaceBadge.textContent=galleryWorkspace.open
         ?"GALLERY"
         :cloudWorkspace.open
@@ -5000,8 +5004,8 @@ try { delete window.MLBricksBuilder; } catch (e) { window.MLBricksBuilder = unde
           const latest=latestPreparedDataset();
           if(latest){
             const ready=document.createElement("div");ready.className="mlb-data-ready-chip";
-            ready.innerHTML="<strong>"+latest.name+"</strong><span>"+compactDatasetSummary(latest)+"</span>";
-            ready.title="Latest prepared dataset available to Model Builder Text Input";
+            ready.textContent=compactDatasetSummary(latest);
+            ready.title=latest.name+" — latest prepared dataset available to Model Builder Text Input";
             toolbar.appendChild(ready);
           }
           requestAnimationFrame(updateKernelBadge);
@@ -5219,11 +5223,19 @@ try { delete window.MLBricksBuilder; } catch (e) { window.MLBricksBuilder = unde
         body.innerHTML='<div class="mlb-section-title">SELECT A NODE</div><div class="mlb-api-path">'+(state.active_workspace==="data"?"Choose a data step, or click a prepared dataset in Output Directory to inspect it.":"Choose a model component to edit its MLBricks API.")+'</div>';
       }else if(inspectorTab==="info"){
         const api=apiInfo(n);const item=n.type==="custom"?{category:"My Bricks",description:"Reusable custom brick."}:cat(catalog,n.type);
-        body.appendChild(selectedTypeHeader(n,api.public_name||"Custom"));
+        body.innerHTML='<div class="mlb-selected"><strong>'+nodeDisplayName(n)+'</strong><span class="mlb-pill">'+(api.public_name||"Custom")+'</span></div>';
         const s=document.createElement("div");s.className="mlb-summary";[["Type",n.type],["Definition",n.definition_id?"Custom":"Built-in"],["Category",item.category||"General"],["Repeat",n.repeat||1],["API",api.import_path||"custom"],["Status","Valid"]].forEach(([a,b])=>{const r=document.createElement("div");r.className="mlb-summary-row";r.innerHTML="<span>"+a+"</span><strong>"+b+"</strong>";s.appendChild(r);});body.appendChild(s);
       }else{
         const api=apiInfo(n);const info=n.type==="custom"?{api:[]}:cat(catalog,n.type);
-        body.appendChild(selectedTypeHeader(n,api.public_name||"Custom Layer"));
+        const sw=document.createElement("div");sw.className="mlb-selected";
+        const displayName=nodeDisplayName(n);const apiName=api.public_name||"Custom Layer";
+        const pill=document.createElement("span");pill.className="mlb-pill";pill.textContent=apiName;
+        if(normalizedUserName(displayName)===normalizedUserName(apiName)){
+          sw.classList.add("single-pill");sw.appendChild(pill);
+        }else{
+          const titleText=document.createElement("strong");titleText.textContent=displayName;sw.append(titleText,pill);
+        }
+        body.appendChild(sw);
         const renameComponentBtn=btn("✎ Rename Component","mlb-ins-rename");renameComponentBtn.addEventListener("click",renameSelectedComponent);body.appendChild(renameComponentBtn);
         const runLive=document.createElement("div");runLive.className="mlb-ins-run-live";
         const rs=execution.nodes?.[n.id];

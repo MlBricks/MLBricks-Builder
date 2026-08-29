@@ -1632,7 +1632,7 @@ The separate-tab launcher is configured for `https://builder.mlbricks.io/`. Depl
 
 
 
-## v0.7.33 — Fetch lifecycle and two-column Components/Data Gallery
+## v0.7.34 — Fetch lifecycle and two-column Components/Data Gallery
 
 - Data action is now **Fetch Data**.
 - **Stop** appears beside Fetch Data only while the data pipeline is actively running.
@@ -1644,8 +1644,3 @@ The separate-tab launcher is configured for `https://builder.mlbricks.io/`. Depl
 - Saved models now flow across both Gallery columns instead of being confined to one side.
 - Load and Export moved from the global toolbar into Gallery to free top-bar space.
 - Prebuilt Models and My Models are full-width Gallery sections with responsive two-column card grids.
-
-
-### v0.7.35
-- Responsive MLBricks AI Builder header logo for notebook and full-window layouts.
-- Includes the v0.7.34 inspector/cloud/data-toolbar alignment fixes.

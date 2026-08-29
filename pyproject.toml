@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mlbricks-builder"
-version = "0.7.35"
+version = "0.7.34"
 description = "Hierarchical visual node builder for MLBricks models in Jupyter, Kaggle and Colab."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -35,7 +35,7 @@ where = ["src"]
 include = ["mlbricks_builder*"]
 
 [tool.setuptools.package-data]
-mlbricks_builder = ["static/*.js", "static/*.css", "static/*.png", "*.json"]
+mlbricks_builder = ["static/*.js", "static/*.css", "*.json"]
 
 
 [project.optional-dependencies]
