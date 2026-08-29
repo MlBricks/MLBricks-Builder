@@ -1644,3 +1644,12 @@ The separate-tab launcher is configured for `https://builder.mlbricks.io/`. Depl
 - Saved models now flow across both Gallery columns instead of being confined to one side.
 - Load and Export moved from the global toolbar into Gallery to free top-bar space.
 - Prebuilt Models and My Models are full-width Gallery sections with responsive two-column card grids.
+
+## v0.7.34 — packaged logo fallback and data/cloud alignment fixes
+
+- Packages `static/mlbricks_builder_logo.png` so notebook installs cannot fail with a missing-logo `FileNotFoundError`.
+- Adds PNG files to setuptools package data.
+- De-duplicates Inspector identity when the node name and public API name are the same.
+- Aligns Provider and Connection controls on one baseline in Cloud & Repositories.
+- Makes Data Processing toolbar status boxes a uniform height.
+- Shows prepared-dataset split summary in the toolbar without repeating the dataset title inside the status box.

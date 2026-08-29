@@ -1755,41 +1755,4 @@
   .mlb-central-gallery-card-grid.saved-component-grid,
   .mlb-central-gallery-card-grid.saved-data-grid{grid-template-columns:1fr}
 }
-
-
-/* ------------------------------------------------------------------
-   v0.7.34 — inspector identity, cloud alignment, uniform data toolbar
-   ------------------------------------------------------------------ */
-.mlb-selected-identity{justify-content:flex-start!important}
-.mlb-pill-primary{margin-left:0!important}
-
-.mlb-central-cloud-body .mlb-cloud-provider-bar{
-  grid-template-columns:minmax(190px,.85fr) minmax(260px,1.4fr) auto!important;
-  align-items:end!important;gap:12px!important;
-}
-.mlb-cloud-connection-field{display:flex;flex-direction:column;gap:4px;min-width:0;margin:0}
-.mlb-cloud-field-label{font-size:10.5px;color:#8796a6;font-weight:700;line-height:1.1}
-.mlb-cloud-connection-field .mlb-cloud-status{
-  display:flex;align-items:center;justify-content:flex-start;
-  width:100%;height:34px!important;min-height:34px;box-sizing:border-box;
-  padding:0 10px!important;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
-  color:#8fa0b1;font-size:10.5px;
-}
-.mlb-cloud-connection-field .mlb-cloud-status.ok{color:#77dca7}
-.mlb-cloud-connection-field .mlb-cloud-status.warn{color:#e0c27d}
-.mlb-central-cloud-body .mlb-cloud-provider-bar .mlb-cloud-field select{height:34px!important;min-height:34px!important}
-.mlb-central-cloud-body .mlb-cloud-check{height:34px!important;min-height:34px!important}
-
-/* Data Processing toolbar chips share one visual height. */
-.mlb-toolbar>.mlb-workspace-badge,
-.mlb-toolbar>.mlb-layout-toggle,
-.mlb-toolbar>.mlb-kernel-badge,
-.mlb-toolbar>.mlb-run-live,
-.mlb-toolbar>.mlb-data-ready-chip{
-  height:28px!important;min-height:28px!important;box-sizing:border-box;
-}
-.mlb-data-ready-chip{
-  display:flex!important;align-items:center!important;justify-content:center!important;
-  flex-direction:row!important;max-width:260px!important;padding:0 9px!important;
-  font-size:10.5px;color:#83d8aa;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
-}
+\n\n/* ------------------------------------------------------------------\n   v0.7.34 — inspector de-dup, aligned cloud controls, uniform data badges\n   ------------------------------------------------------------------ */\n.mlb-selected.single{justify-content:flex-start}\n.mlb-selected.single .mlb-pill{margin-left:0}\n\n/* Provider and connection controls share the same label/input baseline. */\n.mlb-central-cloud-body .mlb-cloud-provider-bar{align-items:end!important}\n.mlb-central-cloud-body .mlb-cloud-connection-field{margin-bottom:0!important}\n.mlb-central-cloud-body .mlb-cloud-connection-field .mlb-cloud-status{\n  height:34px!important;display:flex;align-items:center;justify-content:flex-start;\n  padding:0 10px!important;font-size:11px;color:#8ea0b2;text-align:left;\n}\n.mlb-central-cloud-body .mlb-cloud-connection-field .mlb-cloud-status.ok{color:#74d7a2}\n.mlb-central-cloud-body .mlb-cloud-connection-field .mlb-cloud-status.warn{color:#e7c374}\n.mlb-central-cloud-body .mlb-cloud-check-wrap{display:flex;align-items:flex-end;height:100%}\n.mlb-central-cloud-body .mlb-cloud-check{height:34px!important}\n\n/* Data Processing toolbar: every status/control box is exactly 32px high. */\n.mlb-toolbar .mlb-workspace-badge,\n.mlb-toolbar .mlb-layout-toggle,\n.mlb-toolbar .mlb-kernel-badge,\n.mlb-toolbar .mlb-run-live,\n.mlb-toolbar .mlb-data-ready-chip{height:32px!important;min-height:32px!important;box-sizing:border-box}\n.mlb-toolbar .mlb-kernel-badge{padding:0 9px}\n.mlb-toolbar .mlb-run-live{padding:0 9px}\n.mlb-toolbar .mlb-data-ready-chip{\n  display:flex;align-items:center;justify-content:flex-start;\n  max-width:230px;padding:0 10px;font-size:10.5px;line-height:1;white-space:nowrap;\n  overflow:hidden;text-overflow:ellipsis;color:#83d8aa;\n}\n
