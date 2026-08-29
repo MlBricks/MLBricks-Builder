@@ -1368,3 +1368,33 @@
   .mlb-top-actions{gap:4px}
   .mlb-dark-btn{padding-left:7px;padding-right:7px}
 }
+
+
+/* ------------------------------------------------------------------
+   v0.7.22 — restore classic v0.7.19 canvas/library typography
+   Keep the larger toolbar/inspector workspace from v0.7.21, while
+   returning graph nodes and Brick/Data Library cards to the compact
+   typography shown in the v0.7.19 UI.
+   ------------------------------------------------------------------ */
+.mlb-category{font-size:9px}
+.mlb-category-caret{font-size:10px}
+.mlb-palette button,
+.mlb-custom-card{font-size:10px;line-height:1.2}
+.mlb-palette .mlb-pal-icon,
+.mlb-custom-card .mlb-pal-icon{font-size:8px}
+.mlb-palette .mlb-pal-sub,
+.mlb-custom-card .mlb-pal-sub{font-size:8px;line-height:1.25}
+.mlb-create{font-size:9px}
+
+.mlb-node .index{font-size:8px}
+.mlb-node .node-name{font-size:10.5px}
+.mlb-node .node-icon{font-size:7px}
+.mlb-node .node-desc{font-size:8px;line-height:1.35;min-height:32px}
+.mlb-mini-field{font-size:7.8px}
+.mlb-node .node-meta{font-size:7.5px;line-height:1.45}
+.mlb-arrow{font-size:16px}
+
+/* Running indicator must never cover the Extra lane connector dots. */
+.mlb-port{z-index:12}
+.mlb-run-track{left:9px;right:9px;bottom:12px;z-index:6}
+.mlb-run-badge{z-index:8}

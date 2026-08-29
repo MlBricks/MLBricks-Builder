@@ -1540,7 +1540,7 @@ directly into that tab.
 - the existing MessageChannel / postMessage / BroadcastChannel bridge is kept
   unchanged
 
-## v0.7.21 — readable AIBuilder workspace
+## v0.7.22 — readable AIBuilder workspace
 
 - Full-window browser tab title is now **MLBricks : AIBuilder**. The browser address remains `about:blank` by design because a script-injected tab cannot claim a custom URL without a real hosted origin.
 - Raised tiny 5–9 px UI text to readable sizes across the Builder, Inspector, runtime views, repositories, Gallery and Local Environment panels.
@@ -1551,3 +1551,10 @@ directly into that tab.
 - Builder creates `<workspace>/mlbricks/` with `models/`, `data/`, `training/`, `projects/` and `exports/` directories.
 - Default model training output is under `mlbricks/models/`; prepared datasets default under `mlbricks/data/`.
 
+
+
+## v0.7.22 — classic graph typography + running-port fix
+
+- Restores Brick/Data Library and graph-node typography to the compact v0.7.19 scale while keeping the larger v0.7.21 toolbar and inspector.
+- Moves the live running/progress track above the bottom edge and raises connector z-order so the Extra-lane dots remain fully visible.
+- The detached tab title is `MLbricks : AIBuider`. The browser address remains `about:blank`; browsers do not permit a script to replace the address bar with arbitrary non-URL text.
