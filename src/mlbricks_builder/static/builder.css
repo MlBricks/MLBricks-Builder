@@ -1997,3 +1997,39 @@
   align-items:center!important;
   justify-content:center!important;
 }
+
+
+/* ------------------------------------------------------------------
+   v0.7.35 patch — node index and abbreviation badges share one top row
+   ------------------------------------------------------------------ */
+.mlb-node .index{
+  top:7px!important;
+  left:7px!important;
+  height:22px!important;
+  min-height:22px!important;
+  padding:0 6px!important;
+  box-sizing:border-box!important;
+  display:inline-flex!important;
+  align-items:center!important;
+  justify-content:center!important;
+  line-height:1!important;
+}
+.mlb-node .node-head{
+  position:static!important;
+  display:block!important;
+  margin-top:22px!important;
+  padding-right:0!important;
+  min-height:22px!important;
+}
+.mlb-node .node-icon{
+  position:absolute!important;
+  top:7px!important;
+  right:7px!important;
+  height:22px!important;
+  min-height:22px!important;
+  box-sizing:border-box!important;
+  display:inline-flex!important;
+  align-items:center!important;
+  justify-content:center!important;
+  line-height:1!important;
+}
