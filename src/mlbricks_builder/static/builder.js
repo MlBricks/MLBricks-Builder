@@ -1429,7 +1429,7 @@
       // Build the closing script tag by concatenation so builder.js itself never
       // contains a raw script end tag while generated HTML receives a real one.
       const closeScript="</"+"script>";
-      return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MLBricks : AIBuilder</title><style>'+cssText+'</style><style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#0b1118}body{padding:0}.mlb-root{width:100vw!important;height:100vh!important;min-height:0!important;max-height:none!important;min-width:0!important;border-radius:0!important;border:0!important;box-shadow:none!important}</style></head><body><div id="'+targetId+'" class="mlb-root" data-mlbricks-builder-version="0.7.29"></div><script>'+jsText+closeScript+'<script>window.MLBricksBuilder.mount(document.getElementById('+JSON.stringify(targetId)+'),'+safePayload+');'+closeScript+'</body></html>';
+      return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MLBricks : AIBuilder</title><style>'+cssText+'</style><style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#0b1118}body{padding:0}.mlb-root{width:100vw!important;height:100vh!important;min-height:0!important;max-height:none!important;min-width:0!important;border-radius:0!important;border:0!important;box-shadow:none!important}</style></head><body><div id="'+targetId+'" class="mlb-root" data-mlbricks-builder-version="0.7.30"></div><script>'+jsText+closeScript+'<script>window.MLBricksBuilder.mount(document.getElementById('+JSON.stringify(targetId)+'),'+safePayload+');'+closeScript+'</body></html>';
     }
 
     function openFullWindow(){
@@ -3156,7 +3156,7 @@
       if(!model)return;
       const config={
         format:"mlbricks-model-config",
-        builder_version:"0.7.29",
+        builder_version:"0.7.30",
         project:cp(state.project||{}),
         model:cp(model),
         selected_dataset:selectedModelDataset(),
@@ -4533,7 +4533,7 @@
       return {
         format:"mlbricks-builder-design",
         format_version:"0.7.5",
-        builder_version:"0.7.29",
+        builder_version:"0.7.30",
         saved_at:new Date().toISOString(),
         state:sanitizedProjectState()
       };
@@ -4579,7 +4579,7 @@
       }
       const payload={
         format:"mlbricks-export",
-        builder_version:"0.7.29",
+        builder_version:"0.7.30",
         workspace:state.active_workspace,
         project:cp(state.project||{}),
         prepared_datasets:cp(state.prepared_datasets||[]),
@@ -4596,7 +4596,7 @@
     async function shareWorkspace(){
       const lines=[
         "MLBricks Builder — "+(state.project?.name||workspaceName()),
-        "Version: 0.7.29",
+        "Version: 0.7.30",
         "Workspace: "+workspaceName(),
         "Nodes: "+(current(state).nodes||[]).length,
         "Connections: "+(current(state).edges||[]).length
@@ -4612,7 +4612,7 @@
     function showQuickHelp(){
       const win=(root.ownerDocument&&root.ownerDocument.defaultView)||window;
       const help=[
-        'MLBricks Builder v0.7.29',
+        'MLBricks Builder v0.7.30',
         '',
         '• Add bricks or data steps from the left library.',
         '• Export downloads a model config or workspace export file.',
@@ -4703,7 +4703,7 @@
 
       // Top bar
       const top=document.createElement("div");top.className="mlb-topbar";
-      const frontendVersion=root.dataset.mlbricksBuilderVersion||"0.7.29";
+      const frontendVersion=root.dataset.mlbricksBuilderVersion||"0.7.30";
 
       const topLeft=document.createElement("div");topLeft.className="mlb-top-left";
       const logo=document.createElement("div");logo.className="mlb-logo";logo.innerHTML='<span class="mlb-logo-mark">◇</span>MLBricks Builder <span class="mlb-beta">v'+frontendVersion+'</span>';
@@ -4727,11 +4727,9 @@
       topLeft.append(logo,title,saved);
       top.appendChild(topLeft);
 
-      // Primary execution controls stay visually centered in the full window.
+      // Primary controls: Build first, then Gallery and Cloud & Repositories.
+      // They are deliberately separate buttons instead of a segmented control.
       const primary=document.createElement("div");primary.className="mlb-top-primary";
-      const modeSwitch=document.createElement("div");modeSwitch.className="mlb-top-mode-switch";
-      const galleryBtn=btn("▦ Gallery","mlb-dark-btn mlb-top-gallery-btn"+(galleryWorkspace.open?" active":""));galleryBtn.title="Open prebuilt Models, Components and Data";galleryBtn.addEventListener("click",()=>galleryWorkspace.open?closeGallery():openGallery(galleryWorkspace.tab));
-      modeSwitch.appendChild(galleryBtn);
       const modelRuntimeBusy=state.active_workspace==="model" && execution.status==="running" &&
         (execution.runtime_kind==="train"||execution.runtime_kind==="generate");
       const run=state.active_workspace==="model"
@@ -4739,21 +4737,26 @@
             modelRuntimeBusy
               ?(execution.runtime_kind==="train"?"◆ Training":"◆ Generating")
               :"◆ Build",
-            "mlb-run mlb-build"+(modelRuntimeBusy?" runtime-busy "+execution.runtime_kind:"")
+            "mlb-run mlb-build mlb-top-build-tab"+(modelRuntimeBusy?" runtime-busy "+execution.runtime_kind:"")
           )
-        :btn("▶ Run Data","mlb-run mlb-build");
+        :btn("▶ Run Data","mlb-run mlb-build mlb-top-build-tab");
       run.disabled=modelRuntimeBusy;
       run.addEventListener("click",()=>{
         if(galleryWorkspace.open){closeGallery();return;}
         if(cloudWorkspace.open){closeCloudWorkspace();return;}
         (state.active_workspace==="model"?requestModelBuild:requestRun)();
       });
-      run.classList.add("mlb-top-build-tab");
-      if(!galleryWorkspace.open&&!cloudWorkspace.open)run.classList.add("active");
-      modeSwitch.appendChild(run);
-      const cloudBtn=btn("▰ Repositories","mlb-dark-btn mlb-top-cloud-btn"+(cloudWorkspace.open?" active":""));cloudBtn.title="Open Cloud & Repositories";cloudBtn.addEventListener("click",()=>cloudWorkspace.open?closeCloudWorkspace():openCloudWorkspace());
-      modeSwitch.appendChild(cloudBtn);
-      primary.appendChild(modeSwitch);
+      primary.appendChild(run);
+
+      const galleryBtn=btn("▦ Gallery","mlb-dark-btn mlb-top-gallery-btn"+(galleryWorkspace.open?" active":""));
+      galleryBtn.title="Open prebuilt Models, Components and Data";
+      galleryBtn.addEventListener("click",()=>galleryWorkspace.open?closeGallery():openGallery(galleryWorkspace.tab));
+      primary.appendChild(galleryBtn);
+
+      const cloudBtn=btn("☁ Cloud & Repositories","mlb-dark-btn mlb-top-cloud-btn"+(cloudWorkspace.open?" active":""));
+      cloudBtn.title="Open Cloud & Repositories";
+      cloudBtn.addEventListener("click",()=>cloudWorkspace.open?closeCloudWorkspace():openCloudWorkspace());
+      primary.appendChild(cloudBtn);
 
       const stopBtn=btn("□ Stop","mlb-stop mlb-center-stop");
       stopBtn.addEventListener("click",requestStop);

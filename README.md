@@ -1614,3 +1614,11 @@ The separate-tab launcher is configured for `https://builder.mlbricks.io/`. Depl
 - Cloud & Repositories is a full center workspace with provider/connection, session credentials, Push, and Load sections.
 - Gallery/Repositories hide the secondary graph toolbar and bottom drawer while open so the center workspace gets the full available area.
 - Close buttons return to the Builder canvas without changing the current graph.
+
+
+## v0.7.30 — Scrollable Gallery and separated top actions
+
+- Gallery now has its own reliable vertical scroll area for large prebuilt and saved collections.
+- Top-center controls are separate `Build`, `Gallery`, and `Cloud & Repositories` buttons instead of a segmented switch.
+- Restores the compact Gallery/Repositories banner treatment while keeping close actions.
+- Cloud & Repositories remains a center workspace and scrolls independently when content exceeds the available height.
