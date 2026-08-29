@@ -845,7 +845,7 @@ class Builder:
             root.mkdir(parents=True, exist_ok=True)
             manifest = {
                 "format": "mlbricks-cloud-bundle-v1",
-                "builder_version": "0.7.34",
+                "builder_version": "0.7.35",
                 "content_type": content_type,
             }
 
@@ -2001,8 +2001,8 @@ class Builder:
         available = [k for k, v in self.mlbricks_api.items() if v.get("available")]
         unavailable = {k: v.get("error") for k, v in self.mlbricks_api.items() if not v.get("available")}
         return {
-            "builder_version": "0.7.34",
-            "frontend_version": "0.7.34",
+            "builder_version": "0.7.35",
+            "frontend_version": "0.7.35",
             "mlbricks": info,
             "api_components_available": available,
             "api_components_unavailable": unavailable,
@@ -2014,8 +2014,8 @@ class Builder:
     def _html(self, bridge=None):
         css = (_STATIC / "builder.css").read_text(encoding="utf-8")
         js = (_STATIC / "builder.js").read_text(encoding="utf-8")
-        logo_png = (_STATIC / "MLBRICKS_AI_Builder.png").read_bytes()
-        brand_logo = "data:image/png;base64," + base64.b64encode(logo_png).decode("ascii")
+        logo_bytes = (_STATIC / "mlbricks_ai_builder_logo.png").read_bytes()
+        brand_logo = "data:image/png;base64," + base64.b64encode(logo_bytes).decode("ascii")
         payload = json.dumps({
             "state": self.state,
             "catalog": self.catalog,
@@ -2029,7 +2029,7 @@ class Builder:
         }).replace("</", "<\\/")
         return f"""
 <style>{css}</style>
-<div id="{html.escape(self._instance_id)}" class="mlb-root" data-mlbricks-builder-version="0.7.34"></div>
+<div id="{html.escape(self._instance_id)}" class="mlb-root" data-mlbricks-builder-version="0.7.35"></div>
 <script>
 try {{ delete window.MLBricksBuilder; }} catch (e) {{ window.MLBricksBuilder = undefined; }}
 {js}

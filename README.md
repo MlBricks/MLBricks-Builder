@@ -1646,8 +1646,6 @@ The separate-tab launcher is configured for `https://builder.mlbricks.io/`. Depl
 - Prebuilt Models and My Models are full-width Gallery sections with responsive two-column card grids.
 
 
-## v0.7.34 — MLBricks AI Builder brand logo
-
-- Replaces the temporary diamond/text header mark with the supplied MLBricks AI Builder SVG.
-- Embeds the logo into notebook and popout rendering so the same branding is used in both views.
-- Keeps the Builder version badge beside the logo.
+### v0.7.35
+- Responsive MLBricks AI Builder header logo for notebook and full-window layouts.
+- Includes the v0.7.34 inspector/cloud/data-toolbar alignment fixes.
