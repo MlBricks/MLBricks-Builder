@@ -1429,7 +1429,7 @@
       // Build the closing script tag by concatenation so builder.js itself never
       // contains a raw script end tag while generated HTML receives a real one.
       const closeScript="</"+"script>";
-      return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MLBricks : AIBuilder</title><style>'+cssText+'</style><style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#0b1118}body{padding:0}.mlb-root{width:100vw!important;height:100vh!important;min-height:0!important;max-height:none!important;min-width:0!important;border-radius:0!important;border:0!important;box-shadow:none!important}</style></head><body><div id="'+targetId+'" class="mlb-root" data-mlbricks-builder-version="0.7.31"></div><script>'+jsText+closeScript+'<script>window.MLBricksBuilder.mount(document.getElementById('+JSON.stringify(targetId)+'),'+safePayload+');'+closeScript+'</body></html>';
+      return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MLBricks : AIBuilder</title><style>'+cssText+'</style><style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#0b1118}body{padding:0}.mlb-root{width:100vw!important;height:100vh!important;min-height:0!important;max-height:none!important;min-width:0!important;border-radius:0!important;border:0!important;box-shadow:none!important}</style></head><body><div id="'+targetId+'" class="mlb-root" data-mlbricks-builder-version="0.7.32"></div><script>'+jsText+closeScript+'<script>window.MLBricksBuilder.mount(document.getElementById('+JSON.stringify(targetId)+'),'+safePayload+');'+closeScript+'</body></html>';
     }
 
     function openFullWindow(){
@@ -3156,7 +3156,7 @@
       if(!model)return;
       const config={
         format:"mlbricks-model-config",
-        builder_version:"0.7.31",
+        builder_version:"0.7.32",
         project:cp(state.project||{}),
         model:cp(model),
         selected_dataset:selectedModelDataset(),
@@ -3249,11 +3249,18 @@
       });
       tabsRow.appendChild(tabs);
 
+      const galleryActions=document.createElement("div");galleryActions.className="mlb-gallery-page-actions";
+      const galleryLoad=btn("⇧ Load","mlb-gallery-action mlb-gallery-file-action");
+      galleryLoad.title="Load .mlbricks.json or .mlbricks.bin";galleryLoad.addEventListener("click",loadDesign);galleryActions.appendChild(galleryLoad);
+      const galleryExport=btn("⇩ Export","mlb-gallery-action mlb-gallery-file-action");
+      galleryExport.title="Export model config or workspace data";galleryExport.addEventListener("click",exportWorkspace);galleryActions.appendChild(galleryExport);
+
       let canSave=false,saveLabel="";
       if(galleryWorkspace.tab==="models"&&state.active_workspace==="model"&&current(state)?.kind!=="custom_edit"){canSave=true;saveLabel="+ Save Current Model";}
       if(galleryWorkspace.tab==="components"&&current(state)?.kind==="custom_edit"){canSave=true;saveLabel="+ Save Current Component";}
       if(galleryWorkspace.tab==="data"&&state.active_workspace==="data"){canSave=true;saveLabel="+ Save Current Data";}
-      if(canSave){const save=btn(saveLabel,"mlb-gallery-save mlb-gallery-page-save");save.addEventListener("click",saveCurrentToGallery);tabsRow.appendChild(save);}
+      if(canSave){const save=btn(saveLabel,"mlb-gallery-save mlb-gallery-page-save");save.addEventListener("click",saveCurrentToGallery);galleryActions.appendChild(save);}
+      tabsRow.appendChild(galleryActions);
       outer.appendChild(tabsRow);
 
       // Only this content region scrolls. The banner and tabs never shrink.
@@ -3291,18 +3298,25 @@
       const openAndClose=(fn)=>()=>{galleryWorkspace.open=false;bottomExpanded=galleryPreviousBottomExpanded;fn();};
 
       if(galleryWorkspace.tab==="models"){
-        const samples=makeSection("PREBUILT MODELS","1 available","featured");
+        body.classList.add("models-tab");
+        const samples=makeSection("PREBUILT MODELS","1 available","featured full-width");
         const load=btn("Open Model","mlb-gallery-action sample");load.addEventListener("click",openAndClose(loadTinyStories));
-        samples.appendChild(card("TinyStories 30M","Parameters ~30M · Batch 16 · Block 512 · 6 layers","MODEL",[load]));
+        const sampleGrid=document.createElement("div");sampleGrid.className="mlb-central-gallery-card-grid prebuilt-grid";
+        sampleGrid.appendChild(card("TinyStories 30M","Parameters ~30M · Batch 16 · Block 512 · 6 layers","MODEL",[load]));
+        samples.appendChild(sampleGrid);
         body.appendChild(samples);
 
-        const mine=makeSection("MY MODELS",(state.gallery.models||[]).length+" saved");
-        if(!(state.gallery.models||[]).length)mine.appendChild(empty("Models you save to Gallery will appear here."));
-        (state.gallery.models||[]).forEach(entry=>{
-          const load=btn("Open","mlb-gallery-action");load.addEventListener("click",openAndClose(()=>loadGalleryModel(entry)));
-          const remove=btn("Remove","mlb-gallery-action danger");remove.addEventListener("click",()=>removeGalleryEntry("models",entry.id));
-          mine.appendChild(card(entry.name,modelMeta(entry),"MODEL",[load,remove]));
-        });
+        const mine=makeSection("MY MODELS",(state.gallery.models||[]).length+" saved","full-width saved-models");
+        if(!(state.gallery.models||[]).length){mine.appendChild(empty("Models you save to Gallery will appear here."));}
+        else{
+          const savedGrid=document.createElement("div");savedGrid.className="mlb-central-gallery-card-grid saved-model-grid";
+          (state.gallery.models||[]).forEach(entry=>{
+            const load=btn("Open","mlb-gallery-action");load.addEventListener("click",openAndClose(()=>loadGalleryModel(entry)));
+            const remove=btn("Remove","mlb-gallery-action danger");remove.addEventListener("click",()=>removeGalleryEntry("models",entry.id));
+            savedGrid.appendChild(card(entry.name,modelMeta(entry),"MODEL",[load,remove]));
+          });
+          mine.appendChild(savedGrid);
+        }
         body.appendChild(mine);
       }else if(galleryWorkspace.tab==="components"){
         const samples=makeSection("PREBUILT COMPONENTS","More coming","featured");
@@ -4555,7 +4569,7 @@
       return {
         format:"mlbricks-builder-design",
         format_version:"0.7.5",
-        builder_version:"0.7.31",
+        builder_version:"0.7.32",
         saved_at:new Date().toISOString(),
         state:sanitizedProjectState()
       };
@@ -4601,7 +4615,7 @@
       }
       const payload={
         format:"mlbricks-export",
-        builder_version:"0.7.31",
+        builder_version:"0.7.32",
         workspace:state.active_workspace,
         project:cp(state.project||{}),
         prepared_datasets:cp(state.prepared_datasets||[]),
@@ -4618,7 +4632,7 @@
     async function shareWorkspace(){
       const lines=[
         "MLBricks Builder — "+(state.project?.name||workspaceName()),
-        "Version: 0.7.31",
+        "Version: 0.7.32",
         "Workspace: "+workspaceName(),
         "Nodes: "+(current(state).nodes||[]).length,
         "Connections: "+(current(state).edges||[]).length
@@ -4634,7 +4648,7 @@
     function showQuickHelp(){
       const win=(root.ownerDocument&&root.ownerDocument.defaultView)||window;
       const help=[
-        'MLBricks Builder v0.7.31',
+        'MLBricks Builder v0.7.32',
         '',
         '• Add bricks or data steps from the left library.',
         '• Export downloads a model config or workspace export file.',
@@ -4724,7 +4738,7 @@
 
       // Top bar
       const top=document.createElement("div");top.className="mlb-topbar";
-      const frontendVersion=root.dataset.mlbricksBuilderVersion||"0.7.31";
+      const frontendVersion=root.dataset.mlbricksBuilderVersion||"0.7.32";
 
       const topLeft=document.createElement("div");topLeft.className="mlb-top-left";
       const logo=document.createElement("div");logo.className="mlb-logo";logo.innerHTML='<span class="mlb-logo-mark">◇</span>MLBricks Builder <span class="mlb-beta">v'+frontendVersion+'</span>';
@@ -4786,8 +4800,6 @@
         const c=current(state);if(!c.nodes.length&&!c.edges.length)return;
         checkpoint("Clear graph");c.nodes=[];c.edges=[];selected=null;pendingPort=null;setStatus("Graph cleared.");draw();
       });
-      const loadBtn=btn("⇧ Load","mlb-dark-btn");loadBtn.title="Load .mlbricks.json or .mlbricks.bin";loadBtn.addEventListener("click",loadDesign);
-      const exportBtn=btn("⇩ Export","mlb-dark-btn");exportBtn.title="Export model config or workspace data";exportBtn.addEventListener("click",exportWorkspace);
       const cloudBtn=btn("☁ Cloud & Repositories","mlb-dark-btn mlb-top-cloud-btn mlb-top-cloud-action"+(cloudWorkspace.open?" active":""));
       cloudBtn.title="Open Cloud & Repositories";
       cloudBtn.addEventListener("click",()=>cloudWorkspace.open?closeCloudWorkspace():openCloudWorkspace());
@@ -4799,7 +4811,7 @@
         fullBtn.title="Open MLBricks Builder in a separate full-window browser tab";
         fullBtn.addEventListener("click",activateFullWindowLink);
       }
-      acts.append(undoBtn,redoBtn,clearBtn,loadBtn,exportBtn,cloudBtn);
+      acts.append(undoBtn,redoBtn,clearBtn,cloudBtn);
       if(fullBtn)acts.appendChild(fullBtn);
       top.appendChild(acts);
       root.appendChild(top);

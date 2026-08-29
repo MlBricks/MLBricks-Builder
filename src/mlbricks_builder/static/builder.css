@@ -1704,3 +1704,34 @@
 @media(max-width:1180px){
   .mlb-top-actions>.mlb-top-cloud-action{min-width:118px!important;max-width:140px!important}
 }
+
+
+/* ------------------------------------------------------------------
+   v0.7.32 — full-width saved-model gallery + Gallery file actions
+   ------------------------------------------------------------------ */
+.mlb-gallery-page-actions{
+  margin-left:auto;display:flex;align-items:center;gap:7px;min-width:0;flex:0 0 auto;
+}
+.mlb-gallery-file-action{
+  height:28px!important;min-width:72px!important;padding:0 10px!important;
+  border-color:#405366!important;background:#111c26!important;color:#bdd0df!important;
+  font-size:10.5px!important;font-weight:800!important;
+}
+.mlb-gallery-file-action:hover{border-color:#627b92!important;background:#192735!important;color:#fff!important}
+.mlb-central-gallery-body.models-tab{
+  display:block!important;overflow-y:auto!important;overflow-x:hidden!important;
+}
+.mlb-central-gallery-section.full-width{
+  width:100%!important;max-width:none!important;box-sizing:border-box!important;margin:0 0 14px!important;
+}
+.mlb-central-gallery-card-grid{
+  display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;min-width:0;align-items:start;
+}
+.mlb-central-gallery-card-grid .mlb-central-gallery-card{margin:0!important;width:auto!important;min-width:0!important}
+.mlb-central-gallery-card-grid.prebuilt-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+.mlb-central-gallery-section.saved-models{margin-bottom:0!important}
+@media(max-width:1050px){
+  .mlb-central-gallery-card-grid,.mlb-central-gallery-card-grid.prebuilt-grid{grid-template-columns:1fr}
+  .mlb-gallery-page-actions{gap:5px}
+  .mlb-gallery-file-action{min-width:62px!important;padding:0 7px!important}
+}

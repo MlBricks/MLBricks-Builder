@@ -1629,3 +1629,10 @@ The separate-tab launcher is configured for `https://builder.mlbricks.io/`. Depl
 - Gallery banner/tabs keep a fixed height; only Gallery contents scroll as collections grow.
 - Restored compact v0.7.27-style Gallery model cards with parameters, batch and block metadata.
 - Removed Share and placed Cloud & Repositories in its former top-right slot.
+
+
+## v0.7.32 — Two-column saved models and Gallery file actions
+
+- Saved models now flow across both Gallery columns instead of being confined to one side.
+- Load and Export moved from the global toolbar into Gallery to free top-bar space.
+- Prebuilt Models and My Models are full-width Gallery sections with responsive two-column card grids.
