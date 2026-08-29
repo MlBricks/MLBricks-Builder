@@ -1405,7 +1405,7 @@
       // Build the closing script tag by concatenation so builder.js itself never
       // contains a raw script end tag while generated HTML receives a real one.
       const closeScript="</"+"script>";
-      return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MLbricks : AIBuider</title><style>'+cssText+'</style><style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#0b1118}body{padding:0}.mlb-root{width:100vw!important;height:100vh!important;min-height:0!important;max-height:none!important;min-width:0!important;border-radius:0!important;border:0!important;box-shadow:none!important}</style></head><body><div id="'+targetId+'" class="mlb-root" data-mlbricks-builder-version="0.7.26"></div><script>'+jsText+closeScript+'<script>window.MLBricksBuilder.mount(document.getElementById('+JSON.stringify(targetId)+'),'+safePayload+');'+closeScript+'</body></html>';
+      return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MLBricks : AIBuilder</title><style>'+cssText+'</style><style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#0b1118}body{padding:0}.mlb-root{width:100vw!important;height:100vh!important;min-height:0!important;max-height:none!important;min-width:0!important;border-radius:0!important;border:0!important;box-shadow:none!important}</style></head><body><div id="'+targetId+'" class="mlb-root" data-mlbricks-builder-version="0.7.27"></div><script>'+jsText+closeScript+'<script>window.MLBricksBuilder.mount(document.getElementById('+JSON.stringify(targetId)+'),'+safePayload+');'+closeScript+'</body></html>';
     }
 
     function openFullWindow(){
@@ -1416,23 +1416,59 @@
       }
 
       const targetName="mlbricks_builder_full_"+String(popoutChannelName).replace(/[^a-zA-Z0-9_-]/g,"_");
+      const launcherUrl="https://builder.mlbricks.io/";
       let popup=null;
+      let launcherReady=false;
+      let bootstrapSent=false;
+      let fallbackStarted=false;
+
+      const writeAboutBlankFallback=()=>{
+        if(fallbackStarted || launcherReady || !popup || popup.closed)return;
+        fallbackStarted=true;
+        try{popup.location.replace("about:blank");}catch(_){try{popup.location="about:blank";}catch(__){}}
+        const inject=()=>{
+          if(launcherReady || !popup || popup.closed)return;
+          try{
+            popup.document.open();
+            popup.document.write(page);
+            popup.document.close();
+            try{popup.document.title="MLBricks : AIBuilder";}catch(_){}
+            bootstrapSent=true;
+          }catch(_){}
+        };
+        setTimeout(inject,180);
+        setTimeout(inject,500);
+      };
+
+      const onLauncherMessage=event=>{
+        try{
+          if(!popup || event.source!==popup)return;
+          const msg=event.data||{};
+          if(msg.__mlbricks_builder_launcher__!==true || msg.type!=="ready")return;
+          launcherReady=true;
+          window.removeEventListener("message",onLauncherMessage);
+          popup.postMessage({__mlbricks_builder_launcher__:true,type:"bootstrap",html:page,title:"MLBricks : AIBuilder"},"https://builder.mlbricks.io");
+          bootstrapSent=true;
+          setStatus("MLBricks AIBuilder opened at builder.mlbricks.io. Keep this notebook tab open for Python execution.");
+        }catch(_){}
+      };
+
       try{
-        // Open a plain about:blank tab instead of a Blob URL. The Builder HTML is
-        // injected into that document immediately, so the address bar does not
-        // expose the notebook host (for example *.kaggle.net) through blob: URLs.
-        // Calling window.open directly inside the click also preserves the
-        // WindowProxy used by the notebook-owned MessageChannel bridge.
-        popup=window.open("about:blank",targetName);
-        if(popup){
-          popup.document.open();
-          popup.document.write(page);
-          popup.document.close();
-          try{popup.document.title="MLbricks : AIBuider";}catch(_){}
-        }
-      }catch(_){
-        try{if(popup && !popup.closed)popup.close();}catch(__){}
-        popup=null;
+        window.addEventListener("message",onLauncherMessage);
+        popup=window.open(launcherUrl,targetName);
+      }catch(_){popup=null;}
+
+      if(!popup){
+        window.removeEventListener("message",onLauncherMessage);
+        // Last-resort direct about:blank preserves the existing working behavior.
+        try{
+          popup=window.open("about:blank",targetName);
+          if(popup){
+            popup.document.open();popup.document.write(page);popup.document.close();
+            try{popup.document.title="MLBricks : AIBuilder";}catch(_){}
+            bootstrapSent=true;
+          }
+        }catch(_){popup=null;}
       }
       if(!popup){
         setStatus("Could not open the Builder tab. Allow pop-ups for this notebook, then try again.");
@@ -1443,7 +1479,7 @@
       popoutPeerConnected=false;
 
       const offerPort=()=>{
-        if(popoutPeerConnected || !popup || popup.closed || typeof MessageChannel==="undefined")return;
+        if(popoutPeerConnected || !bootstrapSent || !popup || popup.closed || typeof MessageChannel==="undefined")return;
         try{
           const channel=new MessageChannel();
           attachPopoutMessagePort(channel.port1);
@@ -1454,14 +1490,13 @@
           );
         }catch(_){}
       };
-      // Retrying with fresh MessageChannels handles slow notebook/popup startup;
-      // a transferred port can only be offered once, so each retry uses a new one.
-      [120,400,900,1600,2600].forEach(ms=>setTimeout(offerPort,ms));
 
-      // Also send a normal-window acknowledgement after startup. If opener works,
-      // this connects immediately; otherwise the MessageChannel offers above do.
-      setTimeout(()=>sendHostReply(popup,{type:"hello_ack",state:cp(state),ts:Date.now()}),220);
-      setStatus("Opening Builder in a full-window tab. Keep this notebook tab open for Python execution.");
+      // Hosted launcher announces readiness. If it is not deployed/reachable yet,
+      // fall back to the existing injected about:blank page instead of breaking Builder.
+      setTimeout(()=>{if(!launcherReady)writeAboutBlankFallback();},1800);
+      [250,650,1200,2200,3400].forEach(ms=>setTimeout(offerPort,ms));
+      setTimeout(()=>sendHostReply(popup,{type:"hello_ack",state:cp(state),ts:Date.now()}),700);
+      setStatus("Opening MLBricks AIBuilder. Keep this notebook tab open for Python execution.");
       return true;
     }
 
@@ -1470,7 +1505,7 @@
       openFullWindow();
     }
 
-    function btn(text,cls){const b=document.createElement("button");b.type="button";b.dataset.type=item.type||"";b.className=cls||"";b.textContent=text;return b;}
+    function btn(text,cls){const b=document.createElement("button");b.type="button";b.className=cls||"";b.textContent=text;return b;}
     function portLabel(side,index){
       const lane=["Skip","Main","Extra"][index] || ("Lane "+(index+1));
       return lane+" "+(side==="in"?"In":"Out");
@@ -3096,7 +3131,7 @@
       if(!model)return;
       const config={
         format:"mlbricks-model-config",
-        builder_version:"0.7.26",
+        builder_version:"0.7.27",
         project:cp(state.project||{}),
         model:cp(model),
         selected_dataset:selectedModelDataset(),
@@ -4510,7 +4545,7 @@
       return {
         format:"mlbricks-builder-design",
         format_version:"0.7.5",
-        builder_version:"0.7.26",
+        builder_version:"0.7.27",
         saved_at:new Date().toISOString(),
         state:sanitizedProjectState()
       };
@@ -4556,7 +4591,7 @@
       }
       const payload={
         format:"mlbricks-export",
-        builder_version:"0.7.26",
+        builder_version:"0.7.27",
         workspace:state.active_workspace,
         project:cp(state.project||{}),
         prepared_datasets:cp(state.prepared_datasets||[]),
@@ -4573,7 +4608,7 @@
     async function shareWorkspace(){
       const lines=[
         "MLBricks Builder — "+(state.project?.name||workspaceName()),
-        "Version: 0.7.26",
+        "Version: 0.7.27",
         "Workspace: "+workspaceName(),
         "Nodes: "+(current(state).nodes||[]).length,
         "Connections: "+(current(state).edges||[]).length
@@ -4589,7 +4624,7 @@
     function showQuickHelp(){
       const win=(root.ownerDocument&&root.ownerDocument.defaultView)||window;
       const help=[
-        'MLBricks Builder v0.7.26',
+        'MLBricks Builder v0.7.27',
         '',
         '• Add bricks or data steps from the left library.',
         '• Export downloads a model config or workspace export file.',
@@ -4680,7 +4715,7 @@
 
       // Top bar
       const top=document.createElement("div");top.className="mlb-topbar";
-      const frontendVersion=root.dataset.mlbricksBuilderVersion||"0.7.26";
+      const frontendVersion=root.dataset.mlbricksBuilderVersion||"0.7.27";
 
       const topLeft=document.createElement("div");topLeft.className="mlb-top-left";
       const logo=document.createElement("div");logo.className="mlb-logo";logo.innerHTML='<span class="mlb-logo-mark">◇</span>MLBricks Builder <span class="mlb-beta">v'+frontendVersion+'</span>';

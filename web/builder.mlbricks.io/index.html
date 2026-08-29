@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>MLBricks : AIBuilder</title>
+  <style>
+    html,body{margin:0;width:100%;height:100%;background:#0b1118;color:#dfe7ef;font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+    body{display:grid;place-items:center}
+    .boot{font-size:14px;color:#8e9baa;letter-spacing:.02em}
+  </style>
+</head>
+<body>
+  <div class="boot">Opening MLBricks AIBuilder…</div>
+  <script>
+  (()=>{
+    const ready=()=>{try{if(window.opener&&!window.opener.closed)window.opener.postMessage({__mlbricks_builder_launcher__:true,type:"ready"},"*");}catch(_){}};
+    window.addEventListener("message",event=>{
+      const msg=event.data||{};
+      if(msg.__mlbricks_builder_launcher__!==true||msg.type!=="bootstrap"||typeof msg.html!=="string")return;
+      try{
+        document.open();
+        document.write(msg.html);
+        document.close();
+        document.title=msg.title||"MLBricks : AIBuilder";
+      }catch(err){document.body.textContent="Could not start MLBricks AIBuilder: "+String(err);}
+    });
+    ready();
+    setTimeout(ready,250);
+    setTimeout(ready,800);
+  })();
+  </script>
+</body>
+</html>

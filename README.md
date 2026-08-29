@@ -1557,7 +1557,7 @@ directly into that tab.
 
 - Restores Brick/Data Library and graph-node typography to the compact v0.7.19 scale while keeping the larger v0.7.21 toolbar and inspector.
 - Moves the live running/progress track above the bottom edge and raises connector z-order so the Extra-lane dots remain fully visible.
-- The detached tab title is `MLbricks : AIBuider`. The browser address remains `about:blank`; browsers do not permit a script to replace the address bar with arbitrary non-URL text.
+- The detached tab title is `MLBricks : AIBuilder`. The browser address remains `about:blank`; browsers do not permit a script to replace the address bar with arbitrary non-URL text.
 
 
 ## v0.7.24 — stable editing and clearer data controls
@@ -1583,3 +1583,17 @@ directly into that tab.
 ## v0.7.26 — center Gallery workspace
 
 Gallery is now a first-class center workspace, opened from the top toolbar before Undo. It has Models, Components, and Data tabs, built-in sample areas, user-saved items, contextual save actions, and a Close Gallery button. The old Gallery entry was removed from the bottom drawer.
+
+
+### Hosted AIBuilder launcher
+
+The separate-tab launcher is configured for `https://builder.mlbricks.io/`. Deploy `web/builder.mlbricks.io/index.html` at that origin. The launcher contains no model runtime; it receives the current Builder UI from the already-open notebook and keeps Python execution bridged through that notebook tab. If the hosted launcher is unavailable, Builder falls back to the working `about:blank` injected tab rather than failing.
+
+
+## v0.7.27 — Gallery blank-screen fix + hosted AIBuilder URL
+
+- Fixed the v0.7.26 startup regression where the generic button helper referenced an undefined Gallery item, causing a blank/black Builder screen.
+- Gallery remains a center workspace with Models / Components / Data tabs.
+- Full-window launch is configured for `https://builder.mlbricks.io/` when its launcher page is deployed.
+- Added `web/builder.mlbricks.io/index.html`, the static launcher to deploy at that origin.
+- If the hosted launcher is unavailable, Builder safely falls back to the working injected `about:blank` tab rather than breaking.
