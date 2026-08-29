@@ -3671,15 +3671,10 @@
         {value:"huggingface",label:"Hugging Face"},{value:"github",label:"GitHub"},{value:"aws",label:"AWS S3"},{value:"gcp",label:"Google Cloud Storage"},{value:"azure",label:"Azure Blob Storage"}
       ],v=>{cloudForm.provider=v;cloudStatus[v]=cloudStatus[v]||{};draw();}));
       const status=cloudStatus[cloudForm.provider]||{};
-      const connectionField=document.createElement("div");connectionField.className="mlb-cloud-field mlb-cloud-connection-field";
-      const connectionLabel=document.createElement("label");connectionLabel.textContent="Connection";connectionField.appendChild(connectionLabel);
       const indicator=document.createElement("div");indicator.className="mlb-cloud-status "+(status.ok||status.authenticated?"ok":status.message?"warn":"idle");
-      indicator.textContent=status.message||providerLabel(cloudForm.provider)+" · not checked";
-      connectionField.appendChild(indicator);
-      const checkWrap=document.createElement("div");checkWrap.className="mlb-cloud-check-wrap";
+      indicator.innerHTML="<strong>Connection</strong><span>"+(status.message||providerLabel(cloudForm.provider)+" · not checked")+"</span>";
       const check=btn("Check Connection","mlb-cloud-check");check.addEventListener("click",()=>requestCloudCommand("cloud_status",{provider:cloudForm.provider,credentials:currentCloudCredentials(),region:cloudForm.region}));
-      checkWrap.appendChild(check);
-      providerBar.append(connectionField,checkWrap);providerCard.appendChild(providerBar);container.appendChild(providerCard);
+      providerBar.append(indicator,check);providerCard.appendChild(providerBar);container.appendChild(providerCard);
 
       const credentials=document.createElement("section");credentials.className="mlb-cloud-card credentials";
       renderProviderCredentials(credentials);container.appendChild(credentials);
@@ -4768,7 +4763,20 @@
       const frontendVersion=root.dataset.mlbricksBuilderVersion||"0.7.34";
 
       const topLeft=document.createElement("div");topLeft.className="mlb-top-left";
-      const logo=document.createElement("div");logo.className="mlb-logo";logo.innerHTML='<span class="mlb-logo-mark">◇</span>MLBricks Builder <span class="mlb-beta">v'+frontendVersion+'</span>';
+      const logo=document.createElement("div");logo.className="mlb-logo";
+      if(payload.brand_logo){
+        const logoImg=document.createElement("img");
+        logoImg.className="mlb-logo-image";
+        logoImg.src=payload.brand_logo;
+        logoImg.alt="MLBricks AI Builder";
+        logo.appendChild(logoImg);
+      }else{
+        const logoFallback=document.createElement("span");
+        logoFallback.className="mlb-logo-fallback";
+        logoFallback.textContent="MLBricks AI Builder";
+        logo.appendChild(logoFallback);
+      }
+      const versionBadge=document.createElement("span");versionBadge.className="mlb-beta";versionBadge.textContent="v"+frontendVersion;logo.appendChild(versionBadge);
       const title=document.createElement("div");
       title.className="mlb-project-title mlb-project-title-editable";
       title.textContent=state.project?.name||"Untitled Model";
@@ -4980,8 +4988,8 @@
           const latest=latestPreparedDataset();
           if(latest){
             const ready=document.createElement("div");ready.className="mlb-data-ready-chip";
-            ready.textContent=compactDatasetSummary(latest);
-            ready.title=latest.name+" — latest prepared dataset available to Model Builder Text Input";
+            ready.innerHTML="<strong>"+latest.name+"</strong><span>"+compactDatasetSummary(latest)+"</span>";
+            ready.title="Latest prepared dataset available to Model Builder Text Input";
             toolbar.appendChild(ready);
           }
           requestAnimationFrame(updateKernelBadge);
@@ -5183,17 +5191,6 @@
       if(!galleryWorkspace.open&&!cloudWorkspace.open)main.appendChild(details);
 
       // Inspector
-      function appendSelectedIdentity(target,node,apiInfoValue){
-        const title=nodeDisplayName(node);
-        const publicName=String(apiInfoValue?.public_name||"Custom Layer");
-        const row=document.createElement("div");row.className="mlb-selected";
-        const same=title.trim().toLowerCase()===publicName.trim().toLowerCase();
-        if(!same){const strong=document.createElement("strong");strong.textContent=title;row.appendChild(strong);}
-        const pill=document.createElement("span");pill.className="mlb-pill";pill.textContent=publicName;row.appendChild(pill);
-        if(same)row.classList.add("single");
-        target.appendChild(row);
-      }
-
       const ins=document.createElement("aside");ins.className="mlb-inspector";
       const tabs=document.createElement("div");tabs.className="mlb-ins-tabs";
       [["settings","Inspector"],["info","Info"]].forEach(([k,t])=>{const b=btn(t);if(inspectorTab===k)b.className="active";b.addEventListener("click",()=>{inspectorTab=k;draw();});tabs.appendChild(b);});ins.appendChild(tabs);
@@ -5210,11 +5207,11 @@
         body.innerHTML='<div class="mlb-section-title">SELECT A NODE</div><div class="mlb-api-path">'+(state.active_workspace==="data"?"Choose a data step, or click a prepared dataset in Output Directory to inspect it.":"Choose a model component to edit its MLBricks API.")+'</div>';
       }else if(inspectorTab==="info"){
         const api=apiInfo(n);const item=n.type==="custom"?{category:"My Bricks",description:"Reusable custom brick."}:cat(catalog,n.type);
-        appendSelectedIdentity(body,n,api);
+        body.innerHTML='<div class="mlb-selected"><strong>'+nodeDisplayName(n)+'</strong><span class="mlb-pill">'+(api.public_name||"Custom")+'</span></div>';
         const s=document.createElement("div");s.className="mlb-summary";[["Type",n.type],["Definition",n.definition_id?"Custom":"Built-in"],["Category",item.category||"General"],["Repeat",n.repeat||1],["API",api.import_path||"custom"],["Status","Valid"]].forEach(([a,b])=>{const r=document.createElement("div");r.className="mlb-summary-row";r.innerHTML="<span>"+a+"</span><strong>"+b+"</strong>";s.appendChild(r);});body.appendChild(s);
       }else{
         const api=apiInfo(n);const info=n.type==="custom"?{api:[]}:cat(catalog,n.type);
-        appendSelectedIdentity(body,n,api);
+        const sw=document.createElement("div");sw.className="mlb-selected";sw.innerHTML="<strong>"+nodeDisplayName(n)+"</strong><span class='mlb-pill'>"+(api.public_name||"Custom Layer")+"</span>";body.appendChild(sw);
         const renameComponentBtn=btn("✎ Rename Component","mlb-ins-rename");renameComponentBtn.addEventListener("click",renameSelectedComponent);body.appendChild(renameComponentBtn);
         const runLive=document.createElement("div");runLive.className="mlb-ins-run-live";
         const rs=execution.nodes?.[n.id];

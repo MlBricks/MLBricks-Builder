@@ -1,5 +1,6 @@
 from __future__ import annotations
 import html
+import base64
 import json
 from pathlib import Path
 import uuid
@@ -2013,6 +2014,8 @@ class Builder:
     def _html(self, bridge=None):
         css = (_STATIC / "builder.css").read_text(encoding="utf-8")
         js = (_STATIC / "builder.js").read_text(encoding="utf-8")
+        logo_png = (_STATIC / "MLBRICKS_AI_Builder.png").read_bytes()
+        brand_logo = "data:image/png;base64," + base64.b64encode(logo_png).decode("ascii")
         payload = json.dumps({
             "state": self.state,
             "catalog": self.catalog,
@@ -2021,6 +2024,7 @@ class Builder:
             "runtime_capabilities": self.runtime_capabilities,
             "local_environment": self.local_environment,
             "instance_id": self._instance_id,
+            "brand_logo": brand_logo,
             "popout_assets": {"css": css, "js": js},
         }).replace("</", "<\\/")
         return f"""

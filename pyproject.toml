@@ -35,7 +35,7 @@ where = ["src"]
 include = ["mlbricks_builder*"]
 
 [tool.setuptools.package-data]
-mlbricks_builder = ["static/*.js", "static/*.css", "static/*.png", "*.json"]
+mlbricks_builder = ["static/*.js", "static/*.css", "static/*.svg", "static/*.png", "*.json"]
 
 
 [project.optional-dependencies]
