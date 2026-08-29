@@ -1525,40 +1525,17 @@ v0.7.17 makes the notebook tab explicitly own the popout and transfers a dedicat
   all use the same dedicated transport back to the notebook Python bridge
 
 
-## v0.7.18 — kernel-safe Full Screen
+## v0.7.20 — clean about:blank new-tab URL
 
-Some sandboxed notebook hosts can open a detached Builder tab but intentionally
-isolate that tab from the notebook output iframe. In that case v0.7.17 could
-render correctly while Python-backed actions still reported **Kernel bridge is
-offline**.
+The Builder popout keeps the existing notebook-owned execution bridge, but the
+new tab no longer starts from a `blob:https://...kaggle.net/...` URL. **Full
+Window** now opens `about:blank` and writes the same self-contained Builder page
+directly into that tab.
 
-v0.7.18 removes the detached-tab requirement from the primary full-size workflow.
-The top bar now uses **⛶ Full Screen**, which expands the *same live Builder
-instance* instead of cloning it into another tab. This means the standard
-ipywidgets/Python bridge never changes browsing context.
-
-Full Screen uses three levels in order:
-
-1. browser Fullscreen API when the notebook grants fullscreen permission;
-2. same-origin notebook-output iframe expansion to `100vw × 100vh` when available;
-3. a full-output focus mode as a safe fallback.
-
-Press **Esc** or **↙ Exit Full Screen** to return to the notebook layout. Run Data,
-Build, Train, Generate, Serve, Local Environment, Cloud and Stop continue to use
-the original kernel bridge while Full Screen is active.
-
-
-## v0.7.19 — Standalone full-window Builder app
-
-The notebook Full Screen / detached-tab bridge has been replaced by a small Python HTTP app that runs inside the same Builder kernel process. The notebook toolbar now shows **↗ Open App**. On Kaggle the app uses Kaggle's authenticated Jupyter proxy URL, so the new browser tab talks directly to the Python Builder process rather than trying to cross the notebook output iframe. Local Python/Jupyter uses localhost.
-
-The standalone app uses a session-scoped random URL and exposes only that Builder instance. Runtime actions (Run Data, Build/Train/Generate, Serve, Local Environment and cloud operations) are sent to Python through the app's own HTTP API, and progress is polled back into the UI.
-
-Python can also start it directly:
-
-```python
-from mlbricks_builder import Builder
-builder = Builder()
-info = builder.open_app()
-print(info["url"])
-```
+- no pyngrok is used for opening Builder in a new tab
+- no standalone web-app server is required
+- the address bar stays `about:blank` instead of exposing the Kaggle/Colab host
+  inside a Blob URL
+- the original notebook tab remains the Python execution host
+- the existing MessageChannel / postMessage / BroadcastChannel bridge is kept
+  unchanged

@@ -37,7 +37,6 @@
     let selected=null,pendingPort=null,filter="All",search="",inspectorTab="settings",zoom=1,status="Ready";
     const bridge=payload.bridge||null;
     const isPopout=!!(bridge&&(bridge.mode==="broadcast"||bridge.mode==="popout"));
-    const isHttp=!!(bridge&&bridge.mode==="http");
     const popoutChannelName=(bridge&&bridge.channel)||("mlbricks-builder-"+(payload.instance_id||root.id||"session"));
     let popoutChannel=null;
     let popoutHostConnected=!isPopout;
@@ -48,14 +47,6 @@
     let pendingBroadcastState=null;
     let pendingBroadcastCommand=null;
     let popoutSyncTimer=null;
-    let fullWindowObjectUrl=null;
-    let fullscreenRestore=null;
-    let fullscreenFallbackActive=false;
-    let httpPendingState=null;
-    let httpPendingCommand=null;
-    let httpStateSyncTimer=null;
-    let webAppInfo=null;
-    let pendingWebAppWindow=null;
     const runtimeCaps=cp(payload.runtime_capabilities||{devices:[{id:"auto",label:"Auto"},{id:"cpu",label:"CPU"}]});
     const localEnvironment=cp(payload.local_environment||{kind:"python",name:"Python / Jupyter Environment",roots:["."],default_root:"."});
     const localDefaultRoot=localEnvironment.default_root||(localEnvironment.roots||[])[0]||".";
@@ -503,10 +494,6 @@
     }
 
     function bridgeControl(cls,selector){
-      if(isHttp){
-        if(selector==="button")return {__mlbHttpKind:cls===bridge?.stop?"stop":"run",click(){return true;}};
-        if(selector==="textarea")return {value:lastProgressRaw||""};
-      }
       if(isPopout){
         if(selector==="button")return {__mlbBroadcastKind:cls===bridge?.stop?"stop":"run",click(){return true;}};
         if(selector==="textarea")return {value:lastProgressRaw||""};
@@ -611,20 +598,6 @@
 
     function clickBridgeButton(button){
       if(!button)return false;
-      if(isHttp&&button.__mlbHttpKind){
-        if(button.__mlbHttpKind==="stop"){
-          fetch("api/stop",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"})
-            .then(r=>r.json().catch(()=>({}))).then(x=>{if(x.message)setStatus(x.message);})
-            .catch(err=>setStatus("Stop request failed: "+err.message));
-          return true;
-        }
-        const body={state:httpPendingState||bridgeStatePayload(),command:httpPendingCommand||{action:"data",ts:Date.now()}};
-        httpPendingCommand=null;
-        fetch("api/run",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)})
-          .then(async r=>{const x=await r.json().catch(()=>({}));if(!r.ok)throw new Error(x.message||("HTTP "+r.status));return x;})
-          .catch(err=>{execution={status:"error",overall:0,message:"Python request failed: "+err.message,nodes:{}};applyExecutionProgress(execution);setStatus(execution.message);});
-        return true;
-      }
       if(isPopout&&button.__mlbBroadcastKind){
         if(!popoutHostConnected)return false;
         if(button.__mlbBroadcastKind==="stop") return sendPopoutMessage({type:"stop",source:"popout",ts:Date.now()});
@@ -648,7 +621,6 @@
 
     function bridgeReady(){
       if(!bridge)return false;
-      if(isHttp)return true;
       if(isPopout)return !!popoutHostConnected;
       return !!(
         bridgeControl(bridge.state,"textarea") &&
@@ -688,7 +660,6 @@
 
     function setBridgeState(){
       if(!bridge)return false;
-      if(isHttp){httpPendingState=bridgeStatePayload();return true;}
       if(isPopout){pendingBroadcastState=bridgeStatePayload();return true;}
       const input=bridgeControl(bridge.state,"textarea");
       if(!input)return false;
@@ -697,7 +668,6 @@
 
     function setBridgeCommand(command){
       if(!bridge)return false;
-      if(isHttp){httpPendingCommand=cp(command||{});return true;}
       if(isPopout){pendingBroadcastCommand=cp(command||{});return true;}
       if(!bridge.command){
         // Backward compatibility with an older Python bridge.
@@ -979,12 +949,6 @@
         setStatus("Nothing is running.");
         return;
       }
-      if(isHttp){
-        const stopButton=bridgeControl(bridge?.stop,"button");
-        if(stopButton&&clickBridgeButton(stopButton))setStatus("Stop requested. The active step will finish, then stop.");
-        else setStatus("Python Stop control is unavailable.");
-        return;
-      }
       if(isPopout){
         if(popoutHostConnected&&sendPopoutMessage({type:"stop",source:"popout",ts:Date.now()}))setStatus("Stop requested in notebook kernel.");
         else setStatus("Notebook bridge is disconnected.");
@@ -1045,19 +1009,6 @@
         }
         if(next.message)setStatus(next.message);
         if(next.status==="done"||next.status==="error")setTimeout(draw,80);
-      }
-
-      if(next.runtime_kind==="webapp"){
-        if(next.webapp_info)webAppInfo=cp(next.webapp_info);
-        if(next.message)setStatus(next.message);
-        if(next.status==="done"&&webAppInfo?.url){
-          const url=String(webAppInfo.url);
-          if(pendingWebAppWindow){
-            try{pendingWebAppWindow.location.href=url;}catch(_){}
-            pendingWebAppWindow=null;
-          }else setStatus("Builder app ready: "+url);
-          setTimeout(draw,80);
-        }
       }
 
       if(next.runtime_kind==="local"){
@@ -1204,19 +1155,6 @@
     function pollBridgeProgress(){
       updateKernelBadge();
       if(!bridge)return;
-      if(isHttp){
-        fetch("api/progress",{cache:"no-store"})
-          .then(r=>{if(!r.ok)throw new Error("HTTP "+r.status);return r.json();})
-          .then(parsed=>{
-            const raw=JSON.stringify(parsed||{});
-            if(!raw||raw===lastProgressRaw)return;
-            lastProgressRaw=raw;
-            if(bridgeAwaitTimer){clearTimeout(bridgeAwaitTimer);bridgeAwaitTimer=null;}
-            applyExecutionProgress(parsed);
-            if(parsed.message)setStatus(parsed.message);
-          }).catch(()=>{});
-        return;
-      }
       const input=bridgeControl(bridge.progress,"textarea");
       if(!input)return;
       const raw=input.value||"";
@@ -1344,14 +1282,6 @@
       }
     }
 
-    function scheduleHttpStateSync(){
-      if(!isHttp)return;
-      if(httpStateSyncTimer)clearTimeout(httpStateSyncTimer);
-      httpStateSyncTimer=setTimeout(()=>{
-        fetch("api/state",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({state:bridgeStatePayload()})}).catch(()=>{});
-      },220);
-    }
-
     function schedulePopoutStateSync(){
       if(!isPopout)return;
       if(popoutSyncTimer)clearTimeout(popoutSyncTimer);
@@ -1385,7 +1315,7 @@
       // Build the closing script tag by concatenation so builder.js itself never
       // contains a raw script end tag while generated HTML receives a real one.
       const closeScript="</"+"script>";
-      return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MLBricks Builder · '+String(state.project?.name||"Full Window")+'</title><style>'+cssText+'</style><style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#0b1118}body{padding:0}.mlb-root{width:100vw!important;height:100vh!important;min-height:0!important;max-height:none!important;min-width:0!important;border-radius:0!important;border:0!important;box-shadow:none!important}</style></head><body><div id="'+targetId+'" class="mlb-root" data-mlbricks-builder-version="0.7.19"></div><script>'+jsText+closeScript+'<script>window.MLBricksBuilder.mount(document.getElementById('+JSON.stringify(targetId)+'),'+safePayload+');'+closeScript+'</body></html>';
+      return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MLBricks Builder · '+String(state.project?.name||"Full Window")+'</title><style>'+cssText+'</style><style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#0b1118}body{padding:0}.mlb-root{width:100vw!important;height:100vh!important;min-height:0!important;max-height:none!important;min-width:0!important;border-radius:0!important;border:0!important;box-shadow:none!important}</style></head><body><div id="'+targetId+'" class="mlb-root" data-mlbricks-builder-version="0.7.20"></div><script>'+jsText+closeScript+'<script>window.MLBricksBuilder.mount(document.getElementById('+JSON.stringify(targetId)+'),'+safePayload+');'+closeScript+'</body></html>';
     }
 
     function openFullWindow(){
@@ -1398,15 +1328,23 @@
       const targetName="mlbricks_builder_full_"+String(popoutChannelName).replace(/[^a-zA-Z0-9_-]/g,"_");
       let popup=null;
       try{
-        if(fullWindowObjectUrl)URL.revokeObjectURL(fullWindowObjectUrl);
-        fullWindowObjectUrl=URL.createObjectURL(new Blob([page],{type:"text/html"}));
-        // Calling window.open directly inside the click gives the notebook host a
-        // WindowProxy to the new tab. That lets us transfer a MessagePort even if
-        // the popup later has no usable window.opener because of sandbox policy.
-        popup=window.open(fullWindowObjectUrl,targetName);
-      }catch(_){popup=null;}
+        // Open a plain about:blank tab instead of a Blob URL. The Builder HTML is
+        // injected into that document immediately, so the address bar does not
+        // expose the notebook host (for example *.kaggle.net) through blob: URLs.
+        // Calling window.open directly inside the click also preserves the
+        // WindowProxy used by the notebook-owned MessageChannel bridge.
+        popup=window.open("about:blank",targetName);
+        if(popup){
+          popup.document.open();
+          popup.document.write(page);
+          popup.document.close();
+        }
+      }catch(_){
+        try{if(popup && !popup.closed)popup.close();}catch(__){}
+        popup=null;
+      }
       if(!popup){
-        setStatus("Browser blocked the Full Window tab. Allow pop-ups for this notebook, then try again.");
+        setStatus("Could not open the Builder tab. Allow pop-ups for this notebook, then try again.");
         return false;
       }
 
@@ -1440,169 +1378,6 @@
       event.preventDefault();
       openFullWindow();
     }
-
-    function builderFullscreenActive(){
-      try{
-        if(document.fullscreenElement===root || document.webkitFullscreenElement===root)return true;
-      }catch(_){}
-      return !!fullscreenRestore || fullscreenFallbackActive || root.classList.contains("mlb-fullscreen-active");
-    }
-
-    function restoreFrameFullscreen(){
-      if(!fullscreenRestore)return false;
-      const restore=fullscreenRestore;
-      fullscreenRestore=null;
-      try{restore();}catch(_){}
-      fullscreenFallbackActive=false;
-      root.classList.remove("mlb-fullscreen-active");
-      return true;
-    }
-
-    function maximizeOwningFrame(){
-      try{
-        const frame=window.frameElement;
-        if(!frame || !frame.ownerDocument)return false;
-        const parentDoc=frame.ownerDocument;
-        const parentHtml=parentDoc.documentElement;
-        const parentBody=parentDoc.body;
-        if(!parentHtml || !parentBody)return false;
-
-        const previousStyle=frame.getAttribute("style");
-        const previousHtmlOverflow=parentHtml.style.overflow;
-        const previousBodyOverflow=parentBody.style.overflow;
-        const previousBodyOverscroll=parentBody.style.overscrollBehavior;
-
-        frame.style.setProperty("position","fixed","important");
-        frame.style.setProperty("inset","0","important");
-        frame.style.setProperty("left","0","important");
-        frame.style.setProperty("top","0","important");
-        frame.style.setProperty("width","100vw","important");
-        frame.style.setProperty("height","100vh","important");
-        frame.style.setProperty("min-width","100vw","important");
-        frame.style.setProperty("min-height","100vh","important");
-        frame.style.setProperty("max-width","none","important");
-        frame.style.setProperty("max-height","none","important");
-        frame.style.setProperty("margin","0","important");
-        frame.style.setProperty("padding","0","important");
-        frame.style.setProperty("border","0","important");
-        frame.style.setProperty("z-index","2147483647","important");
-        frame.style.setProperty("background","#0b1118","important");
-        parentHtml.style.overflow="hidden";
-        parentBody.style.overflow="hidden";
-        parentBody.style.overscrollBehavior="none";
-
-        fullscreenRestore=()=>{
-          try{
-            if(previousStyle===null)frame.removeAttribute("style");
-            else frame.setAttribute("style",previousStyle);
-            parentHtml.style.overflow=previousHtmlOverflow;
-            parentBody.style.overflow=previousBodyOverflow;
-            parentBody.style.overscrollBehavior=previousBodyOverscroll;
-          }catch(_){}
-        };
-        root.classList.add("mlb-fullscreen-active");
-        return true;
-      }catch(_){return false;}
-    }
-
-    function applyLocalFullscreenFallback(){
-      if(fullscreenFallbackActive)return true;
-      fullscreenFallbackActive=true;
-      root.classList.add("mlb-fullscreen-active");
-      return true;
-    }
-
-    async function enterBuilderFullscreen(){
-      // First choice: the browser Fullscreen API. Because this runs directly
-      // from the user's click it keeps the existing notebook/Python bridge and
-      // does not create a second browsing context.
-      try{
-        if(root.requestFullscreen){
-          await root.requestFullscreen({navigationUI:"hide"});
-          root.classList.add("mlb-fullscreen-active");
-          setStatus("Full Screen active · Python kernel stays connected.");
-          draw();
-          return true;
-        }
-        if(root.webkitRequestFullscreen){
-          root.webkitRequestFullscreen();
-          root.classList.add("mlb-fullscreen-active");
-          setStatus("Full Screen active · Python kernel stays connected.");
-          draw();
-          return true;
-        }
-      }catch(_){}
-
-      // Some notebook hosts do not grant the iframe the Fullscreen permission.
-      // If the parent document is reachable, maximize the notebook output iframe
-      // itself to the browser viewport while keeping this exact Builder instance.
-      if(maximizeOwningFrame()){
-        setStatus("Full Screen active · notebook output expanded to the browser viewport.");
-        draw();
-        return true;
-      }
-
-      // Last-resort focus mode. This still keeps the live kernel bridge and fills
-      // the complete notebook output frame, even when the host blocks fullscreen.
-      applyLocalFullscreenFallback();
-      setStatus("Builder expanded inside the notebook output. The notebook host blocked browser-level Full Screen.");
-      draw();
-      return true;
-    }
-
-    async function exitBuilderFullscreen(){
-      try{
-        if(document.fullscreenElement){
-          await document.exitFullscreen();
-          root.classList.remove("mlb-fullscreen-active");
-          setStatus("Exited Full Screen.");
-          draw();
-          return true;
-        }
-        if(document.webkitFullscreenElement && document.webkitExitFullscreen){
-          document.webkitExitFullscreen();
-          root.classList.remove("mlb-fullscreen-active");
-          setStatus("Exited Full Screen.");
-          draw();
-          return true;
-        }
-      }catch(_){}
-
-      if(restoreFrameFullscreen()){
-        setStatus("Exited Full Screen.");
-        draw();
-        return true;
-      }
-      if(fullscreenFallbackActive || root.classList.contains("mlb-fullscreen-active")){
-        fullscreenFallbackActive=false;
-        root.classList.remove("mlb-fullscreen-active");
-        setStatus("Exited Full Screen.");
-        draw();
-        return true;
-      }
-      return false;
-    }
-
-    function toggleBuilderFullscreen(event){
-      if(event)event.preventDefault();
-      if(builderFullscreenActive())exitBuilderFullscreen();
-      else enterBuilderFullscreen();
-    }
-
-    function handleFullscreenChange(){
-      let active=false;
-      try{active=document.fullscreenElement===root || document.webkitFullscreenElement===root;}catch(_){}
-      if(active){
-        root.classList.add("mlb-fullscreen-active");
-        setStatus("Full Screen active · Python kernel stays connected.");
-      }else if(!fullscreenRestore && !fullscreenFallbackActive){
-        root.classList.remove("mlb-fullscreen-active");
-      }
-      draw();
-    }
-
-    try{document.addEventListener("fullscreenchange",handleFullscreenChange);}catch(_){}
-    try{document.addEventListener("webkitfullscreenchange",handleFullscreenChange);}catch(_){}
 
     function btn(text,cls){const b=document.createElement("button");b.type="button";b.className=cls||"";b.textContent=text;return b;}
     function portLabel(side,index){
@@ -3228,7 +3003,7 @@
       if(!model)return;
       const config={
         format:"mlbricks-model-config",
-        builder_version:"0.7.19",
+        builder_version:"0.7.17",
         project:cp(state.project||{}),
         model:cp(model),
         selected_dataset:selectedModelDataset(),
@@ -4519,7 +4294,7 @@
       return {
         format:"mlbricks-builder-design",
         format_version:"0.7.5",
-        builder_version:"0.7.19",
+        builder_version:"0.7.17",
         saved_at:new Date().toISOString(),
         state:sanitizedProjectState()
       };
@@ -4565,7 +4340,7 @@
       }
       const payload={
         format:"mlbricks-export",
-        builder_version:"0.7.19",
+        builder_version:"0.7.17",
         workspace:state.active_workspace,
         project:cp(state.project||{}),
         prepared_datasets:cp(state.prepared_datasets||[]),
@@ -4582,7 +4357,7 @@
     async function shareWorkspace(){
       const lines=[
         "MLBricks Builder — "+(state.project?.name||workspaceName()),
-        "Version: 0.7.19",
+        "Version: 0.7.17",
         "Workspace: "+workspaceName(),
         "Nodes: "+(current(state).nodes||[]).length,
         "Connections: "+(current(state).edges||[]).length
@@ -4598,7 +4373,7 @@
     function showQuickHelp(){
       const win=(root.ownerDocument&&root.ownerDocument.defaultView)||window;
       const help=[
-        'MLBricks Builder v0.7.19',
+        'MLBricks Builder v0.7.17',
         '',
         '• Add bricks or data steps from the left library.',
         '• Export downloads a model config or workspace export file.',
@@ -4668,24 +4443,6 @@
       document.body.appendChild(input);input.click();
     }
 
-    function requestStandaloneApp(){
-      if(webAppInfo?.running&&webAppInfo?.url){
-        try{window.open(String(webAppInfo.url),"mlbricks_builder_app");setStatus("Opening Builder app…");return;}catch(_){}
-      }
-      updateKernelBadge();
-      if(!bridgeReady()){setStatus("Kernel bridge is offline. Re-run the Builder cell, then try again.");return;}
-      try{pendingWebAppWindow=window.open("about:blank","mlbricks_builder_app");}catch(_){pendingWebAppWindow=null;}
-      if(pendingWebAppWindow){try{pendingWebAppWindow.document.body.innerHTML="<div style='font-family:system-ui;padding:24px;background:#0b1118;color:#e9eef5;min-height:100vh'>Starting MLBricks Builder…</div>";}catch(_){}}
-      const command={action:"webapp_start",webapp:{},ts:Date.now()};
-      if(!setBridgeState()||!setBridgeCommand(command)){setStatus("Could not request the Builder web app from Python.");return;}
-      const button=bridgeControl(bridge.run,"button");
-      if(!button){setStatus("Python runtime control was not found.");return;}
-      const progressInput=bridgeControl(bridge.progress,"textarea");lastProgressRaw=progressInput?.value||lastProgressRaw;
-      execution={status:"running",runtime_kind:"webapp",phase:"start",overall:0,message:"Starting full-window Builder app…",nodes:{}};
-      applyExecutionProgress(execution);setStatus(execution.message);
-      setTimeout(()=>clickBridgeButton(button),250);
-    }
-
     function draw(){
       if(bottomView==="hub")bottomView="cloud";
       const wsKey=state.active_workspace||"model";
@@ -4731,13 +4488,13 @@
       const loadBtn=btn("⇧ Load","mlb-dark-btn");loadBtn.title="Load .mlbricks.json or .mlbricks.bin";loadBtn.addEventListener("click",loadDesign);
       const exportBtn=btn("⇩ Export","mlb-dark-btn");exportBtn.title="Export model config or workspace data";exportBtn.addEventListener("click",exportWorkspace);
       const shareBtn=btn("⌯ Share","mlb-dark-btn");shareBtn.title="Copy a project summary";shareBtn.addEventListener("click",shareWorkspace);
-      const fullBtn=(!isPopout&&!isHttp)?document.createElement("button"):null;
+      const fullBtn=!isPopout?document.createElement("a"):null;
       if(fullBtn){
-        fullBtn.type="button";
         fullBtn.className="mlb-dark-btn mlb-full-window-btn";
-        fullBtn.textContent="↗ Open App";
-        fullBtn.title="Open Builder as a full-window web app connected directly to this Python kernel";
-        fullBtn.addEventListener("click",requestStandaloneApp);
+        fullBtn.textContent="↗ Full Window";
+        fullBtn.href="#";
+        fullBtn.title="Open MLBricks Builder in a separate full-window browser tab";
+        fullBtn.addEventListener("click",activateFullWindowLink);
       }
       const helpBtn=btn("?","mlb-dark-btn");helpBtn.title="Quick help";helpBtn.addEventListener("click",showQuickHelp);
       const settingsBtn=btn("⚙","mlb-dark-btn");settingsBtn.title="Project settings";settingsBtn.addEventListener("click",openBuilderSettings);
@@ -5251,7 +5008,6 @@
       stat.innerHTML='<span>Workspace: '+workspaceName()+'</span><span>Backend: '+(state.active_workspace==="data"?"Builder Data API":"MLBricks Runtime")+'</span><span>Device: '+statusDevice+'</span><span class="right mlb-ready">● '+status+"</span>";
       root.appendChild(stat);
       if(isPopout)schedulePopoutStateSync();
-      if(isHttp)scheduleHttpStateSync();
     }
 
     setupPopoutBridge();
