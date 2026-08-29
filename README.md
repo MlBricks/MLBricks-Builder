@@ -1558,3 +1558,13 @@ directly into that tab.
 - Restores Brick/Data Library and graph-node typography to the compact v0.7.19 scale while keeping the larger v0.7.21 toolbar and inspector.
 - Moves the live running/progress track above the bottom edge and raises connector z-order so the Extra-lane dots remain fully visible.
 - The detached tab title is `MLbricks : AIBuider`. The browser address remains `about:blank`; browsers do not permit a script to replace the address bar with arbitrary non-URL text.
+
+
+## v0.7.23 — stable editing and clearer data controls
+
+- Removed the top-toolbar **Rename Layout** and **Gallery** buttons. Gallery remains available from the workspace drawer.
+- The model/project title is now editable inline from the top bar, similar to notebook title editing.
+- Search now keeps keyboard focus and caret position while results update, with a clear **Search...** placeholder.
+- Inspector scroll position is preserved per selected node/output so edits and actions no longer jump the right panel to the top.
+- Training dataset selector uses compact dataset names so the native option menu stays contained.
+- Split preview is slightly larger and the old numeric-only preset buttons are replaced with themed, explicit Train / Validation / Test labels.

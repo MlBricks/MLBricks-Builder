@@ -402,14 +402,18 @@
 .mlb-percent-row input[type="range"]{width:100%;accent-color:#8063ee}
 .mlb-percent-row input[type="number"]{width:58px;box-sizing:border-box;text-align:right}
 .mlb-percent-sign{font-size:11.5px;color:#9ca8b7}
-.mlb-split-preview{border:1px solid #334252;border-radius:7px;background:#111922;padding:8px;margin:0 0 7px}
-.mlb-split-preview.valid{border-color:#2f6548}.mlb-split-preview.invalid{border-color:#77444a}
-.mlb-split-values{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;font-size:10.5px;color:#8f9baa;margin-bottom:7px}
-.mlb-split-values span{display:flex;flex-direction:column;gap:2px}.mlb-split-values b{font-size:12px;color:#e2e7ed}
-.mlb-split-bar{height:7px;display:flex;overflow:hidden;border-radius:6px;background:#25303c;margin-bottom:7px}
-.mlb-split-bar i:nth-child(1){background:#6d5bd0}.mlb-split-bar i:nth-child(2){background:#4b83a8}.mlb-split-bar i:nth-child(3){background:#4b9b86}
-.mlb-split-total{font-size:11px;color:#9eabb9}.mlb-split-preview.valid .mlb-split-total{color:#77c89c}.mlb-split-preview.invalid .mlb-split-total{color:#e59ca4}
-.mlb-split-presets{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin:0 0 10px}.mlb-split-presets button{font-size:10.5px;padding:6px 4px}
+.mlb-split-preview{box-sizing:border-box;border:1px solid #3b4b60;border-radius:9px;background:linear-gradient(180deg,#121b25,#0f171f);padding:10px;margin:2px -2px 9px}
+.mlb-split-preview.valid{border-color:#347b59;box-shadow:0 0 0 1px rgba(52,123,89,.12)}.mlb-split-preview.invalid{border-color:#8a4b56}
+.mlb-split-values{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;font-size:10.5px;color:#98a7b8;margin-bottom:9px}
+.mlb-split-values span{display:flex;flex-direction:column;gap:3px}.mlb-split-values b{font-size:12px;color:#eef2f7}
+.mlb-split-bar{height:9px;display:flex;overflow:hidden;border-radius:7px;background:#25303c;margin-bottom:9px;border:1px solid #2d3b49;box-sizing:border-box}
+.mlb-split-bar i:nth-child(1){background:#755be5}.mlb-split-bar i:nth-child(2){background:#5a8fca}.mlb-split-bar i:nth-child(3){background:#45a47c}
+.mlb-split-total{font-size:11px;color:#9eabb9}.mlb-split-preview.valid .mlb-split-total{color:#72d9a1}.mlb-split-preview.invalid .mlb-split-total{color:#ef9da6}
+.mlb-split-presets{display:grid;grid-template-columns:1fr;gap:6px;margin:0 0 10px}
+.mlb-split-preset{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;box-sizing:border-box;padding:7px 9px;border:1px solid #354557;border-radius:7px;background:#121b25;color:#cbd6e2;cursor:pointer;text-align:left}
+.mlb-split-preset strong{font-size:10.5px;color:#e8edf4;white-space:nowrap}.mlb-split-preset span{font-size:10px;color:#8597aa;text-align:right;min-width:0}
+.mlb-split-preset:hover{border-color:#6d59ca;background:#19192c}.mlb-split-preset.active{border-color:#8063ee;background:linear-gradient(90deg,#251d45,#161a2a);box-shadow:0 0 0 1px rgba(128,99,238,.18)}
+.mlb-split-preset.active strong{color:#d8cdff}.mlb-split-preset.active span{color:#b4a8e8}
 
 .mlb-run-live{
   display:flex;align-items:center;gap:7px;max-width:235px;height:26px;
@@ -1347,6 +1351,9 @@
 /* v0.7.21 readable full-window typography + centered execution controls */
 .mlb-top-left{display:flex;align-items:center;gap:12px;min-width:0;justify-self:start}
 .mlb-top-left .mlb-project-title{margin-left:10px;overflow:hidden;text-overflow:ellipsis;max-width:260px}
+.mlb-project-title-editable{min-width:80px;max-width:300px;padding:5px 7px;margin-left:6px!important;border:1px solid transparent;border-radius:6px;outline:none;cursor:text}
+.mlb-project-title-editable:hover{background:#121b24;border-color:#263746}
+.mlb-project-title-editable:focus{background:#111a23;border-color:#6e58d9;box-shadow:0 0 0 2px rgba(110,88,217,.12);overflow:visible;text-overflow:clip}
 .mlb-top-primary{display:flex;align-items:center;justify-content:center;gap:8px;justify-self:center}
 .mlb-top-actions{justify-self:end;display:flex;align-items:center;gap:7px;min-width:0}
 .mlb-center-stop{min-width:78px;font-weight:800;border-color:#6a4147;background:#24171a;color:#e8a1a8}
@@ -1398,3 +1405,17 @@
 .mlb-port{z-index:12}
 .mlb-run-track{left:9px;right:9px;bottom:12px;z-index:6}
 .mlb-run-badge{z-index:8}
+
+
+/* ------------------------------------------------------------------
+   v0.7.23 — inline model naming, clearer split presets, stable UI focus
+   ------------------------------------------------------------------ */
+.mlb-toolbar{flex-wrap:nowrap;min-width:0}
+.mlb-workspace-badge{flex:0 0 auto}
+.mlb-training-data-select{min-width:0!important;max-width:100%!important}
+
+/* v0.7.23 — contained training dataset selector */
+.mlb-field .mlb-training-data-select{display:block;width:100%;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mlb-search::placeholder{color:#6f7f90;opacity:1}
+.mlb-search:focus{border-color:#5f73a8;box-shadow:0 0 0 2px rgba(95,115,168,.12)}
+.mlb-toolbar .mlb-tool,.mlb-workspace-badge{white-space:nowrap}
