@@ -1632,7 +1632,7 @@ The separate-tab launcher is configured for `https://builder.mlbricks.io/`. Depl
 
 
 
-## v0.7.34 — Fetch lifecycle and two-column Components/Data Gallery
+## v0.7.35 — Fetch lifecycle and two-column Components/Data Gallery
 
 - Data action is now **Fetch Data**.
 - **Stop** appears beside Fetch Data only while the data pipeline is actively running.
