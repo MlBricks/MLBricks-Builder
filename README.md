@@ -1578,3 +1578,8 @@ directly into that tab.
 - The TinyStories text-processing pipeline now loads from Gallery.
 - Data Processing pipelines can now be saved to and loaded from **My Data Pipelines** in Gallery.
 - Bottom workspace sample cards now open Gallery instead of loading a preset directly.
+
+
+## v0.7.26 — center Gallery workspace
+
+Gallery is now a first-class center workspace, opened from the top toolbar before Undo. It has Models, Components, and Data tabs, built-in sample areas, user-saved items, contextual save actions, and a Close Gallery button. The old Gallery entry was removed from the bottom drawer.

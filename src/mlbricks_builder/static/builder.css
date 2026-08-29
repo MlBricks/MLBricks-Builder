@@ -1427,3 +1427,63 @@
 .mlb-gallery-action.sample{border-color:#6653c5;background:#241f49;color:#d9d1ff;font-weight:700}
 .mlb-gallery-action.sample:hover{background:#30285e;border-color:#806be2}
 @media(min-width:1450px){.mlb-gallery-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+
+
+/* ------------------------------------------------------------------
+   v0.7.25 — compact 4-char badges and wider title room
+   ------------------------------------------------------------------ */
+.mlb-node .index{top:7px;left:7px;padding:2px 6px}
+.mlb-node .node-head{display:block;position:relative;margin-top:22px;padding-right:35px;min-height:22px}
+.mlb-node .node-name{display:block;line-height:1.18;white-space:normal;overflow:visible;text-overflow:clip}
+.mlb-node .node-icon{
+  position:absolute;top:7px;right:7px;
+  width:28px;height:22px;border-radius:7px;
+  display:flex;align-items:center;justify-content:center;
+  padding:0 2px;box-sizing:border-box;
+  font-size:8px!important;letter-spacing:.02em;
+}
+
+.mlb-palette{padding:2px}
+.mlb-palette button,.mlb-custom-card{
+  min-height:55px;
+  padding:10px;
+  box-sizing:border-box;
+}
+.mlb-pal-icon{
+  width:30px;height:30px;min-width:30px;flex:0 0 30px;
+  font-size:8px!important;letter-spacing:.02em;
+}
+
+/* Slightly larger footprint for the split card to avoid crowding. */
+.mlb-palette button[data-type="train_test_split"],
+.mlb-node[data-type="train_test_split"]{
+  padding:11px 10px;
+}
+.mlb-node[data-type="train_test_split"]{
+  width:130px;
+  min-height:316px;
+}
+
+
+/* ------------------------------------------------------------------
+   v0.7.26 — first-class center Gallery workspace
+   ------------------------------------------------------------------ */
+.mlb-top-gallery-btn{border-color:#5747a5;background:#18152b;color:#d9d0ff;font-weight:800}
+.mlb-top-gallery-btn:hover,.mlb-top-gallery-btn.active{border-color:#8063ee;background:#29204a;color:#fff}
+.mlb-gallery-toolbar-close{border-color:#65444a!important;background:#241719!important;color:#e9a8ae!important}
+.mlb-canvas.gallery-active{overflow:hidden;padding:0!important}
+.mlb-central-gallery{height:100%;min-height:0;display:flex;flex-direction:column;background:#0c131b;color:#dce4ed}
+.mlb-central-gallery-head{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 20px 13px;border-bottom:1px solid #263440;background:linear-gradient(180deg,#101923,#0d151d)}
+.mlb-central-gallery-copy{min-width:0}.mlb-central-gallery-copy strong{display:block;font-size:17px;letter-spacing:.05em;color:#f0f3f7}.mlb-central-gallery-copy span{display:block;margin-top:4px;color:#8f9dad;font-size:11.5px;line-height:1.4}
+.mlb-gallery-close{flex:0 0 auto;border:1px solid #624149;background:#211619;color:#e6a0a8;border-radius:7px;padding:8px 11px;font-size:11px;font-weight:800;cursor:pointer}.mlb-gallery-close:hover{background:#2d1a1e;border-color:#87525b}
+.mlb-central-gallery-tabs{display:flex;gap:4px;padding:0 20px;border-bottom:1px solid #263440;background:#0f1720}
+.mlb-central-gallery-tab{position:relative;border:0;background:transparent;color:#7f8d9c;padding:12px 18px 11px;font-size:12px;font-weight:800;cursor:pointer}.mlb-central-gallery-tab:hover{color:#c8d2dc}.mlb-central-gallery-tab.active{color:#eeeaff}.mlb-central-gallery-tab.active:after{content:"";position:absolute;left:12px;right:12px;bottom:-1px;height:2px;background:#8063ee;border-radius:2px 2px 0 0}
+.mlb-central-gallery-tools{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 20px;border-bottom:1px solid #202e3a;background:#0d151d;color:#8291a1;font-size:11px}
+.mlb-central-gallery-body{flex:1;min-height:0;overflow:auto;padding:18px 20px 28px;display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));align-content:start;gap:14px;scrollbar-gutter:stable}
+.mlb-central-gallery-section{min-width:0;border:1px solid #293946;border-radius:10px;background:#101922;padding:12px;box-shadow:0 8px 18px rgba(0,0,0,.08)}.mlb-central-gallery-section.featured{border-color:#4d4382;background:linear-gradient(180deg,#15162a,#101821)}
+.mlb-central-gallery-section-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:1px 1px 9px}.mlb-central-gallery-section-head strong{font-size:11px;letter-spacing:.06em;color:#dbe3eb}.mlb-central-gallery-section-head span{font-size:10px;color:#778798}
+.mlb-central-gallery-card{display:grid;grid-template-columns:42px minmax(0,1fr) auto;gap:10px;align-items:center;margin-top:7px;padding:10px;border:1px solid #30414f;border-radius:8px;background:#141e28}.mlb-central-gallery-card:hover{border-color:#485d70;background:#17232e}
+.mlb-central-gallery-icon{width:42px;height:42px;border-radius:9px;background:linear-gradient(135deg,#765be5,#4e73cb);display:grid;place-items:center;font-size:8px;font-weight:900;color:#fff;letter-spacing:.03em}
+.mlb-central-gallery-card-info{min-width:0}.mlb-central-gallery-card-info strong{display:block;color:#e8edf3;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.mlb-central-gallery-card-info span{display:block;margin-top:4px;color:#8190a0;font-size:10px;line-height:1.35;overflow-wrap:anywhere}
+.mlb-central-gallery-card-actions{display:flex;align-items:center;gap:5px;flex-wrap:wrap;justify-content:flex-end}.mlb-central-gallery-empty{padding:20px 12px;border:1px dashed #324452;border-radius:8px;color:#758696;font-size:11px;text-align:center;line-height:1.45}
+@media(max-width:980px){.mlb-central-gallery-body{grid-template-columns:1fr}.mlb-central-gallery-card{grid-template-columns:38px minmax(0,1fr)}.mlb-central-gallery-card-actions{grid-column:1/-1;justify-content:flex-end}}

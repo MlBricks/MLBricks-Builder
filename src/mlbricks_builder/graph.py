@@ -148,7 +148,7 @@ def primitive_catalog():
             "builder_utility": True,
             "builder_python_api": True,
             "name": "Train / Validation / Test Split",
-            "icon": "SPLIT",
+            "icon": "SPLT",
             "category": "Splitting",
             "description": "Choose exactly how much data is used for train, validation and test",
             "accent": "purple",
@@ -556,7 +556,7 @@ def new_project(name: str = "Untitled Model"):
     now = datetime.now(timezone.utc).isoformat()
     return {
         "format": "mlbricks-builder",
-        "format_version": "0.7.24",
+        "format_version": "0.7.26",
         "project": {
             "name": name,
             "created_at": now,
