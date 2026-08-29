@@ -1755,3 +1755,38 @@
   .mlb-central-gallery-card-grid.saved-component-grid,
   .mlb-central-gallery-card-grid.saved-data-grid{grid-template-columns:1fr}
 }
+
+
+/* ------------------------------------------------------------------
+   v0.7.34 — inspector dedupe, aligned cloud fields, uniform data toolbar
+   ------------------------------------------------------------------ */
+.mlb-selected.single{justify-content:flex-start}
+.mlb-selected.single .mlb-pill{margin-left:0}
+
+.mlb-cloud-connection-field{display:flex;flex-direction:column;min-width:0}
+.mlb-cloud-connection-field>label{display:block;color:#9ca8b7;font-size:11px;margin:0 0 4px}
+.mlb-cloud-connection-field .mlb-cloud-status{width:100%;display:flex;align-items:center}
+.mlb-cloud-connection-field .mlb-cloud-status span{margin:0}
+.mlb-central-cloud-body .mlb-cloud-provider-bar{align-items:end!important}
+.mlb-central-cloud-body .mlb-cloud-provider-bar>.mlb-cloud-field{margin-bottom:0!important}
+.mlb-central-cloud-body .mlb-cloud-field>label,
+.mlb-central-cloud-body .mlb-cloud-connection-field>label{height:15px;line-height:15px;margin:0 0 4px!important}
+.mlb-central-cloud-body .mlb-cloud-field select,
+.mlb-central-cloud-body .mlb-cloud-connection-field .mlb-cloud-status,
+.mlb-central-cloud-body .mlb-cloud-check{height:35px!important;box-sizing:border-box}
+
+/* Workspace title is a label, not another status box. */
+.mlb-workspace-title{
+  display:flex;align-items:center;height:30px;flex:0 0 auto;
+  padding:0 2px;color:#dbe4ee;font-size:11px;font-weight:900;
+  text-transform:uppercase;letter-spacing:.045em;white-space:nowrap
+}
+
+/* Data-toolbar status controls use one consistent height. */
+.mlb-toolbar .mlb-layout-toggle,
+.mlb-toolbar .mlb-kernel-badge,
+.mlb-toolbar .mlb-run-live,
+.mlb-toolbar .mlb-data-ready-chip{height:30px!important;min-height:30px!important;box-sizing:border-box}
+.mlb-toolbar .mlb-kernel-badge{padding:0 8px}
+.mlb-toolbar .mlb-run-live{padding:0 8px}
+.mlb-toolbar .mlb-data-ready-chip{padding:3px 8px}

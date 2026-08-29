@@ -1644,3 +1644,11 @@ The separate-tab launcher is configured for `https://builder.mlbricks.io/`. Depl
 - Saved models now flow across both Gallery columns instead of being confined to one side.
 - Load and Export moved from the global toolbar into Gallery to free top-bar space.
 - Prebuilt Models and My Models are full-width Gallery sections with responsive two-column card grids.
+
+## v0.7.34 — Inspector and toolbar alignment polish
+
+- Removes duplicate node/API labels in the Inspector when both names are the same.
+- Keeps the single API/type badge left-aligned.
+- Aligns Cloud Provider, Connection and Check Connection controls on one horizontal input row.
+- Shows the normal Model/Data workspace title as plain text instead of a bordered status chip.
+- Uses a uniform 30 px height for Data workspace status controls.
