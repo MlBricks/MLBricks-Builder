@@ -177,7 +177,7 @@ This repository was exported from **MLBricks Builder**.
 - Builder package metadata: `{MODEL_META_FILE}`
 
 Load this repository from MLBricks Builder's **Hugging Face** panel to restore
-the architecture and, when present, trained checkpoint weights.
+the architecture and, when present, the complete MLBricks model artifact.
 """
 
 
@@ -209,15 +209,26 @@ def push_model(
         folder = Path(td)
         payload = copy.deepcopy(package)
         payload["format"] = "mlbricks-builder-model-v1"
-        payload["builder_version"] = "0.6.6"
+        payload["builder_version"] = "0.7.37"
         payload["hub_repo_id"] = repo_id
 
         has_weights = bool(checkpoint_path and Path(checkpoint_path).exists())
         if has_weights:
-            weights = folder / "weights"
-            weights.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(checkpoint_path, weights / "last.pt")
-            payload["checkpoint_file"] = "weights/last.pt"
+            source_path = Path(checkpoint_path)
+            if source_path.is_dir() and (source_path / "model.pt").exists():
+                # Current MLBricks lifecycle format. Upload the complete
+                # self-describing artifact, not only its model.pt member.
+                artifact_dir = folder / "model_artifact"
+                shutil.copytree(source_path, artifact_dir, dirs_exist_ok=True)
+                payload["model_artifact_dir"] = "model_artifact"
+            elif source_path.is_file():
+                # Backward compatibility with legacy Builder .pt checkpoints.
+                weights = folder / "weights"
+                weights.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source_path, weights / "last.pt")
+                payload["checkpoint_file"] = "weights/last.pt"
+            else:
+                has_weights = False
 
         if tokenizer is not None and hasattr(tokenizer, "save_pretrained"):
             tok_dir = folder / "tokenizer"
@@ -301,7 +312,7 @@ def push_project(*, repo_id: str, state: dict, private: bool = True, token: str 
         folder = Path(td)
         _write_json(folder / PROJECT_META_FILE, {
             "format": "mlbricks-builder-project-v1",
-            "builder_version": "0.6.6",
+            "builder_version": "0.7.37",
             "state": clean,
         })
         (folder / "README.md").write_text(

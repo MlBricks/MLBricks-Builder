@@ -13,8 +13,10 @@ PUBLIC_COMPONENTS = {
     "embedding": ("mlbricks", "Embedding"),
     "esa": ("mlbricks", "ESA"),
     "bolt": ("mlbricks", "Bolt"),
+    "soup": ("mlbricks", "SOUP"),
     "vesa": ("mlbricks", "Vesa"),
     "ffn": ("mlbricks", "FFN"),
+    "linear": ("mlbricks", "Linear"),
     "saffn": ("mlbricks", "StateAwareFFN"),
     "micro_ffn": ("mlbricks", "MicroVirtualFFN"),
     "virtual_saffn": ("mlbricks", "VirtualStateAwareFFN"),
@@ -24,15 +26,18 @@ PUBLIC_COMPONENTS = {
     "rescontroller": ("mlbricks", "ResController"),
     "lm_head": ("mlbricks", "LMHead"),
     "visualbolt": ("mlbricks", "VisionBolt"),
-    "elasticbit": ("mlbricks", "ElasticBit"),
-    "elastic_linear": ("mlbricks", "ElasticLinear"),
-    "elastic_embedding": ("mlbricks", "ElasticEmbedding"),
+    "elasticbit_runtime": ("mlbricks", "ElasticBit"),
     "rope": ("mlbricks", "RoPE"),
     "learned_position": ("mlbricks", "LearnedPosition"),
     "sinusoidal_position": ("mlbricks", "SinusoidalPosition"),
-    "brick": ("mlbricks", "Brick"),
-    "bricks_model": ("mlbricks", "Bricks"),
 }
+
+
+# These components intentionally keep the richer source-derived Builder schema
+# instead of replacing it with a plain constructor signature at runtime.
+# SOUP accepts scalar-or-per-layer sequences/config mappings, while the primary
+# ElasticBit 4-32 UI represents ElasticBit.RuntimeMatrix.from_auto.
+SOURCE_DEFINED_FIELDS = {"soup", "elasticbit_runtime", "lm_head"}
 
 CONFIG_BACKED = {
     "vesa": ("mlbricks", "VesaConfig"),
@@ -108,7 +113,9 @@ def discover_mlbricks_api():
         try:
             module = importlib.import_module(module_name)
             obj = getattr(module, public_name)
-            sig, fields = _fields(obj)
+            sig, inspected_fields = _fields(obj)
+            source_defined = component_type in SOURCE_DEFINED_FIELDS
+            fields = deepcopy(fallback.get("parameters", [])) if source_defined else inspected_fields
 
             config_info = fallback.get("config_api")
             if component_type in CONFIG_BACKED:
@@ -126,18 +133,31 @@ def discover_mlbricks_api():
                     }
 
             doc = inspect.getdoc(obj) or ""
+            runtime_available = True
+            runtime_error = None
+            if component_type == "elasticbit_runtime":
+                checker = getattr(obj, "native_runtime_available", None)
+                if callable(checker):
+                    try:
+                        runtime_available = bool(checker())
+                    except Exception as exc:
+                        runtime_available = False
+                        runtime_error = f"{type(exc).__name__}: {exc}"
+                if not runtime_available and runtime_error is None:
+                    runtime_error = "ElasticBit native 4-32 CUDA runtime is not built in this environment."
+
             result[component_type] = {
                 **fallback,
                 "available": True,
-                "runtime_available": True,
-                "source": "runtime inspection",
-                "public_name": public_name,
-                "import_path": f"{module_name}.{public_name}",
-                "signature": f"{public_name}{sig}",
-                "description": doc.splitlines()[0] if doc else fallback.get("description", ""),
+                "runtime_available": runtime_available,
+                "source": "runtime inspection + MLBricks source schema" if source_defined else "runtime inspection",
+                "public_name": fallback.get("public_name", public_name) if source_defined else public_name,
+                "import_path": fallback.get("import_path", f"{module_name}.{public_name}") if source_defined else f"{module_name}.{public_name}",
+                "signature": fallback.get("signature", f"{public_name}{sig}") if source_defined else f"{public_name}{sig}",
+                "description": fallback.get("description", "") if source_defined else (doc.splitlines()[0] if doc else fallback.get("description", "")),
                 "parameters": fields if fields else fallback.get("parameters", []),
                 "config_api": config_info,
-                "runtime_error": None,
+                "runtime_error": runtime_error,
             }
         except Exception as exc:
             # API schema remains available from the exact supplied source.

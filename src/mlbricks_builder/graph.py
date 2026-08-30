@@ -301,6 +301,15 @@ def primitive_catalog():
             ],
         },
         {
+            "type": "soup",
+            "name": "SOUP",
+            "icon": "SUP",
+            "category": "Core Blocks",
+            "description": "State-and-memory architecture with configurable ESA/BOLT mixers and FFNs",
+            "accent": "purple",
+            "api": [],
+        },
+        {
             "type": "vesa",
             "name": "VESA",
             "icon": "VES",
@@ -328,7 +337,7 @@ def primitive_catalog():
         },
         {
             "type": "ffn",
-            "name": "FFN Brick",
+            "name": "FFN",
             "icon": "FFN",
             "category": "Core Blocks",
             "description": "Feed Forward Network",
@@ -411,19 +420,16 @@ def primitive_catalog():
                  "options": ["auto", "native", "pytorch"]},
             ],
         },
+        {"type":"linear","name":"Linear","icon":"LIN","category":"Core Blocks","description":"MLBricks linear projection","accent":"blue","api":[]},
         {"type":"layernorm","name":"LayerNorm","icon":"LN","category":"Core Blocks","description":"MLBricks LayerNorm","accent":"orange","api":[]},
         {"type":"rescontroller","name":"ResController","icon":"RSC","category":"Core Blocks","description":"Adaptive residual controller","accent":"cyan","api":[]},
         {"type":"micro_ffn","name":"MicroVirtualFFN","icon":"MVF","category":"Core Blocks","description":"Micro virtual FFN","accent":"pink","api":[]},
         {"type":"virtual_saffn","name":"VirtualStateAwareFFN","icon":"VSF","category":"Core Blocks","description":"Virtual state-aware FFN","accent":"pink","api":[]},
 
-        {"type":"elasticbit","name":"ElasticBit","icon":"EB","category":"Advanced","description":"MLBricks quantization interface","accent":"blue","api":[]},
-        {"type":"elastic_linear","name":"ElasticLinear","icon":"EL","category":"Advanced","description":"Packed ElasticBit linear layer","accent":"blue","api":[]},
-        {"type":"elastic_embedding","name":"ElasticEmbedding","icon":"EE","category":"Advanced","description":"Packed ElasticBit embedding","accent":"blue","api":[]},
+        {"type":"elasticbit_runtime","name":"ElasticBit 4–32","icon":"EB","category":"Advanced","description":"Adaptive 4–32-bit CUDA matrix runtime","accent":"blue","api":[]},
         {"type":"rope","name":"RoPE","icon":"RP","category":"Position","description":"Rotary position transform","accent":"purple","api":[]},
         {"type":"learned_position","name":"Learned Position","icon":"LP","category":"Position","description":"Learned positional embedding","accent":"purple","api":[]},
         {"type":"sinusoidal_position","name":"Sinusoidal Position","icon":"SP","category":"Position","description":"Sinusoidal positional encoding","accent":"purple","api":[]},
-        {"type":"brick","name":"Brick","icon":"BR","category":"Advanced","description":"Composable MLBricks layer container","accent":"cyan","api":[],"library_hidden":True},
-        {"type":"bricks_model","name":"Bricks Model","icon":"BM","category":"Advanced","description":"Complete MLBricks model container","accent":"cyan","api":[],"library_hidden":True},
         {
             "type": "lm_head",
             "name": "LM Head",
@@ -556,7 +562,7 @@ def new_project(name: str = "Untitled Model"):
     now = datetime.now(timezone.utc).isoformat()
     return {
         "format": "mlbricks-builder",
-        "format_version": "0.7.29",
+        "format_version": "0.7.37",
         "project": {
             "name": name,
             "created_at": now,
@@ -619,118 +625,137 @@ def new_project(name: str = "Untitled Model"):
 
 
 def tinystories_30m_project():
-    """
-    Starter design for teaching and UI testing.
+    """Notebook-matched TinyStories ~30M ESA starter.
 
-    The ~30M figure is an architecture target / UI estimate. Exact trainable
-    parameters depend on the current installed MLBricks implementations,
-    vocabulary choice, tied embeddings and runtime configuration.
+    This preset intentionally mirrors the validated eager-vs-whole-model-compile
+    benchmark: 10 layers, width 330, six ESA heads, context 512, standard 4x
+    FFN, learned positions, two pre-norm residuals, final LayerNorm, and tied
+    token-embedding/LM-head weights.
     """
-    project = new_project("TinyStories 30M Starter")
+    project = new_project("TinyStories 30M ESA")
     project["project"].update({
         "context_length": 512,
         "batch_size": 16,
         "dataset": "TinyStories",
-        "estimated_parameters": "~30M",
-        "description": "6-layer beginner language-model starter",
+        "estimated_parameters": "~29.85M",
+        "description": "10-layer ESA causal LM matched to the validated whole-model compile benchmark",
+        "model_settings": {
+            "embedding_size": 330,
+            "heads": 6,
+            "block": 512,
+            "default_batch": 16,
+            "vocab_size": 50257,
+            "precision": "fp16",
+        },
     })
+
+    # Match the benchmark tokenizer/data semantics. The runtime packer joins
+    # tokenized stories with EOS and emits exact [batch, 512] training tensors.
+    data_ws = (project.get("workspaces") or {}).get("data") or {}
+    data_root = data_ws.get("root_component_id")
+    for node in (project.get("components") or {}).get(data_root, {}).get("nodes", []):
+        if node.get("type") == "tokenize_text":
+            node.setdefault("params", {}).update({
+                "tokenizer_name": "EleutherAI/gpt-neo-125M",
+                "context_length": 512,
+                "truncation": "false",
+                "padding": "false",
+                "add_special_tokens": "false",
+            })
 
     root_id = project["root_component_id"]
 
-    # Shared nested layer definition.
+    # Reusable block exactly matching ESAModel's standard block:
+    # x -> LN -> ESA -> +x -> LN -> 4x GELU FFN -> +residual.
     layer_def_id = _id("custom")
-    # These keys are the real MLBricks 1.0.0 constructor arguments.
+    block_input = _node("dropout", "Block Input", {"p": 0.0})
+    ln1 = _node("layernorm", "LayerNorm 1", {
+        "normalized_shape": 330, "eps": 1e-5,
+        "elementwise_affine": True, "bias": True,
+        "device": None, "dtype": None,
+    })
     esa = _node("esa", "ESA", {
-        "embd": 384,
-        "head": 6,
-        "batch": 16,
-        "block": 512,
-        "backend": "auto",
-        "precision": "fp16",
-        "compass": "auto",
-        "dropout": 0.1,
-        "gate_min": 0.8,
-        "gate_max": 0.995,
-        "eps": 1e-5,
-        "device": "auto",
-        "auto_compile": False,
-        "compile_mode": "default",
-        "auto_move_input": True,
+        "embd": 330, "head": 6, "batch": 16, "block": 512,
+        "backend": "pytorch", "precision": "fp16", "compass": 16,
+        "dropout": 0.0, "gate_min": 0.8, "gate_max": 0.995,
+        "eps": 1e-5, "device": "auto", "auto_compile": False,
+        "compile_mode": "default", "auto_move_input": True,
         "strict_checks": False,
     })
-    norm = _node("rmsnorm", "RMSNorm", {
-        "normalized_shape": 384,
-        "eps": 1e-6,
-        "elementwise_affine": True,
-        "device": None,
-        "dtype": None,
+    res1 = _node("residual", "ESA Residual", {"dropout": 0.0})
+    ln2 = _node("layernorm", "LayerNorm 2", {
+        "normalized_shape": 330, "eps": 1e-5,
+        "elementwise_affine": True, "bias": True,
+        "device": None, "dtype": None,
     })
-    ffn = _node("ffn", "FFN Brick", {
-        "hidden_size": 384,
-        "intermediate_size": 1536,
-        "activation": "gelu",
-        "dropout": 0.1,
-        "bias": True,
-        "gated": False,
-        "device": None,
-        "dtype": None,
+    ffn = _node("ffn", "FFN", {
+        "hidden_size": 330, "intermediate_size": 1320,
+        "activation": "gelu", "dropout": 0.0, "bias": True,
+        "gated": False, "device": None, "dtype": None,
     })
-    residual = _node("residual", "Residual Add", {
-        "dropout": 0.0,
-    })
+    res2 = _node("residual", "FFN Residual", {"dropout": 0.0})
 
     project["custom_components"][layer_def_id] = {
         "id": layer_def_id,
-        "name": "TinyStories ESA Block",
-        "description": "ESA → RMSNorm → FFN → Residual",
-        "revision": 1,
-        "nodes": [esa, norm, ffn, residual],
+        "name": "TinyStories ESA Layer",
+        "description": "Pre-LN ESA + residual → Pre-LN FFN + residual",
+        "revision": 2,
+        "nodes": [block_input, ln1, esa, res1, ln2, ffn, res2],
         "edges": [
-            _edge(esa["id"], norm["id"]),
-            _edge(norm["id"], ffn["id"]),
-            _edge(ffn["id"], residual["id"]),
-            _edge(esa["id"], residual["id"], kind="residual"),
+            _edge(block_input["id"], ln1["id"]),
+            _edge(ln1["id"], esa["id"]),
+            _edge(esa["id"], res1["id"]),
+            _edge(block_input["id"], res1["id"], kind="residual"),
+            _edge(res1["id"], ln2["id"]),
+            _edge(ln2["id"], ffn["id"]),
+            _edge(ffn["id"], res2["id"]),
+            _edge(res1["id"], res2["id"], kind="residual"),
         ],
         "exposed_api": [
             {"source_node": esa["id"], "key": "embd", "label": "Embedding Dim"},
             {"source_node": esa["id"], "key": "head", "label": "ESA Heads"},
+            {"source_node": esa["id"], "key": "compass", "label": "Compass"},
             {"source_node": ffn["id"], "key": "intermediate_size", "label": "FFN Hidden Dim"},
         ],
     }
 
-    nodes = []
     text = _node("text_input", "Text Input", {"prompt": "Once upon a time"})
-    emb = _node("embedding", "Embedding", {
-        "vocab_size": 32000,
-        "embedding_dim": 384,
+    emb = _node("embedding", "Token Embedding", {
+        "vocab_size": 50257, "embedding_dim": 330,
     })
-    nodes.extend([text, emb])
+    pos = _node("learned_position", "Learned Position", {
+        "dim": 330, "max_seq_len": 512,
+    })
+    drop = _node("dropout", "Embedding Dropout", {"p": 0.0})
+    nodes = [text, emb, pos, drop]
 
-    for i in range(1, 7):
+    for i in range(1, 11):
         nodes.append(_node(
             "custom",
             f"Layer {i}",
-            {"embd": 384, "head": 6, "intermediate_size": 1536},
+            {"embd": 330, "head": 6, "compass": 16, "intermediate_size": 1320},
             definition_id=layer_def_id,
         ))
 
+    final_norm = _node("layernorm", "Final LayerNorm", {
+        "normalized_shape": 330, "eps": 1e-5,
+        "elementwise_affine": True, "bias": True,
+        "device": None, "dtype": None,
+    })
     head = _node("lm_head", "LM Head", {
-        "hidden_size": 384,
-        "vocab_size": 32000,
-        "bias": False,
-        "tie_to": None,
-        "device": None,
-        "dtype": None,
+        "hidden_size": 330, "vocab_size": 50257, "bias": False,
+        "tie_embeddings": True, "device": None, "dtype": None,
     })
     out = _node("text_output", "Text Output", {
-        "max_new_tokens": 64, "temperature": 0.8, "top_p": 0.95
+        "max_new_tokens": 64, "temperature": 0.8, "top_p": 0.95,
     })
-    nodes.extend([head, out])
+    nodes.extend([final_norm, head, out])
 
-    edges = []
-    for left, right in zip(nodes[:-1], nodes[1:]):
-        edges.append(_edge(left["id"], right["id"]))
-
+    edges = [
+        _edge(left["id"], right["id"])
+        for left, right in zip(nodes[:-1], nodes[1:])
+    ]
     project["components"][root_id]["nodes"] = nodes
     project["components"][root_id]["edges"] = edges
     return project
+

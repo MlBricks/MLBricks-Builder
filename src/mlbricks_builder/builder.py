@@ -792,14 +792,27 @@ class Builder:
             ] = str(folder / tokenizer_dir)
         source_entry["hub_dataset_meta"] = hub_meta
 
+        artifact_dir = package.get("model_artifact_dir")
+        artifact = folder / artifact_dir if artifact_dir else None
         checkpoint_file = package.get("checkpoint_file")
         checkpoint = folder / checkpoint_file if checkpoint_file else None
-        if checkpoint is not None and checkpoint.exists():
+        if artifact is not None and (artifact / "model.pt").exists():
+            source_entry["path"] = str(artifact)
+            source_entry["checkpoint_path"] = str(artifact)
+            source_entry["weights_ready"] = True
+            source_entry["training_status"] = "trained"
+            source_entry["status"] = "trained"
+            source_entry["format"] = "MLBricks model artifact"
+            source_entry["artifact_format"] = "mlbricks.model"
+        elif checkpoint is not None and checkpoint.exists():
+            # Backward compatibility with Builder Hub repositories that stored
+            # the pre-lifecycle weights/optimizer .pt checkpoint.
             source_entry["path"] = str(checkpoint)
             source_entry["checkpoint_path"] = str(checkpoint)
             source_entry["weights_ready"] = True
             source_entry["training_status"] = "trained"
             source_entry["status"] = "trained"
+            source_entry["format"] = source_entry.get("format") or "PyTorch checkpoint"
         else:
             source_entry["weights_ready"] = False
             source_entry["training_status"] = source_entry.get("training_status") or "untrained"
@@ -844,7 +857,7 @@ class Builder:
             root.mkdir(parents=True, exist_ok=True)
             manifest = {
                 "format": "mlbricks-cloud-bundle-v1",
-                "builder_version": "0.7.35",
+                "builder_version": "0.7.37",
                 "content_type": content_type,
             }
 
@@ -876,10 +889,18 @@ class Builder:
                 )
                 checkpoint = entry.get("checkpoint_path") or entry.get("path")
                 if checkpoint and Path(checkpoint).exists():
-                    weights = root / "weights"
-                    weights.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(checkpoint, weights / "last.pt")
-                    manifest["checkpoint_file"] = "weights/last.pt"
+                    source_path = Path(checkpoint)
+                    if source_path.is_dir() and (source_path / "model.pt").exists():
+                        artifact = root / "model_artifact"
+                        shutil.copytree(source_path, artifact, dirs_exist_ok=True)
+                        manifest["model_artifact_dir"] = "model_artifact"
+                    elif source_path.is_file():
+                        # Legacy Builder checkpoint support. New training runs use
+                        # the directory-based mlbricks.save() artifact above.
+                        weights = root / "weights"
+                        weights.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(source_path, weights / "last.pt")
+                        manifest["checkpoint_file"] = "weights/last.pt"
                 cached = self.trained_models.get(artifact_id) or {}
                 tokenizer = cached.get("tokenizer")
                 if tokenizer is not None and hasattr(tokenizer, "save_pretrained"):
@@ -964,9 +985,26 @@ class Builder:
                 source["id"] = f"model_{uuid.uuid4().hex[:12]}"
                 source["architecture"] = copy.deepcopy(component)
                 source["selected_dataset_id"] = None
+                artifact_dir = manifest.get("model_artifact_dir")
+                artifact_source = root / artifact_dir if artifact_dir else None
                 checkpoint_file = manifest.get("checkpoint_file")
-                if checkpoint_file and (root / checkpoint_file).exists():
-                    # Persist the downloaded checkpoint outside the temporary extraction folder.
+                if artifact_source is not None and (artifact_source / "model.pt").exists():
+                    # Persist the complete MLBricks artifact outside the temporary
+                    # extraction folder so mlbricks.load()/inspect() keep working.
+                    cache_dir = Path.home() / ".cache" / "mlbricks_builder" / "cloud_models" / source["id"]
+                    artifact = cache_dir / "model"
+                    shutil.rmtree(artifact, ignore_errors=True)
+                    artifact.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copytree(artifact_source, artifact)
+                    source["path"] = str(artifact)
+                    source["checkpoint_path"] = str(artifact)
+                    source["weights_ready"] = True
+                    source["training_status"] = "trained"
+                    source["status"] = "trained"
+                    source["format"] = "MLBricks model artifact"
+                    source["artifact_format"] = "mlbricks.model"
+                elif checkpoint_file and (root / checkpoint_file).exists():
+                    # Persist legacy .pt checkpoints for backward compatibility.
                     cache_dir = Path.home() / ".cache" / "mlbricks_builder" / "cloud_models" / source["id"]
                     cache_dir.mkdir(parents=True, exist_ok=True)
                     checkpoint = cache_dir / "last.pt"
@@ -976,6 +1014,7 @@ class Builder:
                     source["weights_ready"] = True
                     source["training_status"] = "trained"
                     source["status"] = "trained"
+                    source["format"] = source.get("format") or "PyTorch checkpoint"
                 else:
                     source["weights_ready"] = False
                     source["status"] = "built"
@@ -1175,22 +1214,56 @@ class Builder:
         }
 
     def _restore_model_checkpoint(self, path):
+        """Restore either a unified MLBricks artifact or a legacy Builder checkpoint."""
         import torch
+
         path_obj = Path(path).expanduser().resolve()
         if not path_obj.exists():
-            raise FileNotFoundError(f"Model checkpoint was not found: {path_obj}")
-        payload = torch.load(path_obj, map_location="cpu", weights_only=False)
-        if not isinstance(payload, dict) or "model_state" not in payload:
-            raise RuntimeError("This .pt/.pth file is not an MLBricks Builder training checkpoint (model_state was not found).")
-        package = copy.deepcopy(payload.get("builder_package") or {})
-        source_entry = copy.deepcopy(package.get("model_entry") or payload.get("model_entry") or {})
+            raise FileNotFoundError(f"Model checkpoint/artifact was not found: {path_obj}")
+
+        package = {}
+        source_entry = {}
+        artifact_info = None
+        payload = None
+        is_artifact = path_obj.is_dir() and (path_obj / "model.pt").exists()
+
+        if is_artifact:
+            try:
+                import mlbricks as mlb
+                artifact_info = mlb.inspect(path_obj)
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Could not inspect MLBricks model artifact {path_obj}: {exc}"
+                ) from exc
+            if artifact_info.get("format") != "mlbricks.model":
+                raise RuntimeError(
+                    f"Unsupported model artifact format: {artifact_info.get('format')!r}."
+                )
+            metadata = copy.deepcopy(artifact_info.get("metadata") or {})
+            package = copy.deepcopy(metadata.get("builder_package") or {})
+            source_entry = copy.deepcopy(package.get("model_entry") or {})
+        else:
+            payload = torch.load(path_obj, map_location="cpu", weights_only=False)
+            if not isinstance(payload, dict) or "model_state" not in payload:
+                raise RuntimeError(
+                    "The selected file is neither an MLBricks model artifact nor a "
+                    "legacy MLBricks Builder checkpoint (model_state was not found)."
+                )
+            package = copy.deepcopy(payload.get("builder_package") or {})
+            source_entry = copy.deepcopy(package.get("model_entry") or payload.get("model_entry") or {})
+
         architecture = copy.deepcopy(package.get("model_component") or source_entry.get("architecture") or {})
         if not architecture.get("nodes"):
-            raise RuntimeError("The checkpoint has weights but does not contain a Builder model architecture. This is an older checkpoint. Load the matching Builder project first, then load this checkpoint, or train/save once with MLBricks Builder v0.6.8+.")
+            kind = "artifact" if is_artifact else "checkpoint"
+            raise RuntimeError(
+                f"The {kind} contains weights but no Builder model architecture. "
+                "Load the matching Builder project first, or train/save once with "
+                "a current MLBricks Builder release."
+            )
+
         custom_components = copy.deepcopy(package.get("custom_components") or {})
         architecture, custom_components, legacy_recovery = self._recover_legacy_custom_components(
-            architecture,
-            custom_components,
+            architecture, custom_components,
         )
         referenced = {
             n.get("definition_id")
@@ -1201,23 +1274,26 @@ class Builder:
         missing = sorted(x for x in referenced if x not in available)
         if missing:
             raise RuntimeError(
-                "The checkpoint references nested/custom model blocks missing from this older checkpoint: "
+                "The saved model references custom components missing from this artifact: "
                 + ", ".join(missing)
-                + ". Builder also tried legacy recovery against the currently open model, "
-                  "but the model architecture did not match exactly. Open/build the matching "
-                  "model project and scan again. New v0.6.8+ checkpoints embed these definitions."
+                + ". Open/build the matching model project and scan again."
             )
+
         model_ws = (self.state.get("workspaces") or {}).get("model") or {}
         root_id = model_ws.get("root_component_id") or self.state.get("root_component_id")
-        if not root_id: raise RuntimeError("Model Builder workspace is unavailable.")
+        if not root_id:
+            raise RuntimeError("Model Builder workspace is unavailable.")
         architecture["id"] = root_id
         self.state.setdefault("components", {})[root_id] = architecture
         self.state["view_component_id"] = root_id
         self.state.setdefault("custom_components", {}).update(custom_components)
+
         project = copy.deepcopy(package.get("project") or {})
         current_project = self.state.setdefault("project", {})
         for key in ("name", "context_length", "batch_size", "model_settings", "estimated_parameters"):
-            if key in project: current_project[key] = project[key]
+            if key in project:
+                current_project[key] = project[key]
+
         new_id = f"model_{uuid.uuid4().hex[:12]}"
         source_entry.update({
             "id": new_id,
@@ -1228,17 +1304,33 @@ class Builder:
             "weights_ready": True,
             "training_status": "trained",
             "status": "trained",
-            "format": "PyTorch checkpoint",
+            "format": "MLBricks model artifact" if is_artifact else "PyTorch checkpoint",
+            "artifact_format": "mlbricks.model" if is_artifact else None,
             "selected_dataset_id": None,
             "local_source": True,
             "legacy_recovered": bool(legacy_recovery.get("recovered")),
             "legacy_definition_remap": copy.deepcopy(legacy_recovery.get("remapped") or {}),
         })
-        source_entry["trained_steps"] = payload.get("step", source_entry.get("trained_steps"))
-        source_entry["tokens_seen"] = payload.get("tokens_seen", source_entry.get("tokens_seen"))
-        source_entry["effective_vocab_size"] = payload.get("vocab_size", source_entry.get("effective_vocab_size"))
+
+        if is_artifact:
+            metadata = copy.deepcopy((artifact_info or {}).get("metadata") or {})
+            source_entry["trained_steps"] = metadata.get("step", source_entry.get("trained_steps"))
+            source_entry["tokens_seen"] = metadata.get("tokens_seen", source_entry.get("tokens_seen"))
+            source_entry["effective_vocab_size"] = metadata.get("vocab_size", source_entry.get("effective_vocab_size"))
+            source_entry["parameter_count"] = (artifact_info or {}).get("parameters", source_entry.get("parameter_count"))
+        else:
+            source_entry["trained_steps"] = payload.get("step", source_entry.get("trained_steps"))
+            source_entry["tokens_seen"] = payload.get("tokens_seen", source_entry.get("tokens_seen"))
+            source_entry["effective_vocab_size"] = payload.get("vocab_size", source_entry.get("effective_vocab_size"))
+
         dataset_meta = copy.deepcopy(package.get("dataset_meta") or {})
-        if dataset_meta: source_entry["hub_dataset_meta"] = dataset_meta
+        tokenizer_dir = path_obj / "tokenizer" if is_artifact else None
+        if tokenizer_dir is not None and tokenizer_dir.exists():
+            dataset_meta.setdefault("pipeline", {}).setdefault("tokenizer", {})["tokenizer_name"] = str(tokenizer_dir)
+            source_entry["tokenizer_path"] = str(tokenizer_dir)
+        if dataset_meta:
+            source_entry["hub_dataset_meta"] = dataset_meta
+
         self.state.setdefault("model_outputs", []).append(source_entry)
         return source_entry
 
@@ -1270,7 +1362,7 @@ class Builder:
         if requested == "dataset" or (requested == "auto" and kind in {"dataset_dir", "data_file"}):
             meta = self.load_local_dataset_path(path_obj, tokenizer_name=tokenizer_name, text_column=text_column)
             return {"content_type": "dataset", "dataset": meta, "name": meta["name"]}
-        if requested == "model" or (requested == "auto" and kind == "model_checkpoint"):
+        if requested == "model" or (requested == "auto" and kind in {"model_artifact", "model_checkpoint"}):
             model = self._restore_model_checkpoint(path_obj)
             return {"content_type": "model", "model": model, "name": model.get("name") or path_obj.name}
         if requested == "project" or (requested == "auto" and kind in {"project_json", "project_bin"}):
@@ -1447,7 +1539,7 @@ class Builder:
                 continue
 
             try:
-                if item.get("kind") == "model_checkpoint":
+                if item.get("kind") in {"model_artifact", "model_checkpoint"}:
                     result = self.load_local_runtime_path(path, content_type="model")
                 else:
                     result = self.load_local_runtime_path(path, content_type="auto")
@@ -2000,8 +2092,8 @@ class Builder:
         available = [k for k, v in self.mlbricks_api.items() if v.get("available")]
         unavailable = {k: v.get("error") for k, v in self.mlbricks_api.items() if not v.get("available")}
         return {
-            "builder_version": "0.7.35",
-            "frontend_version": "0.7.35",
+            "builder_version": "0.7.37",
+            "frontend_version": "0.7.37",
             "mlbricks": info,
             "api_components_available": available,
             "api_components_unavailable": unavailable,
@@ -2025,7 +2117,7 @@ class Builder:
         }).replace("</", "<\\/")
         return f"""
 <style>{css}</style>
-<div id="{html.escape(self._instance_id)}" class="mlb-root" data-mlbricks-builder-version="0.7.35"></div>
+<div id="{html.escape(self._instance_id)}" class="mlb-root" data-mlbricks-builder-version="0.7.37"></div>
 <script>
 try {{ delete window.MLBricksBuilder; }} catch (e) {{ window.MLBricksBuilder = undefined; }}
 {js}

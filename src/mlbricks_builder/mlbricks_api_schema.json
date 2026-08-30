@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "mlbricks_version": "1.0.0",
-  "generated_from": "MLBricks-main (2)(2).zip",
+  "generated_from": "MLBricks-main(2).zip",
   "components": {
     "embedding": {
       "available": true,
@@ -187,6 +187,135 @@
           "required": false,
           "value": false,
           "annotation": "bool"
+        }
+      ]
+    },
+    "soup": {
+      "available": true,
+      "runtime_available": null,
+      "source": "MLBricks 1.0.0 SOUP source schema",
+      "public_name": "SOUP",
+      "import_path": "mlbricks.SOUP",
+      "signature": "SOUP(dim=512, width=1116, depth=2, mixer='esa', ffn='saffn', mixer_config=None, ffn_config=None, backend='auto', precision='fp16', memory_dim=128, fusion_hidden=768)",
+      "description": "State-and-memory architecture with configurable ESA/BOLT mixers, FFNs, observation memory and SOUP fusion.",
+      "parameters": [
+        {
+          "key": "dim",
+          "label": "Model Dim",
+          "type": "number",
+          "required": false,
+          "value": 512,
+          "annotation": "int",
+          "group": "Architecture",
+          "min": 1
+        },
+        {
+          "key": "width",
+          "label": "State Width",
+          "type": "text",
+          "required": false,
+          "value": "1116",
+          "annotation": "int | sequence[int]",
+          "group": "Architecture",
+          "help": "One width for all layers, or comma-separated widths such as 1116,1024."
+        },
+        {
+          "key": "depth",
+          "label": "Depth",
+          "type": "number",
+          "required": false,
+          "value": 2,
+          "annotation": "int",
+          "group": "Architecture",
+          "min": 1
+        },
+        {
+          "key": "mixer",
+          "label": "Mixer",
+          "type": "text",
+          "required": false,
+          "value": "esa",
+          "annotation": "str | sequence",
+          "group": "Layer Routing",
+          "help": "Use esa or bolt globally, or comma-separated per-layer mixers such as esa,bolt."
+        },
+        {
+          "key": "ffn",
+          "label": "FFN",
+          "type": "text",
+          "required": false,
+          "value": "saffn",
+          "annotation": "str | sequence",
+          "group": "Layer Routing",
+          "help": "Use saffn or ffn globally, or comma-separated per-layer values."
+        },
+        {
+          "key": "mixer_config",
+          "label": "Mixer Config",
+          "type": "textarea",
+          "required": false,
+          "value": "{\"head\":8,\"num_heads\":8}",
+          "annotation": "mapping | sequence[mapping] | None",
+          "group": "Layer Routing",
+          "help": "JSON object applied to every layer, or a JSON list with one config per layer. head is used by ESA; num_heads by BOLT."
+        },
+        {
+          "key": "ffn_config",
+          "label": "FFN Config",
+          "type": "textarea",
+          "required": false,
+          "value": "{}",
+          "annotation": "mapping | sequence[mapping] | None",
+          "group": "Layer Routing",
+          "help": "JSON object applied to every layer, or one config object per layer."
+        },
+        {
+          "key": "backend",
+          "label": "Backend",
+          "type": "select",
+          "required": false,
+          "value": "auto",
+          "annotation": "str",
+          "options": [
+            "auto",
+            "native",
+            "pytorch"
+          ],
+          "group": "Runtime"
+        },
+        {
+          "key": "precision",
+          "label": "Precision",
+          "type": "select",
+          "required": false,
+          "value": "fp16",
+          "annotation": "str",
+          "options": [
+            "fp32",
+            "fp16",
+            "bf16"
+          ],
+          "group": "Runtime"
+        },
+        {
+          "key": "memory_dim",
+          "label": "Observer Memory Dim",
+          "type": "number",
+          "required": false,
+          "value": 128,
+          "annotation": "int",
+          "group": "Memory & Fusion",
+          "min": 1
+        },
+        {
+          "key": "fusion_hidden",
+          "label": "Fusion Hidden",
+          "type": "number",
+          "required": false,
+          "value": 768,
+          "annotation": "int",
+          "group": "Memory & Fusion",
+          "min": 1
         }
       ]
     },
@@ -880,7 +1009,7 @@
     "lm_head": {
       "available": true,
       "runtime_available": null,
-      "source": "MLBricks 1.0.0 source schema",
+      "source": "MLBricks 1.0.0 source schema + Builder module-reference binding",
       "public_name": "LMHead",
       "import_path": "mlbricks.LMHead",
       "signature": "LMHead(hidden_size: int, vocab_size: int, bias: bool = False, tie_to: nn.Module | None = None, device: torch.device | str | None = None, dtype: torch.dtype | None = None)",
@@ -891,16 +1020,18 @@
           "label": "Hidden Size",
           "type": "number",
           "required": true,
-          "value": null,
-          "annotation": "int"
+          "value": 384,
+          "annotation": "int",
+          "min": 1
         },
         {
           "key": "vocab_size",
           "label": "Vocab Size",
           "type": "number",
           "required": true,
-          "value": null,
-          "annotation": "int"
+          "value": 50257,
+          "annotation": "int",
+          "min": 1
         },
         {
           "key": "bias",
@@ -911,12 +1042,13 @@
           "annotation": "bool"
         },
         {
-          "key": "tie_to",
-          "label": "Tie To",
-          "type": "text",
+          "key": "tie_embeddings",
+          "label": "Tie To Upstream Embedding",
+          "type": "bool",
           "required": false,
-          "value": null,
-          "annotation": "nn.Module | None"
+          "value": true,
+          "annotation": "Builder binding for LMHead.tie_to",
+          "help": "Uses MLBricks LMHead.tie_weights() with the nearest compatible upstream Embedding."
         },
         {
           "key": "device",
@@ -948,171 +1080,64 @@
         }
       ]
     },
-    "elasticbit": {
+    "elasticbit_runtime": {
       "available": true,
       "runtime_available": null,
-      "source": "MLBricks 1.0.0 source schema",
+      "source": "MLBricks 1.0.0 ElasticBit native 4–32 source schema",
       "public_name": "ElasticBit",
       "import_path": "mlbricks.ElasticBit",
-      "signature": "ElasticBit(bits: int = 4, group_size: int = 128, scale_dtype: torch.dtype = 'torch.float16', compute_dtype: torch.dtype | None = None, cache_dequantized: bool = True, runtime: str = 'auto', backend: str = 'auto')",
-      "description": "High-level ElasticBit quantization interface.",
+      "signature": "ElasticBit.RuntimeMatrix.from_auto(weights, calibration, threshold=0.01, runtime_mode='compact', min_bits=4, max_bits=32)",
+      "description": "Adaptive 4–32-bit CUDA matrix runtime. Analyzes calibration error, selects the smallest acceptable storage width, and runs compact or widened fast execution.",
       "parameters": [
         {
-          "key": "bits",
-          "label": "Bits",
+          "key": "threshold",
+          "label": "Error Threshold",
+          "type": "number",
+          "required": false,
+          "value": 0.01,
+          "annotation": "float",
+          "group": "Adaptive Precision",
+          "min": 0.0,
+          "help": "Maximum accepted calibration error when choosing the storage width."
+        },
+        {
+          "key": "min_bits",
+          "label": "Minimum Bits",
           "type": "number",
           "required": false,
           "value": 4,
-          "annotation": "int"
+          "annotation": "int",
+          "group": "Adaptive Precision",
+          "min": 4,
+          "max": 32
         },
         {
-          "key": "group_size",
-          "label": "Group Size",
+          "key": "max_bits",
+          "label": "Maximum Bits",
           "type": "number",
           "required": false,
-          "value": 128,
-          "annotation": "int"
+          "value": 32,
+          "annotation": "int",
+          "group": "Adaptive Precision",
+          "min": 4,
+          "max": 32
         },
         {
-          "key": "scale_dtype",
-          "label": "Scale Dtype",
+          "key": "runtime_mode",
+          "label": "Runtime Mode",
           "type": "select",
           "required": false,
-          "value": "torch.float16",
-          "annotation": "torch.dtype",
-          "options": [
-            "torch.float16",
-            "torch.bfloat16",
-            "torch.float32"
-          ]
-        },
-        {
-          "key": "compute_dtype",
-          "label": "Compute Dtype",
-          "type": "select",
-          "required": false,
-          "value": null,
-          "annotation": "torch.dtype | None",
-          "options": [
-            "None",
-            "torch.float16",
-            "torch.bfloat16",
-            "torch.float32"
-          ]
-        },
-        {
-          "key": "cache_dequantized",
-          "label": "Cache Dequantized",
-          "type": "bool",
-          "required": false,
-          "value": true,
-          "annotation": "bool"
-        },
-        {
-          "key": "runtime",
-          "label": "Runtime",
-          "type": "select",
-          "required": false,
-          "value": "auto",
+          "value": "compact",
           "annotation": "str",
           "options": [
-            "auto",
-            "pytorch",
-            "native"
-          ]
-        },
-        {
-          "key": "backend",
-          "label": "Backend",
-          "type": "select",
-          "required": false,
-          "value": "auto",
-          "annotation": "str",
-          "options": [
-            "auto",
-            "native",
-            "pytorch"
-          ]
+            "compact",
+            "fast"
+          ],
+          "group": "Execution",
+          "help": "compact keeps exact packed storage on GPU; fast widens to the selected compute bucket for execution."
         }
-      ]
-    },
-    "elastic_linear": {
-      "available": true,
-      "runtime_available": null,
-      "source": "MLBricks 1.0.0 source schema",
-      "public_name": "ElasticLinear",
-      "import_path": "mlbricks.ElasticLinear",
-      "signature": "ElasticLinear(in_features: int, out_features: int, bias: bool = True, config: ElasticBitConfig | None = None)",
-      "description": "Inference-only packed replacement for ``nn.Linear``.",
-      "parameters": [
-        {
-          "key": "in_features",
-          "label": "In Features",
-          "type": "number",
-          "required": true,
-          "value": null,
-          "annotation": "int"
-        },
-        {
-          "key": "out_features",
-          "label": "Out Features",
-          "type": "number",
-          "required": true,
-          "value": null,
-          "annotation": "int"
-        },
-        {
-          "key": "bias",
-          "label": "Bias",
-          "type": "bool",
-          "required": false,
-          "value": true,
-          "annotation": "bool"
-        },
-        {
-          "key": "config",
-          "label": "Config",
-          "type": "text",
-          "required": false,
-          "value": null,
-          "annotation": "ElasticBitConfig | None"
-        }
-      ]
-    },
-    "elastic_embedding": {
-      "available": true,
-      "runtime_available": null,
-      "source": "MLBricks 1.0.0 source schema",
-      "public_name": "ElasticEmbedding",
-      "import_path": "mlbricks.ElasticEmbedding",
-      "signature": "ElasticEmbedding(num_embeddings: int, embedding_dim: int, config: ElasticBitConfig | None = None)",
-      "description": "Inference-only packed replacement for ``nn.Embedding``.",
-      "parameters": [
-        {
-          "key": "num_embeddings",
-          "label": "Num Embeddings",
-          "type": "number",
-          "required": true,
-          "value": null,
-          "annotation": "int"
-        },
-        {
-          "key": "embedding_dim",
-          "label": "Embedding Dim",
-          "type": "number",
-          "required": true,
-          "value": null,
-          "annotation": "int"
-        },
-        {
-          "key": "config",
-          "label": "Config",
-          "type": "text",
-          "required": false,
-          "value": null,
-          "annotation": "ElasticBitConfig | None"
-        }
-      ]
+      ],
+      "native_only": true
     },
     "rope": {
       "available": true,
@@ -1200,217 +1225,6 @@
           "required": false,
           "value": 10000.0,
           "annotation": "float"
-        }
-      ]
-    },
-    "brick": {
-      "available": true,
-      "runtime_available": null,
-      "source": "MLBricks 1.0.0 source schema",
-      "public_name": "Brick",
-      "import_path": "mlbricks.Brick",
-      "signature": "Brick(mixer: nn.Module, ffn: nn.Module | None = None, norm1: nn.Module | str = 'rmsnorm', norm2: nn.Module | str = 'rmsnorm', residual: nn.Module | None = None, residual2: nn.Module | None = None, position=None, pre: nn.Module | Callable | None = None, post: nn.Module | Callable | None = None, dim: int | None = None)",
-      "description": "One configurable MLBricks model layer.",
-      "parameters": [
-        {
-          "key": "mixer",
-          "label": "Mixer",
-          "type": "text",
-          "required": true,
-          "value": null,
-          "annotation": "nn.Module"
-        },
-        {
-          "key": "ffn",
-          "label": "Ffn",
-          "type": "select",
-          "required": false,
-          "value": null,
-          "annotation": "nn.Module | None",
-          "options": [
-            "standard",
-            "ffnbrick",
-            "virtual_ffnbrick",
-            "micro_ffnbrick"
-          ]
-        },
-        {
-          "key": "norm1",
-          "label": "Norm1",
-          "type": "text",
-          "required": false,
-          "value": "rmsnorm",
-          "annotation": "nn.Module | str"
-        },
-        {
-          "key": "norm2",
-          "label": "Norm2",
-          "type": "text",
-          "required": false,
-          "value": "rmsnorm",
-          "annotation": "nn.Module | str"
-        },
-        {
-          "key": "residual",
-          "label": "Residual",
-          "type": "select",
-          "required": false,
-          "value": null,
-          "annotation": "nn.Module | None",
-          "options": [
-            "standard",
-            "rescontroller"
-          ]
-        },
-        {
-          "key": "residual2",
-          "label": "Residual2",
-          "type": "text",
-          "required": false,
-          "value": null,
-          "annotation": "nn.Module | None"
-        },
-        {
-          "key": "position",
-          "label": "Position",
-          "type": "select",
-          "required": false,
-          "value": null,
-          "annotation": "",
-          "options": [
-            "none",
-            "auto",
-            "learned",
-            "sinusoidal",
-            "rope"
-          ]
-        },
-        {
-          "key": "pre",
-          "label": "Pre",
-          "type": "text",
-          "required": false,
-          "value": null,
-          "annotation": "nn.Module | Callable | None"
-        },
-        {
-          "key": "post",
-          "label": "Post",
-          "type": "text",
-          "required": false,
-          "value": null,
-          "annotation": "nn.Module | Callable | None"
-        },
-        {
-          "key": "dim",
-          "label": "Dim",
-          "type": "number",
-          "required": false,
-          "value": null,
-          "annotation": "int | None"
-        }
-      ]
-    },
-    "bricks_model": {
-      "available": true,
-      "runtime_available": null,
-      "source": "MLBricks 1.0.0 source schema",
-      "public_name": "Bricks",
-      "import_path": "mlbricks.Bricks",
-      "signature": "Bricks(vocab_size: int, dim: int, context: int, layers: list[Brick] | tuple[Brick, ...], embedding: nn.Module | str = 'standard', position=None, final_norm: nn.Module | str = 'rmsnorm', lm_head: nn.Module | str = 'tied', dropout: float = 0.0, backend: str = 'auto')",
-      "description": "Custom layer-by-layer MLBricks model pipeline.",
-      "parameters": [
-        {
-          "key": "vocab_size",
-          "label": "Vocab Size",
-          "type": "number",
-          "required": true,
-          "value": null,
-          "annotation": "int"
-        },
-        {
-          "key": "dim",
-          "label": "Dim",
-          "type": "number",
-          "required": true,
-          "value": null,
-          "annotation": "int"
-        },
-        {
-          "key": "context",
-          "label": "Context",
-          "type": "number",
-          "required": true,
-          "value": null,
-          "annotation": "int"
-        },
-        {
-          "key": "layers",
-          "label": "Layers",
-          "type": "text",
-          "required": true,
-          "value": null,
-          "annotation": "list[Brick] | tuple[Brick, ...]"
-        },
-        {
-          "key": "embedding",
-          "label": "Embedding",
-          "type": "text",
-          "required": false,
-          "value": "standard",
-          "annotation": "nn.Module | str"
-        },
-        {
-          "key": "position",
-          "label": "Position",
-          "type": "select",
-          "required": false,
-          "value": null,
-          "annotation": "",
-          "options": [
-            "none",
-            "auto",
-            "learned",
-            "sinusoidal",
-            "rope"
-          ]
-        },
-        {
-          "key": "final_norm",
-          "label": "Final Norm",
-          "type": "text",
-          "required": false,
-          "value": "rmsnorm",
-          "annotation": "nn.Module | str"
-        },
-        {
-          "key": "lm_head",
-          "label": "Lm Head",
-          "type": "text",
-          "required": false,
-          "value": "tied",
-          "annotation": "nn.Module | str"
-        },
-        {
-          "key": "dropout",
-          "label": "Dropout",
-          "type": "number",
-          "required": false,
-          "value": 0.0,
-          "annotation": "float"
-        },
-        {
-          "key": "backend",
-          "label": "Backend",
-          "type": "select",
-          "required": false,
-          "value": "auto",
-          "annotation": "str",
-          "options": [
-            "auto",
-            "native",
-            "pytorch"
-          ]
         }
       ]
     },
@@ -2774,6 +2588,72 @@
       "builder_utility": true,
       "builder_python_api": false,
       "python_preview": false
+    },
+    "linear": {
+      "available": true,
+      "runtime_available": null,
+      "source": "MLBricks 1.0.0 source schema",
+      "public_name": "Linear",
+      "import_path": "mlbricks.Linear",
+      "signature": "Linear(in_features: int, out_features: int, bias: bool = True, device: torch.device | str | None = None, dtype: torch.dtype | None = None)",
+      "description": "PyTorch-native linear projection exposed through MLBricks.",
+      "parameters": [
+        {
+          "key": "in_features",
+          "label": "Input Features",
+          "type": "number",
+          "required": true,
+          "value": 384,
+          "annotation": "int",
+          "min": 1
+        },
+        {
+          "key": "out_features",
+          "label": "Output Features",
+          "type": "number",
+          "required": true,
+          "value": 384,
+          "annotation": "int",
+          "min": 1
+        },
+        {
+          "key": "bias",
+          "label": "Bias",
+          "type": "bool",
+          "required": false,
+          "value": true,
+          "annotation": "bool"
+        },
+        {
+          "key": "device",
+          "label": "Device",
+          "type": "select",
+          "required": false,
+          "value": null,
+          "annotation": "torch.device | str | None",
+          "options": [
+            "auto",
+            "cpu",
+            "cuda",
+            "None"
+          ]
+        },
+        {
+          "key": "dtype",
+          "label": "Dtype",
+          "type": "select",
+          "required": false,
+          "value": null,
+          "annotation": "torch.dtype | None",
+          "options": [
+            "None",
+            "torch.float16",
+            "torch.bfloat16",
+            "torch.float32"
+          ]
+        }
+      ]
     }
-  }
+  },
+  "builder_version": "0.7.37"
 }

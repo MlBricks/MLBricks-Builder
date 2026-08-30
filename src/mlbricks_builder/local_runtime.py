@@ -44,6 +44,15 @@ def detect_local_kind(path: str | Path) -> dict[str, Any]:
     if not p.exists():
         return {'kind': 'missing', 'label': 'Missing'}
     if p.is_dir():
+        if (p / 'model.pt').exists() and (p / 'metadata.json').exists():
+            try:
+                payload = json.loads((p / 'metadata.json').read_text(encoding='utf-8'))
+                if payload.get('format') == 'mlbricks.model':
+                    return {'kind': 'model_artifact', 'label': 'MLBricks Model'}
+            except Exception:
+                # Still treat the canonical model.pt + metadata.json layout as
+                # a model candidate so the loader can surface the real error.
+                return {'kind': 'model_artifact', 'label': 'MLBricks Model'}
         if (p / 'dataset_dict.json').exists():
             return {'kind': 'dataset_dir', 'label': 'Prepared Dataset'}
         if (p / 'dataset_info.json').exists() and (p / 'state.json').exists():
@@ -248,7 +257,7 @@ def scan_local_files(roots: list[str] | None = None, *, max_entries: int = 300, 
                 dirs[:] = []
                 continue
             current_kind = detect_local_kind(current_path)['kind']
-            if current_kind in {'dataset_dir', 'bundle_dir'}:
+            if current_kind in {'dataset_dir', 'bundle_dir', 'model_artifact'}:
                 add(current_path, root)
                 dirs[:] = []
                 continue
@@ -257,7 +266,7 @@ def scan_local_files(roots: list[str] | None = None, *, max_entries: int = 300, 
                     break
                 add(current_path / filename, root)
 
-    priority = {'model_checkpoint': 0, 'dataset_dir': 1, 'bundle': 2, 'project_json': 3, 'project_bin': 4, 'data_file': 5}
+    priority = {'model_artifact': 0, 'model_checkpoint': 1, 'dataset_dir': 2, 'bundle': 3, 'project_json': 4, 'project_bin': 5, 'data_file': 6}
     entries.sort(key=lambda x: (priority.get(x['kind'], 99), x['root'].lower(), x['path'].lower()))
     return {'roots': [str(x.resolve()) for x in root_paths], 'entries': entries, 'truncated': len(entries) >= max_entries}
 
@@ -277,7 +286,7 @@ def scan_model_candidates(
     if base.is_file():
         info = detect_local_kind(base)
         entries = []
-        if info["kind"] in {"model_checkpoint", "bundle"}:
+        if info["kind"] in {"model_artifact", "model_checkpoint", "bundle"}:
             size = base.stat().st_size
             entries.append({
                 "path": str(base),
@@ -297,7 +306,7 @@ def scan_model_candidates(
         "root": str(base),
         "entries": [
             item for item in (scan.get("entries") or [])
-            if item.get("kind") in {"model_checkpoint", "bundle"}
+            if item.get("kind") in {"model_artifact", "model_checkpoint", "bundle"}
         ],
         "truncated": bool(scan.get("truncated")),
     }

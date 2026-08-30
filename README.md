@@ -872,8 +872,8 @@ For supported text language-model graphs, Builder now:
 - live step/loss/validation/token progress in the runtime panel
 - Stop Training
 
-After training, the built model is marked `weights_ready`, the final checkpoint
-is registered on the model output, and **Generate Tokens** becomes executable.
+After training, the built model is marked `weights_ready`, the final **MLBricks model artifact**
+(directory containing `model.pt` + `metadata.json`) is registered on the model output, and **Generate Tokens** becomes executable.
 Generation uses the configured prompt, token count, sampling settings, device,
 execution mode and precision and streams generated text back into the runtime
 panel.
@@ -1044,7 +1044,8 @@ The Hub panel can push:
     metadata can be restored later
 - **Built / Trained Model**
   - uploads the Builder model graph and model metadata
-  - includes `weights/last.pt` when trained weights exist
+  - uploads the complete directory-based MLBricks artifact when trained weights exist
+  - keeps legacy `weights/last.pt` support for older Builder repositories
   - includes a locally available tokenizer when possible
 - **Builder Project**
   - uploads the complete Builder project state as `mlbricks_project.json`
@@ -1062,7 +1063,7 @@ The same panel can load:
 Public repositories can load without authentication. Private repositories use
 the locally authenticated Hugging Face token.
 
-Loaded trained model packages restore their checkpoint path from the Hugging
+Loaded trained model packages restore their MLBricks artifact directory (or a legacy checkpoint) from the Hugging
 Face cache and can be opened for token generation. A newly selected local
 Prepared Dataset can be used for compatibility checking and further training.
 
@@ -1139,7 +1140,7 @@ Adds **Local / Kaggle** to the bottom workspace selector. Builder can now scan a
 
 Supported local data: Hugging Face `Dataset.save_to_disk()` / `DatasetDict.save_to_disk()` folders and raw TXT/CSV/JSON/JSONL/Parquet files. Loaded data is registered as Prepared Dataset and becomes available to Model Builder.
 
-Supported local models: MLBricks `last.pt`, periodic `.pt` checkpoints, `.pth` / `.ckpt`, plus `.mlbricks.zip` bundles. v0.6.8 training checkpoints now embed the Builder model graph, nested custom-brick definitions, project settings and dataset metadata so a new checkpoint can restore after a kernel restart.
+Supported local models: MLBricks model artifact directories (`model.pt` + `metadata.json`), legacy `last.pt` / periodic `.pt` checkpoints, `.pth` / `.ckpt`, plus `.mlbricks.zip` bundles. v0.6.8 training checkpoints now embed the Builder model graph, nested custom-component definitions, project settings and dataset metadata so a new checkpoint can restore after a kernel restart.
 
 Older checkpoints can still load when the matching Builder project/custom definitions are already open. If they lack embedded nested definitions, Builder now explains that the matching project must be loaded first.
 
@@ -1644,3 +1645,24 @@ The separate-tab launcher is configured for `https://builder.mlbricks.io/`. Depl
 - Saved models now flow across both Gallery columns instead of being confined to one side.
 - Load and Export moved from the global toolbar into Gallery to free top-bar space.
 - Prebuilt Models and My Models are full-width Gallery sections with responsive two-column card grids.
+
+
+## v0.7.37 — SOUP and ElasticBit 4–32 components
+
+- Added the MLBricks SOUP architecture to the model component library and training compiler.
+- SOUP supports ESA/BOLT mixer selection, SAFFN/FFN selection, per-layer comma-separated routing, JSON mixer/FFN configs, observer memory and fusion settings.
+- Added ElasticBit 4–32 as the primary adaptive native runtime component with compact/fast execution and 4–32 bit analysis controls.
+- Removed the legacy ElasticBit 2–8 bit quantizer from the AI Builder component library; ElasticBit 4–32 is now the only ElasticBit component exposed in the Builder.
+
+## v0.7.37 — Whole-model training parity + MLBricks lifecycle API
+
+- Eager and compiled language-model training now use the same packed fixed-shape `[batch, context]` batches, eliminating padding-biased throughput comparisons.
+- Compiled training captures one full causal-LM graph (model + LM head + cross entropy) through one explicit `torch.compile(..., mode="reduce-overhead", fullgraph=True, dynamic=False)` call and performs two untimed forward/backward warm-up passes. Builder uses the explicit PyTorch call so these benchmark flags are forwarded unchanged for visual `TensorGraph` models.
+- Training reports **GPU Tok/s** separately from **end-to-end Tok/s** so data preparation/H2D time is no longer confused with model compute throughput.
+- Default AdamW settings now match the validated notebook (`lr=5e-4`, betas `0.9/0.95`, weight decay `0.1`, no LR warmup); Beta 1/Beta 2 are editable in Training Setup.
+- The TinyStories ~30M starter now mirrors the validated 10-layer/330-width/6-head ESA benchmark, including learned positions, two pre-norm residuals per layer, final LayerNorm, 4× GELU FFN, and tied token-embedding/LM-head weights.
+- New training outputs/checkpoints use the package-level MLBricks lifecycle API: `mlbricks.save`, `mlbricks.load`, and `mlbricks.inspect`. Directory model artifacts (`model.pt` + `metadata.json`) are supported by local loading, cloud bundles, generation restore, and Hugging Face push/load. Legacy Builder `.pt/.pth/.ckpt` checkpoints remain loadable.
+- Builder resolves the current `LMHead(..., tie_to=...)` module-reference API visually through a `Tie Embeddings` setting.
+- Learned and sinusoidal position modules are executable in the Builder runtime.
+- SOUP and ElasticBit 4–32 remain aligned with the supplied MLBricks 1.0.0 source API.
+- Generic `Brick` / `Bricks` composition-container APIs are not exposed as Builder palette components; reusable visual compositions live under **My Components** instead.
