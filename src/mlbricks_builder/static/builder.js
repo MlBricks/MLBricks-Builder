@@ -98,6 +98,46 @@
     const undoStack=[],redoStack=[];
     const historyLimit=60;
 
+    // Single-click reliability guard. A focused editor can emit change/blur on
+    // pointerdown when the user clicks another control. Those handlers may call
+    // draw(), which replaces the DOM before the target control receives click.
+    // Defer only that redraw until the click completes.
+    let pointerInteractionActive=false;
+    let deferredInteractionDraw=false;
+    let interactionReleaseQueued=false;
+
+    function isCommitEditor(el){
+      return !!(el && el.matches && el.matches('input,textarea,select,[contenteditable="true"]'));
+    }
+
+    function releasePointerInteraction(){
+      interactionReleaseQueued=false;
+      if(!pointerInteractionActive && !deferredInteractionDraw)return;
+      pointerInteractionActive=false;
+      if(deferredInteractionDraw){
+        deferredInteractionDraw=false;
+        draw();
+      }
+    }
+
+    root.addEventListener("pointerdown",ev=>{
+      const active=root.ownerDocument?.activeElement;
+      pointerInteractionActive=!!(active && root.contains(active) && isCommitEditor(active) && active!==ev.target && !active.contains?.(ev.target));
+      interactionReleaseQueued=false;
+    },true);
+    root.addEventListener("click",()=>{
+      if(!pointerInteractionActive||interactionReleaseQueued)return;
+      interactionReleaseQueued=true;
+      queueMicrotask(releasePointerInteraction);
+    },true);
+    root.addEventListener("pointerup",()=>{
+      if(!pointerInteractionActive)return;
+      // click normally follows pointerup; this is only a fallback for a
+      // pointer interaction that does not produce click.
+      setTimeout(()=>{if(pointerInteractionActive)releasePointerInteraction();},0);
+    },true);
+    root.addEventListener("pointercancel",releasePointerInteraction,true);
+
     function snapshot(){ return cp(state); }
     function checkpoint(label){
       undoStack.push({state:snapshot(),label:label||"Edit"});
@@ -4768,6 +4808,10 @@
     }
 
     function draw(){
+      if(pointerInteractionActive){
+        deferredInteractionDraw=true;
+        return;
+      }
       if(bottomView==="hub")bottomView="cloud";
       const wsKey=state.active_workspace||"model";
       const oldCanvas=root.querySelector(".mlb-canvas");
