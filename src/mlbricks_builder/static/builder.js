@@ -2491,7 +2491,7 @@
         generated_tokens:next.generated_tokens??null,loss:next.loss??null,ppl:next.ppl??null,val_loss:next.val_loss??null,val_ppl:next.val_ppl??null,
         best_val_loss:next.best_val_loss??null,tokens_per_sec:next.tokens_per_sec??null,avg_tokens_per_sec:next.avg_tokens_per_sec??null,
         memory_allocated_gb:next.memory_allocated_gb??null,memory_reserved_gb:next.memory_reserved_gb??null,memory_peak_gb:next.memory_peak_gb??null,memory_total_gb:next.memory_total_gb??null,
-        lr:next.lr??null,elapsed_seconds:next.elapsed_seconds??null,
+        lr:next.lr??null,elapsed_seconds:next.elapsed_seconds??null,compile_seconds:next.compile_seconds??null,
         message:next.message||"",checkpoint_path:next.checkpoint_path||null
       };
       if(!history.length||history[history.length-1].key!==key)history.push(event);
@@ -2507,7 +2507,8 @@
           tokens_per_sec:event.tokens_per_sec??entry.training_live?.tokens_per_sec,avg_tokens_per_sec:event.avg_tokens_per_sec??entry.training_live?.avg_tokens_per_sec,
           memory_allocated_gb:event.memory_allocated_gb??entry.training_live?.memory_allocated_gb,memory_reserved_gb:event.memory_reserved_gb??entry.training_live?.memory_reserved_gb,
           memory_peak_gb:event.memory_peak_gb??entry.training_live?.memory_peak_gb,memory_total_gb:event.memory_total_gb??entry.training_live?.memory_total_gb,
-          lr:event.lr??entry.training_live?.lr,elapsed_seconds:event.elapsed_seconds??entry.training_live?.elapsed_seconds,message:event.message,
+          lr:event.lr??entry.training_live?.lr,elapsed_seconds:event.elapsed_seconds??entry.training_live?.elapsed_seconds,
+          compile_seconds:event.compile_seconds??entry.training_live?.compile_seconds,message:event.message,
           checkpoint_path:event.checkpoint_path||entry.training_live?.checkpoint_path||entry.checkpoint_path||null
         };
         if(next.sample_text){entry.latest_validation_sample=next.sample_text;entry.latest_validation_sample_step=event.step;}
@@ -2559,7 +2560,7 @@
           best_val_loss:execution.best_val_loss??live.best_val_loss,tokens_per_sec:execution.tokens_per_sec??live.tokens_per_sec,avg_tokens_per_sec:execution.avg_tokens_per_sec??live.avg_tokens_per_sec,
           memory_allocated_gb:execution.memory_allocated_gb??live.memory_allocated_gb,memory_reserved_gb:execution.memory_reserved_gb??live.memory_reserved_gb,
           memory_peak_gb:execution.memory_peak_gb??live.memory_peak_gb,memory_total_gb:execution.memory_total_gb??live.memory_total_gb,lr:execution.lr??live.lr,
-          elapsed_seconds:execution.elapsed_seconds??live.elapsed_seconds,message:execution.message||live.message,
+          elapsed_seconds:execution.elapsed_seconds??live.elapsed_seconds,compile_seconds:execution.compile_seconds??live.compile_seconds,message:execution.message||live.message,
           checkpoint_path:execution.checkpoint_path||live.checkpoint_path};
       }return live;
     }
@@ -2614,6 +2615,7 @@
         statusMetric("Val PPL",live.val_ppl==null?(entry.last_val_ppl==null?"—":Number(entry.last_val_ppl).toFixed(2)):Number(live.val_ppl).toFixed(2)),
         statusMetric("GPU Memory",memoryNow==null?"—":Number(memoryNow).toFixed(2)+" GB",live.memory_total_gb==null?null:"of "+Number(live.memory_total_gb).toFixed(1)+" GB"),
         statusMetric("Peak Memory",peakMemory==null?"—":Number(peakMemory).toFixed(2)+" GB"),
+        statusMetric("Compile",config.execution_mode==="compiled"?(live.compile_seconds==null?(entry.compile_seconds==null?"Pending":Number(entry.compile_seconds).toFixed(1)+"s"):Number(live.compile_seconds).toFixed(1)+"s"):"Not used"),
         statusMetric("Tokens",Number(live.tokens_seen??entry.tokens_seen??0).toLocaleString()),statusMetric("Elapsed",formatDuration(live.elapsed_seconds)));
       hero.appendChild(metrics);main.appendChild(hero);
 

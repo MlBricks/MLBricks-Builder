@@ -349,7 +349,7 @@ def compile_builder_model(state, model_entry, dataset_meta, runtime, *, progress
     return CompiledModel(run_model,raw,device,precision,effective_vocab,params,compile_used,compile_error),tokenizer
 
 
-def _sample_batch(dataset,batch_size,context,pad_id,device,rng):
+def _sample_batch(dataset,batch_size,context,pad_id,device,rng,*,fixed_length=False):
     if len(dataset)<=0: raise RuntimeError("Selected split has no rows.")
     xs=[]; ys=[]; attempts=0
     while len(xs)<batch_size and attempts<batch_size*20:
@@ -365,7 +365,15 @@ def _sample_batch(dataset,batch_size,context,pad_id,device,rng):
         if not x: continue
         xs.append(x);ys.append(y)
     if not xs: raise RuntimeError("Could not form a causal-LM batch. Tokenized rows are too short.")
-    T=min(int(context),max(len(x) for x in xs))
+
+    # torch.compile specializes aggressively on tensor shapes. In compiled
+    # execution keep both batch and sequence dimensions stable so a new
+    # sequence length does not trigger another Dynamo/Inductor compilation.
+    if fixed_length and len(xs)<batch_size:
+        seed_x=list(xs); seed_y=list(ys); i=0
+        while len(xs)<batch_size:
+            xs.append(list(seed_x[i % len(seed_x)])); ys.append(list(seed_y[i % len(seed_y)])); i+=1
+    T=int(context) if fixed_length else min(int(context),max(len(x) for x in xs))
     bx=torch.full((len(xs),T),int(pad_id),dtype=torch.long)
     by=torch.full((len(xs),T),-100,dtype=torch.long)
     tokens=0
@@ -431,12 +439,12 @@ def _optimizer(model,config):
     raise ValueError(f"Unsupported optimizer: {name}")
 
 
-def _evaluate(model,dataset,*,steps,batch_size,context,pad_id,device,precision,rng):
+def _evaluate(model,dataset,*,steps,batch_size,context,pad_id,device,precision,rng,fixed_length=False):
     if dataset is None:return None
     model.eval(); losses=[]
     with torch.no_grad():
         for _ in range(max(1,int(steps))):
-            x,y,_=_sample_batch(dataset,batch_size,context,pad_id,device,rng)
+            x,y,_=_sample_batch(dataset,batch_size,context,pad_id,device,rng,fixed_length=fixed_length)
             with _autocast_context(device,precision):
                 logits=model(x); loss=F.cross_entropy(logits.reshape(-1,logits.size(-1)),y.reshape(-1),ignore_index=-100)
             losses.append(float(loss.detach().float().cpu()))
@@ -525,15 +533,55 @@ def train_builder_model(*,state,model_entry,dataset,dataset_meta,config,progress
         "dataset_meta":copy.deepcopy(dataset_meta or {}),
     }
     rng=random.Random(seed);tokens_seen=0;best_val=float('inf');last_val=None;last_val_ppl=None
-    start=time.perf_counter();model.train()
+    fixed_shapes=bool(compiled.compile_used)
+    model.train()
+
+    # torch.compile() is lazy: the expensive forward/backward compilation occurs
+    # on the first real tensors, not when torch.compile() returns. Force that work
+    # here and exclude it from training throughput. No optimizer step is applied,
+    # so the warm-up does not update model weights.
+    compile_seconds=0.0
+    if compiled.compile_used:
+        progress({
+            "status":"running","runtime_kind":"train","phase":"compile_warmup","overall":1,"step":0,"max_steps":max_steps,
+            "tokens_seen":0,"tokens_per_sec":None,"avg_tokens_per_sec":None,"loss":None,"ppl":None,"val_loss":None,"val_ppl":None,
+            **_memory_snapshot(device),
+            "message":f"Compiling forward + backward graphs on {device} · fixed shape [{batch}, {context}]…",
+        })
+        warmup_rng=random.Random(seed ^ 0x4D4C4252)
+        if device.type=="cuda":
+            try: torch.cuda.reset_peak_memory_stats(device)
+            except Exception: pass
+        compile_started=time.perf_counter()
+        opt.zero_grad(set_to_none=True)
+        xw,yw,_=_sample_batch(train,batch,context,pad,device,warmup_rng,fixed_length=True)
+        with _autocast_context(device,precision):
+            warm_logits=model(xw)
+            warm_loss=F.cross_entropy(warm_logits.reshape(-1,warm_logits.size(-1)),yw.reshape(-1),ignore_index=-100)/accum
+        if scaler is not None and scaler.is_enabled(): scaler.scale(warm_loss).backward()
+        else: warm_loss.backward()
+        _sync_device(device)
+        compile_seconds=max(time.perf_counter()-compile_started,0.0)
+        opt.zero_grad(set_to_none=True)
+        compile_mem=_memory_snapshot(device)
+        progress({
+            "status":"running","runtime_kind":"train","phase":"compile_done","overall":2,"step":0,"max_steps":max_steps,
+            "tokens_seen":0,"tokens_per_sec":None,"avg_tokens_per_sec":None,"loss":None,"ppl":None,"val_loss":None,"val_ppl":None,
+            **compile_mem,"compile_seconds":compile_seconds,
+            "message":f"Compilation complete · {compile_seconds:.1f}s · training throughput timer starts now",
+        })
+
+    # Training memory/throughput statistics intentionally begin after compile.
     if device.type=="cuda":
         try: torch.cuda.reset_peak_memory_stats(device)
         except Exception: pass
+    start=time.perf_counter()
     mem=_memory_snapshot(device)
     progress({
         "status":"running","runtime_kind":"train","phase":"train","overall":2,"step":0,"max_steps":max_steps,
         "tokens_seen":0,"tokens_per_sec":None,"avg_tokens_per_sec":None,"loss":None,"ppl":None,"val_loss":None,"val_ppl":None,
-        **mem,"message":f"Training started on {device} · {compiled.parameter_count:,} parameters"+(" · compiled" if compiled.compile_used else " · eager"),
+        **mem,"compile_seconds":compile_seconds,
+        "message":f"Training started on {device} · {compiled.parameter_count:,} parameters"+(f" · compiled ({compile_seconds:.1f}s warm-up)" if compiled.compile_used else " · eager"),
         "compile_warning":compiled.compile_error,
     })
     step=0;loss_value=None;sample=None
@@ -543,6 +591,7 @@ def train_builder_model(*,state,model_entry,dataset,dataset_meta,config,progress
         if budget=="tokens" and tokens_seen>=max_tokens:break
         if budget=="epochs" and step>=max_steps:break
         step+=1
+        _sync_device(device)
         step_started=time.perf_counter()
 
         # Run exactly the execution mode selected by the user. If a lazy
@@ -550,7 +599,7 @@ def train_builder_model(*,state,model_entry,dataset,dataset_meta,config,progress
         # silently switching the model to eager execution.
         opt.zero_grad(set_to_none=True);loss_value=0.0;step_tokens=0
         for _ in range(accum):
-            x,y,toks=_sample_batch(train,batch,context,pad,device,rng);step_tokens+=toks
+            x,y,toks=_sample_batch(train,batch,context,pad,device,rng,fixed_length=fixed_shapes);step_tokens+=toks
             with _autocast_context(device,precision):
                 logits=model(x);loss=F.cross_entropy(logits.reshape(-1,logits.size(-1)),y.reshape(-1),ignore_index=-100)/accum
             if scaler is not None and scaler.is_enabled():scaler.scale(loss).backward()
@@ -583,7 +632,7 @@ def train_builder_model(*,state,model_entry,dataset,dataset_meta,config,progress
                 "loss":loss_value,"ppl":ppl,"val_loss":last_val,"val_ppl":last_val_ppl,"lr":lr,**mem,
                 "message":f"Validating at step {step}…",
             })
-            last_val=_evaluate(model,val,steps=val_steps,batch_size=batch,context=context,pad_id=pad,device=device,precision=precision,rng=rng);best_val=min(best_val,last_val)
+            last_val=_evaluate(model,val,steps=val_steps,batch_size=batch,context=context,pad_id=pad,device=device,precision=precision,rng=rng,fixed_length=fixed_shapes);best_val=min(best_val,last_val)
             last_val_ppl=_perplexity(last_val)
             if _bool(config.get("generate_on_validation",True)):
                 try:
@@ -629,7 +678,7 @@ def train_builder_model(*,state,model_entry,dataset,dataset_meta,config,progress
         "last_loss":loss_value,"last_ppl":_perplexity(loss_value),"best_val_loss":None if best_val==float('inf') else best_val,
         "last_val_loss":last_val,"last_val_ppl":last_val_ppl,"avg_tokens_per_sec":float(tokens_seen)/final_elapsed,
         "memory_peak_gb":final_mem.get("memory_peak_gb"),"parameter_count":compiled.parameter_count,"effective_vocab_size":compiled.vocab_size,
-        "execution_mode_used":"compiled" if compiled.compile_used else "eager","compile_warning":compiled.compile_error,
+        "execution_mode_used":"compiled" if compiled.compile_used else "eager","compile_warning":compiled.compile_error,"compile_seconds":compile_seconds,
         "trained_at":time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime()),"format":"PyTorch checkpoint",
     }
     return {"compiled":compiled,"tokenizer":tokenizer,"model_update":update,"last_sample":sample}
