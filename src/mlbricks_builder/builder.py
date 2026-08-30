@@ -577,10 +577,10 @@ class Builder:
 
         safe_config={"host":server.host,"port":info.port,"cors_origin":server.cors_origin,
                      "require_api_key":server.api_key_required,"public_tunnel":tunnel,
-                     "device":runtime.get("device","auto"),"backend":runtime.get("backend","auto"),
+                     "device":runtime.get("device","auto"),"backend":runtime.get("backend","pytorch"),
                      "execution_mode":runtime.get("execution_mode","eager"),
                      "compile_mode":runtime.get("compile_mode","reduce-overhead"),
-                     "precision":runtime.get("precision","auto")}
+                     "precision":runtime.get("precision","fp16")}
         entry["serve_config"]=safe_config
         entry["serve_status"]="running"
         entry["serve_urls"]={"local_url":info.local_url,"lan_url":info.lan_url,"public_url":info.public_url}

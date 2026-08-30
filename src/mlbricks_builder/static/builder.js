@@ -1301,10 +1301,15 @@
       let html="<div class='mlb-runtime-live-head'><strong>"+(next.runtime_kind==="train"?"LIVE TRAINING":"LIVE GENERATION")+"</strong><span>"+pct+"%</span></div>";
       html+="<div class='mlb-runtime-live-message'>"+(next.message||"Working…")+"</div>";
       if(next.runtime_kind==="train"){
+        const memNow=next.memory_allocated_gb==null?"—":Number(next.memory_allocated_gb).toFixed(2)+" GB";
         html+="<div class='mlb-runtime-live-stats'>"+
           "<div><span>Step</span><strong>"+(next.step??"—")+(next.max_steps?" / "+next.max_steps:"")+"</strong></div>"+
+          "<div><span>Tok/s</span><strong>"+(next.tokens_per_sec==null?"—":Math.round(Number(next.tokens_per_sec)).toLocaleString())+"</strong></div>"+
           "<div><span>Loss</span><strong>"+(next.loss==null?"—":Number(next.loss).toFixed(4))+"</strong></div>"+
-          "<div><span>Val</span><strong>"+(next.val_loss==null?"—":Number(next.val_loss).toFixed(4))+"</strong></div>"+
+          "<div><span>PPL</span><strong>"+(next.ppl==null?"—":Number(next.ppl).toFixed(2))+"</strong></div>"+
+          "<div><span>Val Loss</span><strong>"+(next.val_loss==null?"—":Number(next.val_loss).toFixed(4))+"</strong></div>"+
+          "<div><span>Val PPL</span><strong>"+(next.val_ppl==null?"—":Number(next.val_ppl).toFixed(2))+"</strong></div>"+
+          "<div><span>Memory</span><strong>"+memNow+"</strong></div>"+
           "<div><span>Tokens</span><strong>"+Number(next.tokens_seen||0).toLocaleString()+"</strong></div>"+
           "</div>";
         if(next.sample_text)html+="<div class='mlb-runtime-sample'><span>Validation sample</span><pre>"+String(next.sample_text).replace(/&/g,"&amp;").replace(/</g,"&lt;")+"</pre></div>";
@@ -2310,10 +2315,10 @@
         checkpoint_every:500,
         seed:42,
         device:"auto",
-        backend:"auto",
+        backend:"pytorch",
         execution_mode:"eager",
         compile_mode:"reduce-overhead",
-        precision:"auto",
+        precision:"fp16",
         output_dir:localPaths.models||((localDefaultRoot.replace(/[\\/]+$/,"")||".")+"/mlbricks/models"),
       };
     }
@@ -2327,10 +2332,10 @@
         top_p:0.95,
         seed:42,
         device:"auto",
-        backend:"auto",
+        backend:"pytorch",
         execution_mode:"eager",
         compile_mode:"reduce-overhead",
-        precision:"auto",
+        precision:"fp16",
       };
     }
 
@@ -2483,8 +2488,10 @@
       const event={
         key,ts:next.ts||Date.now()/1000,status:next.status||"running",phase:next.phase||"runtime",
         step:next.step??null,max_steps:next.max_steps??null,tokens_seen:next.tokens_seen??null,
-        generated_tokens:next.generated_tokens??null,loss:next.loss??null,val_loss:next.val_loss??null,
-        best_val_loss:next.best_val_loss??null,elapsed_seconds:next.elapsed_seconds??null,
+        generated_tokens:next.generated_tokens??null,loss:next.loss??null,ppl:next.ppl??null,val_loss:next.val_loss??null,val_ppl:next.val_ppl??null,
+        best_val_loss:next.best_val_loss??null,tokens_per_sec:next.tokens_per_sec??null,avg_tokens_per_sec:next.avg_tokens_per_sec??null,
+        memory_allocated_gb:next.memory_allocated_gb??null,memory_reserved_gb:next.memory_reserved_gb??null,memory_peak_gb:next.memory_peak_gb??null,memory_total_gb:next.memory_total_gb??null,
+        lr:next.lr??null,elapsed_seconds:next.elapsed_seconds??null,
         message:next.message||"",checkpoint_path:next.checkpoint_path||null
       };
       if(!history.length||history[history.length-1].key!==key)history.push(event);
@@ -2493,8 +2500,14 @@
       if(next.runtime_kind==="train"){
         entry.training_live={
           status:event.status,phase:event.phase,overall:Number(next.overall||0),step:event.step,max_steps:event.max_steps,
-          tokens_seen:event.tokens_seen,loss:event.loss,val_loss:event.val_loss,best_val_loss:event.best_val_loss,
-          elapsed_seconds:event.elapsed_seconds,message:event.message,
+          tokens_seen:event.tokens_seen??entry.training_live?.tokens_seen,
+          loss:event.loss??entry.training_live?.loss,ppl:event.ppl??entry.training_live?.ppl,
+          val_loss:event.val_loss??entry.training_live?.val_loss,val_ppl:event.val_ppl??entry.training_live?.val_ppl,
+          best_val_loss:event.best_val_loss??entry.training_live?.best_val_loss,
+          tokens_per_sec:event.tokens_per_sec??entry.training_live?.tokens_per_sec,avg_tokens_per_sec:event.avg_tokens_per_sec??entry.training_live?.avg_tokens_per_sec,
+          memory_allocated_gb:event.memory_allocated_gb??entry.training_live?.memory_allocated_gb,memory_reserved_gb:event.memory_reserved_gb??entry.training_live?.memory_reserved_gb,
+          memory_peak_gb:event.memory_peak_gb??entry.training_live?.memory_peak_gb,memory_total_gb:event.memory_total_gb??entry.training_live?.memory_total_gb,
+          lr:event.lr??entry.training_live?.lr,elapsed_seconds:event.elapsed_seconds??entry.training_live?.elapsed_seconds,message:event.message,
           checkpoint_path:event.checkpoint_path||entry.training_live?.checkpoint_path||entry.checkpoint_path||null
         };
         if(next.sample_text){entry.latest_validation_sample=next.sample_text;entry.latest_validation_sample_step=event.step;}
@@ -2542,7 +2555,10 @@
       if(execution.runtime_kind==="train"&&runtimePanel?.modelId===entry.id){
         return {...live,status:execution.status||live.status,phase:execution.phase||live.phase,overall:Number(execution.overall??live.overall??0),
           step:execution.step??live.step,max_steps:execution.max_steps??live.max_steps,tokens_seen:execution.tokens_seen??live.tokens_seen,
-          loss:execution.loss??live.loss,val_loss:execution.val_loss??live.val_loss,best_val_loss:execution.best_val_loss??live.best_val_loss,
+          loss:execution.loss??live.loss,ppl:execution.ppl??live.ppl,val_loss:execution.val_loss??live.val_loss,val_ppl:execution.val_ppl??live.val_ppl,
+          best_val_loss:execution.best_val_loss??live.best_val_loss,tokens_per_sec:execution.tokens_per_sec??live.tokens_per_sec,avg_tokens_per_sec:execution.avg_tokens_per_sec??live.avg_tokens_per_sec,
+          memory_allocated_gb:execution.memory_allocated_gb??live.memory_allocated_gb,memory_reserved_gb:execution.memory_reserved_gb??live.memory_reserved_gb,
+          memory_peak_gb:execution.memory_peak_gb??live.memory_peak_gb,memory_total_gb:execution.memory_total_gb??live.memory_total_gb,lr:execution.lr??live.lr,
           elapsed_seconds:execution.elapsed_seconds??live.elapsed_seconds,message:execution.message||live.message,
           checkpoint_path:execution.checkpoint_path||live.checkpoint_path};
       }return live;
@@ -2564,7 +2580,13 @@
       else events.forEach(ev=>{
         const row=document.createElement("div");row.className="mlb-log-row "+(ev.status||"");
         const meta=[];if(ev.step!==null)meta.push("step "+ev.step);if(ev.generated_tokens!==null)meta.push(ev.generated_tokens+" tokens");if(ev.phase)meta.push(ev.phase);
-        const extra=[];if(ev.loss!==null)extra.push("loss "+Number(ev.loss).toFixed(4));if(ev.val_loss!==null)extra.push("val "+Number(ev.val_loss).toFixed(4));
+        const extra=[];
+        if(ev.tokens_per_sec!==null)extra.push(Math.round(Number(ev.tokens_per_sec)).toLocaleString()+" tok/s");
+        if(ev.memory_allocated_gb!==null)extra.push("mem "+Number(ev.memory_allocated_gb).toFixed(2)+" GB");
+        if(ev.loss!==null)extra.push("loss "+Number(ev.loss).toFixed(4));
+        if(ev.ppl!==null)extra.push("ppl "+Number(ev.ppl).toFixed(2));
+        if(ev.val_loss!==null)extra.push("val "+Number(ev.val_loss).toFixed(4));
+        if(ev.val_ppl!==null)extra.push("val ppl "+Number(ev.val_ppl).toFixed(2));
         row.innerHTML="<span>"+escapeRuntimeText(meta.join(" · "))+"</span><strong>"+escapeRuntimeText(ev.message||"Runtime event")+(extra.length?" · "+extra.join(" · "):"")+"</strong>";
         log.appendChild(row);
       });
@@ -2583,10 +2605,15 @@
       top.append(stateBox,pct);hero.appendChild(top);
       const bar=document.createElement("div");bar.className="mlb-status-progress";bar.innerHTML="<i style='width:"+Math.max(0,Math.min(100,Number(live.overall||0)))+"%'></i>";hero.appendChild(bar);
       const metrics=document.createElement("div");metrics.className="mlb-status-metrics";
+      const memoryNow=live.memory_allocated_gb??null,peakMemory=live.memory_peak_gb??entry.memory_peak_gb??null;
       metrics.append(statusMetric("Step",(live.step??entry.trained_steps??0)+(live.max_steps?" / "+live.max_steps:"")),
+        statusMetric("Tok/s",live.tokens_per_sec==null?(entry.avg_tokens_per_sec==null?"—":Math.round(Number(entry.avg_tokens_per_sec)).toLocaleString()):Math.round(Number(live.tokens_per_sec)).toLocaleString()),
         statusMetric("Loss",live.loss==null?(entry.last_loss==null?"—":Number(entry.last_loss).toFixed(4)):Number(live.loss).toFixed(4)),
-        statusMetric("Validation",live.val_loss==null?(entry.latest_validation_loss==null?"—":Number(entry.latest_validation_loss).toFixed(4)):Number(live.val_loss).toFixed(4)),
-        statusMetric("Best Val",live.best_val_loss==null?(entry.best_val_loss==null?"—":Number(entry.best_val_loss).toFixed(4)):Number(live.best_val_loss).toFixed(4)),
+        statusMetric("PPL",live.ppl==null?(entry.last_ppl==null?"—":Number(entry.last_ppl).toFixed(2)):Number(live.ppl).toFixed(2)),
+        statusMetric("Val Loss",live.val_loss==null?(entry.latest_validation_loss==null?(entry.last_val_loss==null?"—":Number(entry.last_val_loss).toFixed(4)):Number(entry.latest_validation_loss).toFixed(4)):Number(live.val_loss).toFixed(4)),
+        statusMetric("Val PPL",live.val_ppl==null?(entry.last_val_ppl==null?"—":Number(entry.last_val_ppl).toFixed(2)):Number(live.val_ppl).toFixed(2)),
+        statusMetric("GPU Memory",memoryNow==null?"—":Number(memoryNow).toFixed(2)+" GB",live.memory_total_gb==null?null:"of "+Number(live.memory_total_gb).toFixed(1)+" GB"),
+        statusMetric("Peak Memory",peakMemory==null?"—":Number(peakMemory).toFixed(2)+" GB"),
         statusMetric("Tokens",Number(live.tokens_seen??entry.tokens_seen??0).toLocaleString()),statusMetric("Elapsed",formatDuration(live.elapsed_seconds)));
       hero.appendChild(metrics);main.appendChild(hero);
 

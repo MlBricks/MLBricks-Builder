@@ -176,8 +176,8 @@ class TensorGraph(nn.Module):
         from mlbricks import Embedding, LMHead, FFN, RMSNorm, LayerNorm, Residual, ESA
         t=node.get("type"); p=deepcopy(node.get("params") or {})
         device=str(self.runtime.get("device") or "auto")
-        backend=str(self.runtime.get("backend") or "auto")
-        precision=str(self.runtime.get("precision") or "auto")
+        backend=str(self.runtime.get("backend") or "pytorch")
+        precision=str(self.runtime.get("precision") or "fp16")
         if precision=="auto": precision="fp16" if resolve_device(device).type=="cuda" else "fp32"
         if t in {"text_input","text_output","logits_output"}: return _Identity()
         if t=="embedding":
@@ -325,7 +325,7 @@ def compile_builder_model(state, model_entry, dataset_meta, runtime, *, progress
         copy.deepcopy((model_entry or {}).get("custom_components_snapshot") or {})
     )
     device=resolve_device(runtime.get("device","auto"))
-    precision,dtype=resolve_precision(runtime.get("precision","auto"),device)
+    precision,dtype=resolve_precision(runtime.get("precision","fp16"),device)
     tokenizer=_tokenizer_for(dataset_meta)
     graph_vocab=_graph_vocab(graph)
     tokenizer_vocab=len(tokenizer)
@@ -340,14 +340,12 @@ def compile_builder_model(state, model_entry, dataset_meta, runtime, *, progress
     run_model=raw; compile_used=False; compile_error=None
     if str(runtime.get("execution_mode","eager"))=="compiled":
         if not hasattr(torch,"compile"):
-            compile_error="torch.compile is unavailable; using eager."
-        else:
-            try:
-                mode=str(runtime.get("compile_mode") or "default")
-                run_model=torch.compile(raw,mode=mode,fullgraph=False)
-                compile_used=True
-            except Exception as exc:
-                compile_error=str(exc); run_model=raw
+            raise RuntimeError("Compiled execution was selected, but torch.compile is unavailable in this PyTorch build.")
+        mode=str(runtime.get("compile_mode") or "default")
+        # No eager fallback: when Compiled is selected, compiler/runtime failures
+        # are surfaced to the Builder so the selected execution mode is explicit.
+        run_model=torch.compile(raw,mode=mode,fullgraph=False)
+        compile_used=True
     return CompiledModel(run_model,raw,device,precision,effective_vocab,params,compile_used,compile_error),tokenizer
 
 
@@ -382,6 +380,45 @@ def _autocast_context(device,precision):
     if device.type=="cpu" and precision=="bf16": return torch.autocast(device_type="cpu",dtype=torch.bfloat16)
     from contextlib import nullcontext
     return nullcontext()
+
+
+def _perplexity(loss_value):
+    if loss_value is None:
+        return None
+    try:
+        value=float(loss_value)
+    except (TypeError,ValueError,OverflowError):
+        return None
+    if not math.isfinite(value):
+        return None
+    # exp(20) is already ~4.85e8; cap only to keep telemetry finite.
+    return math.exp(min(value,20.0))
+
+
+def _sync_device(device):
+    if device.type=="cuda":
+        try: torch.cuda.synchronize(device)
+        except Exception: pass
+
+
+def _memory_snapshot(device):
+    empty={
+        "memory_allocated_gb":None,"memory_reserved_gb":None,
+        "memory_peak_gb":None,"memory_total_gb":None,
+    }
+    if device.type!="cuda":
+        return empty
+    try:
+        scale=float(1024**3)
+        props=torch.cuda.get_device_properties(device)
+        return {
+            "memory_allocated_gb":torch.cuda.memory_allocated(device)/scale,
+            "memory_reserved_gb":torch.cuda.memory_reserved(device)/scale,
+            "memory_peak_gb":torch.cuda.max_memory_allocated(device)/scale,
+            "memory_total_gb":float(props.total_memory)/scale,
+        }
+    except Exception:
+        return empty
 
 
 def _optimizer(model,config):
@@ -480,22 +517,38 @@ def train_builder_model(*,state,model_entry,dataset,dataset_meta,config,progress
     output=Path(str(config.get("output_dir") or "mlbricks/models"))/_safe_name(model_entry.get("name","model"));output.mkdir(parents=True,exist_ok=True);(output/'checkpoints').mkdir(exist_ok=True)
     builder_package={
         "format":"mlbricks-builder-checkpoint-v1",
-        "builder_version":"0.6.8",
+        "builder_version":"0.7.35",
         "project":copy.deepcopy(state.get("project") or {}),
         "model_component":copy.deepcopy(_root_model(state)),
         "custom_components":copy.deepcopy(state.get("custom_components") or {}),
         "model_entry":copy.deepcopy(model_entry),
         "dataset_meta":copy.deepcopy(dataset_meta or {}),
     }
-    rng=random.Random(seed);tokens_seen=0;best_val=float('inf');last_val=None;start=time.perf_counter();model.train()
-    progress({"status":"running","runtime_kind":"train","phase":"train","overall":2,"step":0,"max_steps":max_steps,"tokens_seen":0,"loss":None,"val_loss":None,"message":f"Training started on {device} · {compiled.parameter_count:,} parameters"+(" · compiled" if compiled.compile_used else " · eager"),"compile_warning":compiled.compile_error})
-    step=0
+    rng=random.Random(seed);tokens_seen=0;best_val=float('inf');last_val=None;last_val_ppl=None
+    start=time.perf_counter();model.train()
+    if device.type=="cuda":
+        try: torch.cuda.reset_peak_memory_stats(device)
+        except Exception: pass
+    mem=_memory_snapshot(device)
+    progress({
+        "status":"running","runtime_kind":"train","phase":"train","overall":2,"step":0,"max_steps":max_steps,
+        "tokens_seen":0,"tokens_per_sec":None,"avg_tokens_per_sec":None,"loss":None,"ppl":None,"val_loss":None,"val_ppl":None,
+        **mem,"message":f"Training started on {device} · {compiled.parameter_count:,} parameters"+(" · compiled" if compiled.compile_used else " · eager"),
+        "compile_warning":compiled.compile_error,
+    })
+    step=0;loss_value=None;sample=None
     while True:
         if stop_event.is_set(): raise TrainingStopped("Training stopped.")
         if budget=="steps" and step>=max_steps:break
         if budget=="tokens" and tokens_seen>=max_tokens:break
         if budget=="epochs" and step>=max_steps:break
-        step+=1;opt.zero_grad(set_to_none=True);loss_value=0.0;step_tokens=0
+        step+=1
+        step_started=time.perf_counter()
+
+        # Run exactly the execution mode selected by the user. If a lazy
+        # torch.compile failure surfaces here, let it propagate instead of
+        # silently switching the model to eager execution.
+        opt.zero_grad(set_to_none=True);loss_value=0.0;step_tokens=0
         for _ in range(accum):
             x,y,toks=_sample_batch(train,batch,context,pad,device,rng);step_tokens+=toks
             with _autocast_context(device,precision):
@@ -503,31 +556,82 @@ def train_builder_model(*,state,model_entry,dataset,dataset_meta,config,progress
             if scaler is not None and scaler.is_enabled():scaler.scale(loss).backward()
             else:loss.backward()
             loss_value+=float(loss.detach().float().cpu())
-        if scaler is not None and scaler.is_enabled():scaler.unscale_(opt);torch.nn.utils.clip_grad_norm_(raw.parameters(),1.0);scaler.step(opt);scaler.update()
-        else:torch.nn.utils.clip_grad_norm_(raw.parameters(),1.0);opt.step()
+        if scaler is not None and scaler.is_enabled():
+            scaler.unscale_(opt);torch.nn.utils.clip_grad_norm_(raw.parameters(),1.0);scaler.step(opt);scaler.update()
+        else:
+            torch.nn.utils.clip_grad_norm_(raw.parameters(),1.0);opt.step()
+
         if warm>0 and step<=warm:
             factor=step/warm
             for group in opt.param_groups:group['lr']=runtime_float(config.get('learning_rate'),3e-4,'Learning Rate',minimum=0.0)*factor
         tokens_seen+=step_tokens
+        _sync_device(device)
+        step_elapsed=max(time.perf_counter()-step_started,1e-9)
+        elapsed=max(time.perf_counter()-start,1e-9)
+        tokens_per_sec=float(step_tokens)/step_elapsed
+        avg_tokens_per_sec=float(tokens_seen)/elapsed
+        ppl=_perplexity(loss_value)
+        mem=_memory_snapshot(device)
+        lr=float(opt.param_groups[0].get('lr',0.0)) if opt.param_groups else None
         do_val=validate_every>0 and (step%validate_every==0 or (budget=="steps" and step==max_steps))
         sample=None
         if do_val and val is not None:
-            progress({"status":"running","runtime_kind":"train","phase":"validation","overall":min(99,round(step/max_steps*100)) if budget!="tokens" else min(99,round(tokens_seen/max_tokens*100)),"step":step,"max_steps":max_steps,"tokens_seen":tokens_seen,"loss":loss_value,"val_loss":last_val,"message":f"Validating at step {step}…"})
+            progress({
+                "status":"running","runtime_kind":"train","phase":"validation",
+                "overall":min(99,round(step/max_steps*100)) if budget!="tokens" else min(99,round(tokens_seen/max_tokens*100)),
+                "step":step,"max_steps":max_steps,"tokens_seen":tokens_seen,"tokens_per_sec":tokens_per_sec,"avg_tokens_per_sec":avg_tokens_per_sec,
+                "loss":loss_value,"ppl":ppl,"val_loss":last_val,"val_ppl":last_val_ppl,"lr":lr,**mem,
+                "message":f"Validating at step {step}…",
+            })
             last_val=_evaluate(model,val,steps=val_steps,batch_size=batch,context=context,pad_id=pad,device=device,precision=precision,rng=rng);best_val=min(best_val,last_val)
+            last_val_ppl=_perplexity(last_val)
             if _bool(config.get("generate_on_validation",True)):
                 try:
                     sample,_=generate_text(model,tokenizer,config.get("validation_prompt","Once upon a time"),max_new_tokens=runtime_int(config.get("validation_generate_tokens"),64,"Validation Sample Tokens",minimum=1),context=context,device=device,precision=precision,temperature=.8,top_k=50,top_p=.95,seed=seed+step,stop_event=stop_event)
                 except Exception as exc: sample=f"[sample generation skipped: {exc}]"
-            progress({"status":"running","runtime_kind":"train","phase":"validation_done","overall":min(99,round(step/max_steps*100)) if budget!="tokens" else min(99,round(tokens_seen/max_tokens*100)),"step":step,"max_steps":max_steps,"tokens_seen":tokens_seen,"loss":loss_value,"val_loss":last_val,"best_val_loss":None if best_val==float('inf') else best_val,"sample_text":sample,"elapsed_seconds":time.perf_counter()-start,"message":f"Validation complete at step {step} · val {last_val:.4f}"})
+            mem=_memory_snapshot(device)
+            progress({
+                "status":"running","runtime_kind":"train","phase":"validation_done",
+                "overall":min(99,round(step/max_steps*100)) if budget!="tokens" else min(99,round(tokens_seen/max_tokens*100)),
+                "step":step,"max_steps":max_steps,"tokens_seen":tokens_seen,"tokens_per_sec":tokens_per_sec,"avg_tokens_per_sec":avg_tokens_per_sec,
+                "loss":loss_value,"ppl":ppl,"val_loss":last_val,"val_ppl":last_val_ppl,
+                "best_val_loss":None if best_val==float('inf') else best_val,"sample_text":sample,"elapsed_seconds":time.perf_counter()-start,"lr":lr,**mem,
+                "message":f"Validation complete · val loss {last_val:.4f} · val ppl {last_val_ppl:.2f}",
+            })
         if checkpoint_every>0 and step%checkpoint_every==0:
             checkpoint_path=output/'checkpoints'/f'step_{step:06d}.pt'
             torch.save({"model_state":raw.state_dict(),"model_entry":model_entry,"builder_package":builder_package,"training_config":config,"vocab_size":compiled.vocab_size,"step":step,"tokens_seen":tokens_seen},checkpoint_path)
-            progress({"status":"running","runtime_kind":"train","phase":"checkpoint","overall":min(99,round(step/max_steps*100)) if budget!="tokens" else min(99,round(tokens_seen/max_tokens*100)),"step":step,"max_steps":max_steps,"tokens_seen":tokens_seen,"loss":loss_value,"val_loss":last_val,"best_val_loss":None if best_val==float('inf') else best_val,"sample_text":sample,"checkpoint_path":str(checkpoint_path),"elapsed_seconds":time.perf_counter()-start,"message":f"Checkpoint saved · step {step}"})
+            progress({
+                "status":"running","runtime_kind":"train","phase":"checkpoint",
+                "overall":min(99,round(step/max_steps*100)) if budget!="tokens" else min(99,round(tokens_seen/max_tokens*100)),
+                "step":step,"max_steps":max_steps,"tokens_seen":tokens_seen,"tokens_per_sec":tokens_per_sec,"avg_tokens_per_sec":avg_tokens_per_sec,
+                "loss":loss_value,"ppl":ppl,"val_loss":last_val,"val_ppl":last_val_ppl,
+                "best_val_loss":None if best_val==float('inf') else best_val,"sample_text":sample,"checkpoint_path":str(checkpoint_path),
+                "elapsed_seconds":time.perf_counter()-start,"lr":lr,**_memory_snapshot(device),"message":f"Checkpoint saved · step {step}",
+            })
         if budget=="tokens":overall=min(99,round(tokens_seen/max_tokens*100))
         else:overall=min(99,round(step/max_steps*100))
-        progress({"status":"running","runtime_kind":"train","phase":"train","overall":overall,"step":step,"max_steps":max_steps,"tokens_seen":tokens_seen,"loss":loss_value,"val_loss":last_val,"best_val_loss":None if best_val==float('inf') else best_val,"sample_text":sample,"elapsed_seconds":time.perf_counter()-start,"message":f"Step {step} · loss {loss_value:.4f}"+(f" · val {last_val:.4f}" if last_val is not None else "")})
+        mem=_memory_snapshot(device)
+        mem_text=(f" · mem {mem['memory_allocated_gb']:.2f} GB" if mem.get('memory_allocated_gb') is not None else "")
+        val_text=(f" · val {last_val:.4f} · val ppl {last_val_ppl:.2f}" if last_val is not None else "")
+        progress({
+            "status":"running","runtime_kind":"train","phase":"train","overall":overall,"step":step,"max_steps":max_steps,
+            "tokens_seen":tokens_seen,"tokens_per_sec":tokens_per_sec,"avg_tokens_per_sec":avg_tokens_per_sec,
+            "loss":loss_value,"ppl":ppl,"val_loss":last_val,"val_ppl":last_val_ppl,
+            "best_val_loss":None if best_val==float('inf') else best_val,"sample_text":sample,"elapsed_seconds":time.perf_counter()-start,"lr":lr,**mem,
+            "message":f"Step {step} · {tokens_per_sec:,.0f} tok/s · loss {loss_value:.4f} · ppl {ppl:.2f}"+val_text+mem_text,
+        })
     final=output/'last.pt';torch.save({"model_state":raw.state_dict(),"model_entry":model_entry,"builder_package":builder_package,"training_config":config,"vocab_size":compiled.vocab_size,"step":step,"tokens_seen":tokens_seen,"best_val_loss":best_val},final)
-    update={"training_status":"trained","weights_ready":True,"path":str(final),"checkpoint_path":str(final),"trained_steps":step,"tokens_seen":tokens_seen,"last_loss":loss_value,"best_val_loss":None if best_val==float('inf') else best_val,"parameter_count":compiled.parameter_count,"effective_vocab_size":compiled.vocab_size,"trained_at":time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime()),"format":"PyTorch checkpoint"}
+    final_elapsed=max(time.perf_counter()-start,1e-9)
+    final_mem=_memory_snapshot(device)
+    update={
+        "training_status":"trained","weights_ready":True,"path":str(final),"checkpoint_path":str(final),"trained_steps":step,"tokens_seen":tokens_seen,
+        "last_loss":loss_value,"last_ppl":_perplexity(loss_value),"best_val_loss":None if best_val==float('inf') else best_val,
+        "last_val_loss":last_val,"last_val_ppl":last_val_ppl,"avg_tokens_per_sec":float(tokens_seen)/final_elapsed,
+        "memory_peak_gb":final_mem.get("memory_peak_gb"),"parameter_count":compiled.parameter_count,"effective_vocab_size":compiled.vocab_size,
+        "execution_mode_used":"compiled" if compiled.compile_used else "eager","compile_warning":compiled.compile_error,
+        "trained_at":time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime()),"format":"PyTorch checkpoint",
+    }
     return {"compiled":compiled,"tokenizer":tokenizer,"model_update":update,"last_sample":sample}
 
 
