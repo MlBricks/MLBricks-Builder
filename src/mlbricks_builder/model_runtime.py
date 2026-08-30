@@ -752,7 +752,7 @@ def train_builder_model(*,state,model_entry,dataset,dataset_meta,config,progress
     device=compiled.device
     model=compiled.model
     raw=compiled.raw_model
-    loss_model=compiled.training_model or _CausalLMTrainingGraph(raw)
+    loss_model=(compiled.training_model if compiled.training_model is not None else _CausalLMTrainingGraph(raw))
     precision=compiled.precision
 
     train=dataset["train"] if isinstance(dataset,dict) or hasattr(dataset,"keys") else dataset
