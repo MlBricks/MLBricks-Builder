@@ -1742,7 +1742,7 @@ API Component editing now supports a true mixed execution graph. API function/mo
 - Circular component nesting is rejected in the UI and guarded again by the Python runtime compiler.
 - Gallery component snapshots now carry nested dependency definitions so reusable nested Components remain self-contained when restored later.
 
-## v0.7.48 — focused Module editor and atomic nested save
+## v0.7.49 — focused Module editor and atomic nested save
 
 Reusable visual custom graphs are now presented as **Modules**. Low-level items remain Components, while API Component continues to describe Python/PyTorch API graphs.
 

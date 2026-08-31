@@ -2145,7 +2145,7 @@
 .mlb-saved-nested-palette button:hover{border-color:#7f68b9!important;background:#1b2030!important}
 
 /* ------------------------------------------------------------------
-   v0.7.48 — focused Module editor + outer-save transaction
+   v0.7.49 — focused Module editor + outer-save transaction
    ------------------------------------------------------------------ */
 .mlb-custom-editor-active .mlb-details{display:none!important}
 .mlb-custom-editor-active .mlb-project-title{cursor:default!important}
@@ -2159,3 +2159,11 @@
   width:26px!important;min-width:26px!important;height:26px!important;padding:0!important;border-radius:50%!important;
   font-size:15px!important;line-height:1!important
 }
+
+
+/* ------------------------------------------------------------------
+   v0.7.49 — isolated editor history + explicit cancel + API Modules
+   ------------------------------------------------------------------ */
+.mlb-custom-save-actions.outer{grid-template-columns:repeat(3,minmax(0,1fr))!important}
+.mlb-custom-save-actions.nested{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+.mlb-custom-save-actions button:last-child{border-color:#5a4750!important}

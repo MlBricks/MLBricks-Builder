@@ -391,18 +391,20 @@ class _APIOperation(nn.Module):
 class _APIBoundComponent(nn.Module):
     """Reusable API Component represented as an explicit mixed execution DAG.
 
-    API Components may contain ``api_step`` nodes plus supported built-in
-    Builder components (for example RMSNorm, FFN, Linear, Residual, ESA, SOUP).
-    Saved custom components are intentionally not nested here, preventing
-    circular component definitions. Legacy single-binding API Components remain
-    supported.
+    API Components may contain ``api_step`` nodes, supported built-in Builder
+    components, and reusable graph Modules. Nested API Components are kept out
+    of the authoring UI, while the shared custom-definition stack still guards
+    against circular Module dependencies. Legacy single-binding API Components
+    remain supported.
     """
 
-    def __init__(self, *, definition, params, runtime):
+    def __init__(self, *, definition, params, runtime, custom_components=None, _custom_stack=()):
         super().__init__()
         self.definition = deepcopy(definition)
         self.params = deepcopy(params or {})
         self.runtime = deepcopy(runtime or {})
+        self.custom_components = custom_components or {}
+        self._custom_stack = tuple(_custom_stack or ())
         nodes = [deepcopy(n) for n in (self.definition.get("nodes") or [])]
         self.legacy = None
         self.graph = None
@@ -439,8 +441,9 @@ class _APIBoundComponent(nn.Module):
         self.graph = TensorGraph(
             nodes=nodes,
             edges=deepcopy(self.definition.get("edges") or []),
-            custom_components={},
+            custom_components=self.custom_components,
             runtime=self.runtime,
+            _custom_stack=self._custom_stack,
         )
 
     def forward(self, x, skip=None, extra=None):
@@ -623,7 +626,11 @@ class TensorGraph(nn.Module):
                 chain=" -> ".join([*self._custom_stack,did])
                 raise ModelCompileError(f"Circular custom component dependency detected: {chain}")
             if str(definition.get("implementation") or "graph") == "api":
-                return _APIBoundComponent(definition=definition, params=p, runtime=self.runtime)
+                return _APIBoundComponent(
+                    definition=definition, params=p, runtime=self.runtime,
+                    custom_components=self.custom_components,
+                    _custom_stack=(*self._custom_stack,did),
+                )
             by_id={n["id"]:n for n in definition.get("nodes") or []}
             for exposed in definition.get("exposed_api") or []:
                 key=exposed.get("key"); sid=exposed.get("source_node")
@@ -1153,7 +1160,7 @@ def train_builder_model(*,state,model_entry,dataset,dataset_meta,config,progress
     custom_components.update(copy.deepcopy(model_entry.get("custom_components_snapshot") or {}))
     builder_package={
         "format":"mlbricks-builder-model-v2",
-        "builder_version":"0.7.48",
+        "builder_version":"0.7.49",
         "project":copy.deepcopy(state.get("project") or {}),
         "model_component":architecture,
         "custom_components":custom_components,
