@@ -21,7 +21,8 @@ from .graph import (
     stateaware_esa_200m_project, soup_200m_project, soup_30m_1l_project,
 )
 from .runtime import get_mlbricks_info
-from .api_registry import discover_mlbricks_api
+from .api_registry import discover_mlbricks_api, refresh_component_api
+from .import_pool import IMPORT_POOL
 from .runner import execute_data_pipeline, validate_data_pipeline, PipelineValidationError, PipelineStopped
 from .model_runtime import (
     train_builder_model, load_trained_for_generation, generate_text,
@@ -52,6 +53,9 @@ class Builder:
         else:
             self.state = new_project()
         self.catalog = primitive_catalog()
+        self.import_pool = IMPORT_POOL
+        # Source schema is available immediately; MLBricks modules themselves
+        # are resolved lazily through the shared import pool as components are used.
         self.mlbricks_api = discover_mlbricks_api()
         for item in self.catalog:
             real = self.mlbricks_api.get(item.get("type"))
@@ -203,10 +207,106 @@ class Builder:
         self.state = json.loads(Path(path).read_text(encoding="utf-8"))
         return self
 
-    def component_api(self, component_type=None):
+    def component_api(self, component_type=None, *, ensure_import=False):
         if component_type is None:
             return self.mlbricks_api
+        component_type = str(component_type)
+        if ensure_import:
+            self.ensure_component_import(component_type)
         return self.mlbricks_api.get(component_type)
+
+    def ensure_component_import(self, component_type):
+        """Resolve one MLBricks component through the lazy import pool.
+
+        The canonical submodule is attempted first (for example
+        ``mlbricks.components.Embedding``), with the compact top-level export
+        kept only as a compatibility fallback.  Successful imports are cached.
+        """
+        component_type = str(component_type or "").strip()
+        if not component_type:
+            raise ValueError("component_type is required")
+        if not self.import_pool.is_known_component(component_type):
+            return {
+                "component_type": component_type,
+                "ok": True,
+                "builder_only": True,
+                "imported_now": False,
+                "cached": False,
+                "message": "Builder utility component; no MLBricks import required.",
+            }
+        status = self.import_pool.ensure_component(component_type)
+        if status.get("ok"):
+            refreshed = refresh_component_api(component_type)
+            if refreshed is not None:
+                self.mlbricks_api[component_type] = refreshed
+                status["api"] = copy.deepcopy(refreshed)
+            status["message"] = (
+                f"{component_type} ready from {status.get('resolved_from')}."
+                if status.get("resolved_from")
+                else f"{component_type} import ready."
+            )
+        else:
+            status["message"] = status.get("error") or f"Could not import {component_type}."
+        return status
+
+    def validate_component_imports(self, *, eager=True):
+        """Validate that every MLBricks-backed catalog component has an import route.
+
+        With ``eager=True`` (default) this actually resolves every registered
+        component once and returns the canonical/fallback route used.  Builder
+        utilities such as Dropout and Text Input are reported as not requiring
+        an MLBricks import.
+        """
+        report = []
+        for item in self.catalog:
+            component_type = str(item.get("type") or "")
+            if item.get("builder_utility"):
+                report.append({
+                    "component_type": component_type,
+                    "name": item.get("name"),
+                    "ok": True,
+                    "builder_only": True,
+                    "resolved_from": None,
+                    "error": None,
+                })
+                continue
+            if component_type == "stateaware_esa_stack":
+                deps = ["esa", "rmsnorm", "saffn", "rescontroller"]
+                statuses = [self.import_pool.ensure_component(dep) for dep in deps] if eager else []
+                errors = [status.get("error") for status in statuses if not status.get("ok")]
+                report.append({
+                    "component_type": component_type,
+                    "name": item.get("name"),
+                    "ok": not errors,
+                    "compound": True,
+                    "dependencies": deps,
+                    "resolved_from": [status.get("resolved_from") for status in statuses if status.get("resolved_from")],
+                    "error": "; ".join(errors) if errors else None,
+                })
+                continue
+            if not self.import_pool.is_known_component(component_type):
+                report.append({
+                    "component_type": component_type,
+                    "name": item.get("name"),
+                    "ok": False,
+                    "resolved_from": None,
+                    "error": "No import-pool route registered.",
+                })
+                continue
+            status = self.import_pool.ensure_component(component_type) if eager else self.import_pool.import_info(component_type)
+            report.append({
+                "component_type": component_type,
+                "name": item.get("name"),
+                "ok": bool(status.get("ok", status.get("known", False))),
+                "resolved_from": status.get("resolved_from") or status.get("canonical_path"),
+                "error": status.get("error"),
+            })
+        return {
+            "ok": all(item.get("ok") for item in report),
+            "components": report,
+            "failures": [item for item in report if not item.get("ok")],
+            "import_pool": self.import_pool.status(),
+        }
 
     def _prepared_output_node(self):
         workspaces = self.state.get("workspaces") or {}
@@ -866,7 +966,7 @@ class Builder:
             root.mkdir(parents=True, exist_ok=True)
             manifest = {
                 "format": "mlbricks-cloud-bundle-v1",
-                "builder_version": "0.7.38",
+                "builder_version": "0.7.40",
                 "content_type": content_type,
             }
 
@@ -1238,8 +1338,8 @@ class Builder:
 
         if is_artifact:
             try:
-                import mlbricks as mlb
-                artifact_info = mlb.inspect(path_obj)
+                mlbricks_inspect = IMPORT_POOL.resolve_api("lifecycle.inspect")
+                artifact_info = mlbricks_inspect(path_obj)
             except Exception as exc:
                 raise RuntimeError(
                     f"Could not inspect MLBricks model artifact {path_obj}: {exc}"
@@ -1998,7 +2098,20 @@ class Builder:
 
         def worker():
             try:
-                if action == "train":
+                if action == "ensure_component_import":
+                    component_type = str(command.get("component_type") or "").strip()
+                    result = self.ensure_component_import(component_type)
+                    self._publish_bridge_progress({
+                        "status": "done" if result.get("ok") else "error",
+                        "runtime_kind": "import",
+                        "phase": "component",
+                        "overall": 100,
+                        "message": result.get("message") or "Component import checked.",
+                        "component_import": result,
+                        "component_api": result.get("api"),
+                        "component_type": component_type,
+                    })
+                elif action == "train":
                     self.train_model(model_id, progress_callback=self._publish_bridge_progress)
                 elif action == "generate":
                     self.generate_model(model_id, progress_callback=self._publish_bridge_progress)
@@ -2101,9 +2214,10 @@ class Builder:
         available = [k for k, v in self.mlbricks_api.items() if v.get("available")]
         unavailable = {k: v.get("error") for k, v in self.mlbricks_api.items() if not v.get("available")}
         return {
-            "builder_version": "0.7.38",
-            "frontend_version": "0.7.38",
+            "builder_version": "0.7.40",
+            "frontend_version": "0.7.40",
             "mlbricks": info,
+            "import_pool": self.import_pool.status(),
             "api_components_available": available,
             "api_components_unavailable": unavailable,
         }
@@ -2126,7 +2240,7 @@ class Builder:
         }).replace("</", "<\\/")
         return f"""
 <style>{css}</style>
-<div id="{html.escape(self._instance_id)}" class="mlb-root" data-mlbricks-builder-version="0.7.38"></div>
+<div id="{html.escape(self._instance_id)}" class="mlb-root" data-mlbricks-builder-version="0.7.40"></div>
 <script>
 try {{ delete window.MLBricksBuilder; }} catch (e) {{ window.MLBricksBuilder = undefined; }}
 {js}

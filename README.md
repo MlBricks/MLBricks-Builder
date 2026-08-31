@@ -1675,3 +1675,13 @@ The separate-tab launcher is configured for `https://builder.mlbricks.io/`. Depl
 - **SOUP 30M 1L** — one SOUP layer, d_model 384, state width 1408, 6-head ESA mixer, context 512, **30,003,528 parameters**.
 
 Programmatic presets: `stateaware-esa-200m`, `soup-200m`, `soup-30m-1l`.
+
+## v0.7.40 — Lazy MLBricks import pool
+
+- Added a central lazy import pool for all MLBricks-backed Builder components.
+- Canonical submodule imports are preferred; compact top-level exports are fallback-only.
+- Adding a component asks the Python bridge to warm that component import and caches it for reuse.
+- Model compilation preflights only APIs actually referenced by the graph, including nested custom components.
+- Constructor previews now emit canonical import paths.
+- Lifecycle save/load/inspect and Adam/AdamW also resolve through the same pool.
+

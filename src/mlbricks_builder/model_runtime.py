@@ -16,6 +16,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from .import_pool import IMPORT_POOL
+
 
 class ModelCompileError(RuntimeError):
     pass
@@ -191,7 +193,12 @@ class _StateAwareESAStack(nn.Module):
                  compass, backend, precision, update_ratio_start=0.20,
                  update_ratio_end=0.14, stream_ratio=1.08):
         super().__init__()
-        from mlbricks import ESA, RMSNorm, StateAwareFFN, ResController
+        # Resolve only the APIs this compound component needs. The shared
+        # import pool prefers canonical submodules and caches them for reuse.
+        ESA = IMPORT_POOL.resolve_component("esa")
+        RMSNorm = IMPORT_POOL.resolve_component("rmsnorm")
+        StateAwareFFN = IMPORT_POOL.resolve_component("saffn")
+        ResController = IMPORT_POOL.resolve_component("rescontroller")
         self.dim=int(dim); self.state_dim=int(state_dim); self.layer_count=int(layers)
         if self.layer_count < 1: raise ValueError("StateAware ESA layers must be >= 1.")
         self.layers=nn.ModuleList(); self.write_gates=nn.ParameterList()
@@ -253,10 +260,8 @@ class TensorGraph(nn.Module):
         self._apply_weight_tying()
 
     def _module_for(self,node):
-        from mlbricks import (
-            Embedding, LMHead, Linear, FFN, RMSNorm, LayerNorm, Residual, ESA, SOUP,
-            LearnedPosition, SinusoidalPosition,
-        )
+        # MLBricks symbols are imported lazily per component. Adding/using one
+        # component must not depend on unrelated top-level exports being present.
         t=node.get("type"); p=deepcopy(node.get("params") or {})
         device=str(self.runtime.get("device") or "auto")
         backend=str(self.runtime.get("backend") or "pytorch")
@@ -264,27 +269,32 @@ class TensorGraph(nn.Module):
         if precision=="auto": precision="fp16" if resolve_device(device).type=="cuda" else "fp32"
         if t in {"text_input","text_output","logits_output"}: return _Identity()
         if t=="embedding":
+            Embedding = IMPORT_POOL.resolve_component("embedding")
             vocab=int(self.vocab_override or p.get("vocab_size") or p.get("num_embeddings") or 32000)
             dim=int(p.get("embedding_dim") or p.get("hidden_size") or 384)
             return Embedding(vocab,dim)
         if t=="lm_head":
+            LMHead = IMPORT_POOL.resolve_component("lm_head")
             vocab=int(self.vocab_override or p.get("vocab_size") or 32000)
             hidden=int(p.get("hidden_size") or p.get("dim") or 384)
             # ``tie_to`` is a module reference in the MLBricks Python API. Builder
             # resolves that reference after the graph modules have been created.
             return LMHead(hidden,vocab,bias=_bool(p.get("bias",False)))
         if t=="learned_position":
+            LearnedPosition = IMPORT_POOL.resolve_component("learned_position")
             return LearnedPosition(
                 runtime_int(p.get("dim"),384,f"{node.get('name','Learned Position')} dim",minimum=1),
                 runtime_int(p.get("max_seq_len"),65536,f"{node.get('name','Learned Position')} max sequence length",minimum=1),
             )
         if t=="sinusoidal_position":
+            SinusoidalPosition = IMPORT_POOL.resolve_component("sinusoidal_position")
             return SinusoidalPosition(
                 runtime_int(p.get("dim"),384,f"{node.get('name','Sinusoidal Position')} dim",minimum=1),
                 runtime_int(p.get("max_seq_len"),65536,f"{node.get('name','Sinusoidal Position')} max sequence length",minimum=1),
                 base=runtime_float(p.get("base"),10000.0,f"{node.get('name','Sinusoidal Position')} base",minimum=1e-9),
             )
         if t=="esa":
+            ESA = IMPORT_POOL.resolve_component("esa")
             return ESA(
                 embd=runtime_int(p.get("embd"),384,f"{node.get('name','ESA')} embedding size",minimum=1),
                 head=runtime_int(p.get("head"),4,f"{node.get('name','ESA')} head count",minimum=1),
@@ -313,6 +323,7 @@ class TensorGraph(nn.Module):
                 stream_ratio=runtime_float(p.get("stream_ratio"),1.08,f"{node.get('name','StateAware ESA')} stream ratio",minimum=1e-9),
             )
         if t=="soup":
+            SOUP = IMPORT_POOL.resolve_component("soup")
             depth = runtime_int(p.get("depth"), 2, f"{node.get('name','SOUP')} depth", minimum=1)
             width = _scalar_or_sequence(
                 p.get("width", 1116), cast=int, label=f"{node.get('name','SOUP')} state width"
@@ -339,20 +350,24 @@ class TensorGraph(nn.Module):
                 fusion_hidden=runtime_int(p.get("fusion_hidden"), 768, f"{node.get('name','SOUP')} fusion hidden", minimum=1),
             )
         if t=="rmsnorm":
+            RMSNorm = IMPORT_POOL.resolve_component("rmsnorm")
             shape=p.get("normalized_shape",p.get("hidden_size",384))
             shape=runtime_int(shape,384,f"{node.get('name','RMSNorm')} normalized shape",minimum=1)
             return RMSNorm(shape,eps=runtime_float(p.get("eps"),1e-6,f"{node.get('name','RMSNorm')} epsilon",minimum=0.0),elementwise_affine=_bool(p.get("elementwise_affine",True)))
         if t=="layernorm":
+            LayerNorm = IMPORT_POOL.resolve_component("layernorm")
             shape=p.get("normalized_shape",p.get("hidden_size",p.get("dim",384)))
             shape=runtime_int(shape,384,f"{node.get('name','LayerNorm')} normalized shape",minimum=1)
             return LayerNorm(shape,eps=runtime_float(p.get("eps"),1e-5,f"{node.get('name','LayerNorm')} epsilon",minimum=0.0),elementwise_affine=_bool(p.get("elementwise_affine",True)),bias=_bool(p.get("bias",True)))
         if t=="linear":
+            Linear = IMPORT_POOL.resolve_component("linear")
             return Linear(
                 runtime_int(p.get("in_features"),384,f"{node.get('name','Linear')} input features",minimum=1),
                 runtime_int(p.get("out_features"),384,f"{node.get('name','Linear')} output features",minimum=1),
                 bias=_bool(p.get("bias",True)),
             )
         if t=="ffn":
+            FFN = IMPORT_POOL.resolve_component("ffn")
             return FFN(
                 runtime_int(p.get("hidden_size"),384,f"{node.get('name','FFN')} hidden size",minimum=1),
                 runtime_int(
@@ -364,7 +379,9 @@ class TensorGraph(nn.Module):
                 dropout=runtime_float(p.get("dropout"),0.0,f"{node.get('name','FFN')} dropout",minimum=0.0),
                 bias=_bool(p.get("bias",True)), gated=_bool(p.get("gated",False)),
             )
-        if t=="residual": return Residual(dropout=runtime_float(p.get("dropout"),0.0,f"{node.get('name','Residual')} dropout",minimum=0.0))
+        if t=="residual":
+            Residual = IMPORT_POOL.resolve_component("residual")
+            return Residual(dropout=runtime_float(p.get("dropout"),0.0,f"{node.get('name','Residual')} dropout",minimum=0.0))
         if t=="dropout":
             probability=p.get("p") if p.get("p") is not None else p.get("dropout")
             return nn.Dropout(runtime_float(probability,0.1,f"{node.get('name','Dropout')} probability",minimum=0.0,maximum=1.0))
@@ -553,6 +570,23 @@ def compile_builder_model(state, model_entry, dataset_meta, runtime, *, progress
         msg=f"Building model on {device}"
         if effective_vocab!=graph_vocab: msg+=f" · vocab {graph_vocab:,} → {effective_vocab:,} to match tokenizer"
         progress({"status":"running","runtime_kind":"train" if for_training else "generate","phase":"compile","overall":1,"message":msg})
+
+    # Preflight only the MLBricks APIs actually referenced by this graph.
+    # This produces a single clear import error before model construction and
+    # warms the same cache later used by each component constructor.
+    import_checks = IMPORT_POOL.ensure_graph(
+        graph.get("nodes") or [], custom_components
+    )
+    import_failures = [
+        status for status in import_checks.values() if not status.get("ok")
+    ]
+    if import_failures:
+        details = "; ".join(
+            f"{item.get('component_type')}: {item.get('error')}"
+            for item in import_failures
+        )
+        raise RuntimeError(f"MLBricks component import preflight failed: {details}")
+
     try:
         raw=TensorGraph(
             nodes=graph.get("nodes") or [],
@@ -723,10 +757,9 @@ def _optimizer(model,config):
     beta2=runtime_float(config.get("beta2"),0.95,"Adam Beta 2",minimum=0.0,maximum=1.0)
     if name in {"adamw","adam"}:
         try:
-            from mlbricks import AdamW, Adam
+            cls = IMPORT_POOL.resolve_api("optim.AdamW" if name == "adamw" else "optim.Adam")
         except ImportError as exc:
-            raise RuntimeError("Current MLBricks installation does not expose Adam/AdamW.") from exc
-        cls=AdamW if name=="adamw" else Adam
+            raise RuntimeError("Current MLBricks installation does not expose Adam/AdamW through the import pool.") from exc
         return cls(model.parameters(),lr=lr,betas=(beta1,beta2),weight_decay=wd)
     if name=="sgd":
         return torch.optim.SGD(model.parameters(),lr=lr,weight_decay=wd,momentum=0.9)
@@ -844,7 +877,7 @@ def train_builder_model(*,state,model_entry,dataset,dataset_meta,config,progress
     custom_components.update(copy.deepcopy(model_entry.get("custom_components_snapshot") or {}))
     builder_package={
         "format":"mlbricks-builder-model-v2",
-        "builder_version":"0.7.38",
+        "builder_version":"0.7.40",
         "project":copy.deepcopy(state.get("project") or {}),
         "model_component":architecture,
         "custom_components":custom_components,
@@ -1030,7 +1063,7 @@ def train_builder_model(*,state,model_entry,dataset,dataset_meta,config,progress
                 "vocab_size":compiled.vocab_size,"training_config":copy.deepcopy(config),
                 "builder_package":builder_package,
             }
-            from mlbricks import save as mlbricks_save
+            mlbricks_save = IMPORT_POOL.resolve_api("lifecycle.save")
             mlbricks_save(raw,checkpoint_path,metadata=metadata)
             # Optimizer/scaler state is supplemental training state; the model
             # itself is always stored through the public MLBricks lifecycle API.
@@ -1060,7 +1093,7 @@ def train_builder_model(*,state,model_entry,dataset,dataset_meta,config,progress
         })
 
     final=output/'last'
-    from mlbricks import save as mlbricks_save
+    mlbricks_save = IMPORT_POOL.resolve_api("lifecycle.save")
     tok_cfg=((dataset_meta or {}).get("pipeline") or {}).get("tokenizer") or {}
     final_metadata={
         "kind":"trained_model","step":step,"tokens_seen":tokens_seen,
@@ -1109,7 +1142,7 @@ def load_trained_for_generation(*,state,model_entry,dataset_meta,config,checkpoi
 
     if path.is_dir() and (path/"model.pt").exists():
         try:
-            from mlbricks import load as mlbricks_load
+            mlbricks_load = IMPORT_POOL.resolve_api("lifecycle.load")
         except ImportError as exc:
             raise RuntimeError("Current MLBricks installation does not expose mlbricks.load().") from exc
         loaded=mlbricks_load(path,device=compiled.device,strict=True)

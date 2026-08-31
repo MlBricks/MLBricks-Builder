@@ -1,36 +1,18 @@
 from __future__ import annotations
 
-import importlib
 import inspect
 import json
 from copy import deepcopy
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
+
+from .import_pool import (
+    COMPONENT_IMPORTS,
+    CONFIG_KEYS,
+    IMPORT_POOL,
+)
 
 _SCHEMA_PATH = Path(__file__).with_name("mlbricks_api_schema.json")
-
-PUBLIC_COMPONENTS = {
-    "embedding": ("mlbricks", "Embedding"),
-    "esa": ("mlbricks", "ESA"),
-    "bolt": ("mlbricks", "Bolt"),
-    "soup": ("mlbricks", "SOUP"),
-    "vesa": ("mlbricks", "Vesa"),
-    "ffn": ("mlbricks", "FFN"),
-    "linear": ("mlbricks", "Linear"),
-    "saffn": ("mlbricks", "StateAwareFFN"),
-    "micro_ffn": ("mlbricks", "MicroVirtualFFN"),
-    "virtual_saffn": ("mlbricks", "VirtualStateAwareFFN"),
-    "rmsnorm": ("mlbricks", "RMSNorm"),
-    "layernorm": ("mlbricks", "LayerNorm"),
-    "residual": ("mlbricks", "Residual"),
-    "rescontroller": ("mlbricks", "ResController"),
-    "lm_head": ("mlbricks", "LMHead"),
-    "visualbolt": ("mlbricks", "VisionBolt"),
-    "elasticbit_runtime": ("mlbricks", "ElasticBit"),
-    "rope": ("mlbricks", "RoPE"),
-    "learned_position": ("mlbricks", "LearnedPosition"),
-    "sinusoidal_position": ("mlbricks", "SinusoidalPosition"),
-}
 
 
 # These components intentionally keep the richer source-derived Builder schema
@@ -38,11 +20,6 @@ PUBLIC_COMPONENTS = {
 # SOUP accepts scalar-or-per-layer sequences/config mappings, while the primary
 # ElasticBit 4-32 UI represents ElasticBit.RuntimeMatrix.from_auto.
 SOURCE_DEFINED_FIELDS = {"soup", "elasticbit_runtime", "lm_head"}
-
-CONFIG_BACKED = {
-    "vesa": ("mlbricks", "VesaConfig"),
-    "visualbolt": ("mlbricks", "VisionBoltConfig"),
-}
 
 CHOICES = {
     "backend": ["auto", "native", "pytorch"],
@@ -57,9 +34,11 @@ CHOICES = {
     "norm": ["rmsnorm", "layernorm"],
 }
 
+
 def _fallback_schema():
     payload = json.loads(_SCHEMA_PATH.read_text(encoding="utf-8"))
     return deepcopy(payload["components"])
+
 
 def _safe_default(value: Any):
     if value is inspect._empty:
@@ -67,6 +46,7 @@ def _safe_default(value: Any):
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
     return str(value)
+
 
 def _field_type(name, annotation, default):
     if name in CHOICES:
@@ -81,6 +61,7 @@ def _field_type(name, annotation, default):
     if "int" in text or "float" in text:
         return "number"
     return "text"
+
 
 def _fields(obj):
     sig = inspect.signature(obj)
@@ -102,71 +83,131 @@ def _fields(obj):
         out.append(item)
     return sig, out
 
-def discover_mlbricks_api():
-    # Start from the schema generated directly from the supplied MLBricks source.
-    # This means the UI works even if importing mlbricks fails because of a
-    # native/runtime dependency in the notebook environment.
+
+def _canonical_metadata(component_type: str, fallback: dict[str, Any]) -> dict[str, Any]:
+    info = IMPORT_POOL.import_info(component_type)
+    canonical_path = info.get("canonical_path")
+    public_name = info.get("canonical_symbol") or fallback.get("public_name")
+    payload = {
+        **fallback,
+        "available": True,
+        "runtime_available": None,
+        "source": "MLBricks source schema + lazy import pool",
+        "public_name": public_name,
+        "import_path": canonical_path or fallback.get("import_path"),
+        "import_module": info.get("canonical_module"),
+        "import_symbol": info.get("canonical_symbol"),
+        "import_candidates": [candidate.path for candidate in COMPONENT_IMPORTS.get(component_type, ())],
+        "loaded": bool(info.get("loaded")),
+        "resolved_from": info.get("resolved_from"),
+        "runtime_error": info.get("error"),
+    }
+    if info.get("config_path"):
+        config = deepcopy(payload.get("config_api") or {})
+        config.update({
+            "public_name": info.get("config_symbol"),
+            "import_path": info.get("config_path"),
+            "import_module": info.get("config_module"),
+            "import_symbol": info.get("config_symbol"),
+        })
+        payload["config_api"] = config
+    return payload
+
+
+def _inspect_one(component_type: str, fallback: dict[str, Any]) -> dict[str, Any]:
+    result = _canonical_metadata(component_type, fallback)
+    try:
+        obj = IMPORT_POOL.resolve_component(component_type)
+        sig, inspected_fields = _fields(obj)
+        source_defined = component_type in SOURCE_DEFINED_FIELDS
+        fields = deepcopy(fallback.get("parameters", [])) if source_defined else inspected_fields
+
+        config_info = result.get("config_api")
+        if component_type in CONFIG_KEYS:
+            cfg_obj = IMPORT_POOL.resolve_config(component_type)
+            cfg_sig, cfg_fields = _fields(cfg_obj)
+            if len(cfg_fields) > 1:
+                fields = cfg_fields
+                config_info = {
+                    **(config_info or {}),
+                    "public_name": cfg_obj.__name__,
+                    "signature": f"{cfg_obj.__name__}{cfg_sig}",
+                    "parameters": cfg_fields,
+                }
+
+        doc = inspect.getdoc(obj) or ""
+        runtime_available = True
+        runtime_error = None
+        if component_type == "elasticbit_runtime":
+            checker = getattr(obj, "native_runtime_available", None)
+            if callable(checker):
+                try:
+                    runtime_available = bool(checker())
+                except Exception as exc:
+                    runtime_available = False
+                    runtime_error = f"{type(exc).__name__}: {exc}"
+            if not runtime_available and runtime_error is None:
+                runtime_error = "ElasticBit native 4-32 CUDA runtime is not built in this environment."
+
+        info = IMPORT_POOL.import_info(component_type)
+        return {
+            **result,
+            "available": True,
+            "runtime_available": runtime_available,
+            "source": "runtime inspection + MLBricks source schema" if source_defined else "runtime inspection",
+            "public_name": fallback.get("public_name", obj.__name__) if source_defined else obj.__name__,
+            "signature": fallback.get("signature", f"{obj.__name__}{sig}") if source_defined else f"{obj.__name__}{sig}",
+            "description": fallback.get("description", "") if source_defined else (doc.splitlines()[0] if doc else fallback.get("description", "")),
+            "parameters": fields if fields else fallback.get("parameters", []),
+            "config_api": config_info,
+            "runtime_error": runtime_error,
+            "loaded": True,
+            "resolved_from": info.get("resolved_from"),
+        }
+    except Exception as exc:
+        info = IMPORT_POOL.import_info(component_type)
+        return {
+            **result,
+            "available": True,
+            "runtime_available": False,
+            "loaded": False,
+            "source": "MLBricks source schema + lazy import pool",
+            "runtime_error": f"{type(exc).__name__}: {exc}",
+            "resolved_from": info.get("resolved_from"),
+        }
+
+
+def discover_mlbricks_api(
+    component_types: Iterable[str] | None = None,
+    *,
+    eager: bool = False,
+):
+    """Return Builder API metadata without requiring eager MLBricks imports.
+
+    By default, the supplied source-derived schema is used and canonical import
+    routes are attached to each component.  If ``eager=True`` (or a specific
+    ``component_types`` iterable is supplied), only those requested components
+    are imported and inspected.  This is the import-pool behavior used by the
+    Builder UI: adding a component can warm just that component's API instead of
+    importing the whole MLBricks package.
+    """
     result = _fallback_schema()
+    requested = set(str(x) for x in (component_types or ()))
+    inspect_all = bool(eager and component_types is None)
 
-    for component_type, (module_name, public_name) in PUBLIC_COMPONENTS.items():
+    for component_type in COMPONENT_IMPORTS:
         fallback = result.get(component_type, {})
-        try:
-            module = importlib.import_module(module_name)
-            obj = getattr(module, public_name)
-            sig, inspected_fields = _fields(obj)
-            source_defined = component_type in SOURCE_DEFINED_FIELDS
-            fields = deepcopy(fallback.get("parameters", [])) if source_defined else inspected_fields
-
-            config_info = fallback.get("config_api")
-            if component_type in CONFIG_BACKED:
-                cfg_mod, cfg_name = CONFIG_BACKED[component_type]
-                cfg_obj = getattr(importlib.import_module(cfg_mod), cfg_name)
-                cfg_sig, cfg_fields = _fields(cfg_obj)
-                # If runtime inspection exposes the real dataclass fields use it.
-                # If it only exposes config/**kwargs, preserve the source schema.
-                if len(cfg_fields) > 1:
-                    fields = cfg_fields
-                    config_info = {
-                        "public_name": cfg_name,
-                        "signature": f"{cfg_name}{cfg_sig}",
-                        "parameters": cfg_fields,
-                    }
-
-            doc = inspect.getdoc(obj) or ""
-            runtime_available = True
-            runtime_error = None
-            if component_type == "elasticbit_runtime":
-                checker = getattr(obj, "native_runtime_available", None)
-                if callable(checker):
-                    try:
-                        runtime_available = bool(checker())
-                    except Exception as exc:
-                        runtime_available = False
-                        runtime_error = f"{type(exc).__name__}: {exc}"
-                if not runtime_available and runtime_error is None:
-                    runtime_error = "ElasticBit native 4-32 CUDA runtime is not built in this environment."
-
-            result[component_type] = {
-                **fallback,
-                "available": True,
-                "runtime_available": runtime_available,
-                "source": "runtime inspection + MLBricks source schema" if source_defined else "runtime inspection",
-                "public_name": fallback.get("public_name", public_name) if source_defined else public_name,
-                "import_path": fallback.get("import_path", f"{module_name}.{public_name}") if source_defined else f"{module_name}.{public_name}",
-                "signature": fallback.get("signature", f"{public_name}{sig}") if source_defined else f"{public_name}{sig}",
-                "description": fallback.get("description", "") if source_defined else (doc.splitlines()[0] if doc else fallback.get("description", "")),
-                "parameters": fields if fields else fallback.get("parameters", []),
-                "config_api": config_info,
-                "runtime_error": runtime_error,
-            }
-        except Exception as exc:
-            # API schema remains available from the exact supplied source.
-            result[component_type] = {
-                **fallback,
-                "available": True,
-                "runtime_available": False,
-                "source": "MLBricks 1.0.0 source schema",
-                "runtime_error": f"{type(exc).__name__}: {exc}",
-            }
+        if inspect_all or component_type in requested:
+            result[component_type] = _inspect_one(component_type, fallback)
+        else:
+            result[component_type] = _canonical_metadata(component_type, fallback)
 
     return result
+
+
+def refresh_component_api(component_type: str) -> dict[str, Any] | None:
+    component_type = str(component_type)
+    if component_type not in COMPONENT_IMPORTS:
+        return None
+    fallback = _fallback_schema().get(component_type, {})
+    return _inspect_one(component_type, fallback)
