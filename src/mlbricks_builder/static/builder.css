@@ -2145,7 +2145,7 @@
 .mlb-saved-nested-palette button:hover{border-color:#7f68b9!important;background:#1b2030!important}
 
 /* ------------------------------------------------------------------
-   v0.7.50 — focused Module editor + outer-save transaction
+   v0.7.51 — focused Module editor + outer-save transaction
    ------------------------------------------------------------------ */
 .mlb-custom-editor-active .mlb-details{display:none!important}
 .mlb-custom-editor-active .mlb-project-title{cursor:default!important}
@@ -2162,7 +2162,7 @@
 
 
 /* ------------------------------------------------------------------
-   v0.7.50 — isolated editor history + explicit cancel + API Modules
+   v0.7.51 — isolated editor history + explicit cancel + API Modules
    ------------------------------------------------------------------ */
 .mlb-custom-save-actions.outer{grid-template-columns:repeat(3,minmax(0,1fr))!important}
 .mlb-custom-save-actions.nested{grid-template-columns:repeat(2,minmax(0,1fr))!important}
@@ -2170,7 +2170,7 @@
 
 
 /* ------------------------------------------------------------------
-   v0.7.50 — in-canvas Module picker
+   v0.7.51 — in-canvas Module picker
    ------------------------------------------------------------------ */
 .mlb-canvas-module-picker-overlay{
   position:absolute;inset:0;z-index:40;display:flex;align-items:flex-start;justify-content:center;

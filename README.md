@@ -1742,7 +1742,7 @@ API Component editing now supports a true mixed execution graph. API function/mo
 - Circular component nesting is rejected in the UI and guarded again by the Python runtime compiler.
 - Gallery component snapshots now carry nested dependency definitions so reusable nested Components remain self-contained when restored later.
 
-## v0.7.50 — in-canvas Module insertion
+## v0.7.51 — in-canvas Module insertion
 
 - **+ Add Module** in the API editor now opens the Module chooser over the canvas instead of replacing Inspector content.
 - Selecting a saved Module inserts it directly into the API execution canvas at the selected position.
@@ -1761,3 +1761,13 @@ Reusable visual custom graphs are now presented as **Modules**. Low-level items 
 - The outer Gallery item carries recursive dependency snapshots, so the saved Module is a self-contained graph with its nested Modules/API Components rather than a stack of separately saved inner layers.
 - Module identity is ID-based, not name-based. Parent and child Modules can therefore have the same display name while circular nesting is still rejected using the dependency-ID graph.
 - Gallery/model restoration remaps definition IDs instead of merging definitions by visible name, preserving same-name nested Modules correctly.
+
+
+## v0.7.51 — direct nested Module creation
+
+- `+ Add Module` now creates a blank nested Module immediately; no chooser/notification is shown.
+- Cancelling that nested Module rolls the transaction back completely, so the new Module disappears from its parent.
+- Saved Modules are available directly from the left library while editing an API Component; nested API Components remain blocked.
+- Module/API names can be edited from the Inspector, so auto-created nested Modules do not need a naming popup.
+- Module editor and API editor use the same direct Add Module behavior and keep editor undo/redo isolated.
+

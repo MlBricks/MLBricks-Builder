@@ -209,7 +209,7 @@ def push_model(
         folder = Path(td)
         payload = copy.deepcopy(package)
         payload["format"] = "mlbricks-builder-model-v1"
-        payload["builder_version"] = "0.7.50"
+        payload["builder_version"] = "0.7.51"
         payload["hub_repo_id"] = repo_id
 
         has_weights = bool(checkpoint_path and Path(checkpoint_path).exists())
@@ -312,7 +312,7 @@ def push_project(*, repo_id: str, state: dict, private: bool = True, token: str 
         folder = Path(td)
         _write_json(folder / PROJECT_META_FILE, {
             "format": "mlbricks-builder-project-v1",
-            "builder_version": "0.7.50",
+            "builder_version": "0.7.51",
             "state": clean,
         })
         (folder / "README.md").write_text(
