@@ -584,7 +584,7 @@ def new_project(name: str = "Untitled Model"):
     now = datetime.now(timezone.utc).isoformat()
     return {
         "format": "mlbricks-builder",
-        "format_version": "0.7.42",
+        "format_version": "0.7.43",
         "project": {
             "name": name,
             "created_at": now,

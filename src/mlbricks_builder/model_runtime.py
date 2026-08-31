@@ -1057,7 +1057,7 @@ def train_builder_model(*,state,model_entry,dataset,dataset_meta,config,progress
     custom_components.update(copy.deepcopy(model_entry.get("custom_components_snapshot") or {}))
     builder_package={
         "format":"mlbricks-builder-model-v2",
-        "builder_version":"0.7.42",
+        "builder_version":"0.7.43",
         "project":copy.deepcopy(state.get("project") or {}),
         "model_component":architecture,
         "custom_components":custom_components,

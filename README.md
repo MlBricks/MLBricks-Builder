@@ -1697,6 +1697,15 @@ Programmatic presets: `stateaware-esa-200m`, `soup-200m`, `soup-30m-1l`.
 
 
 
+
+## v0.7.43 — Custom component Gallery lifecycle
+
+- **Save Component** now saves/upserts the definition in **Gallery → Custom Components** instead of automatically installing it in the left **My Components** palette.
+- Gallery custom components remain reusable templates; **Add to My Components** explicitly installs a saved component into the left palette.
+- Every custom component installed in the left palette now has a compact **✎ edit icon** with **Edit**, **Rename**, and **Remove** actions.
+- Removing a custom component asks for confirmation once. Removing from **My Components** hides the palette template while preserving already-placed model instances.
+- Gallery removals also require one confirmation.
+
 ## v0.7.42 — Custom API components
 
 Gallery → Components can now create reusable **API-bound custom components** in addition to visual nested components. A custom API component stores a dotted Python import path (for example `torch.nn.Linear` or `mamba_ssm.Mamba`), a target kind (`module` or `function`), and typed constructor/call parameters. Parameters can be exposed to the component Inspector or bound to the Main, Skip, or Extra tensor lanes and Builder model settings such as model dimension, head count, context, batch, device, and dtype.

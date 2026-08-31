@@ -2040,7 +2040,7 @@
 .mlb-node .node-icon{top:9px!important;}
 
 /* ------------------------------------------------------------------
-   v0.7.42 — user-bound API custom component editor
+   v0.7.43 — custom component Gallery lifecycle + palette edit controls
    ------------------------------------------------------------------ */
 .mlb-custom-binding-field{display:flex;flex-direction:column;gap:5px;margin:0 0 9px}
 .mlb-custom-binding-field label{font-size:9.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#8292a5}
@@ -2054,3 +2054,15 @@
 .mlb-custom-arg-remove{min-width:26px!important;width:26px!important;height:26px!important;padding:0!important;border-color:#623942!important;color:#f69aa3!important}
 .mlb-custom-add-arg{width:100%;margin:7px 0 2px}
 .mlb-custom-api-test{border-color:#756037!important;color:#f0c567!important}
+
+/* v0.7.43 — custom component palette management */
+.mlb-custom-card-wrap{display:block;margin:4px 0;position:relative}
+.mlb-custom-card-row{display:grid;grid-template-columns:minmax(0,1fr) 28px;gap:4px;align-items:stretch}
+.mlb-custom-card-row .mlb-custom-card{margin:0!important;width:100%;min-width:0}
+.mlb-custom-edit-icon{width:28px;min-width:28px;padding:0;border:1px solid #304252;border-radius:6px;background:#121c25;color:#aebbc8;font-size:13px;line-height:1;cursor:pointer}
+.mlb-custom-edit-icon:hover{border-color:#c5a25b;color:#e0bf75;background:#18232c}
+.mlb-custom-card-menu{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;margin:4px 0 6px 30px;padding:4px;border:1px solid #304252;border-radius:6px;background:#0f1821}
+.mlb-custom-menu-action{min-width:0;padding:5px 6px;border:1px solid #344858;border-radius:5px;background:#17232d;color:#cbd5df;font-size:9px;cursor:pointer}
+.mlb-custom-menu-action:hover{border-color:#60778b;background:#1b2a36}
+.mlb-custom-menu-action.danger{color:#e19a9a;border-color:#633b42}
+.mlb-custom-menu-action.danger:hover{background:#2b1b20;border-color:#9a505b}
