@@ -2040,7 +2040,7 @@
 .mlb-node .node-icon{top:9px!important;}
 
 /* ------------------------------------------------------------------
-   v0.7.43 — custom component Gallery lifecycle + palette edit controls
+   v0.7.44 — custom component Gallery lifecycle + palette edit controls
    ------------------------------------------------------------------ */
 .mlb-custom-binding-field{display:flex;flex-direction:column;gap:5px;margin:0 0 9px}
 .mlb-custom-binding-field label{font-size:9.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#8292a5}
@@ -2055,7 +2055,7 @@
 .mlb-custom-add-arg{width:100%;margin:7px 0 2px}
 .mlb-custom-api-test{border-color:#756037!important;color:#f0c567!important}
 
-/* v0.7.43 — custom component palette management */
+/* v0.7.44 — custom component palette management */
 .mlb-custom-card-wrap{display:block;margin:4px 0;position:relative}
 .mlb-custom-card-row{display:grid;grid-template-columns:minmax(0,1fr) 28px;gap:4px;align-items:stretch}
 .mlb-custom-card-row .mlb-custom-card{margin:0!important;width:100%;min-width:0}
@@ -2066,3 +2066,11 @@
 .mlb-custom-menu-action:hover{border-color:#60778b;background:#1b2a36}
 .mlb-custom-menu-action.danger{color:#e19a9a;border-color:#633b42}
 .mlb-custom-menu-action.danger:hover{background:#2b1b20;border-color:#9a505b}
+
+
+/* v0.7.44 — simplified custom component creation and save flow */
+.mlb-central-gallery-section.compact-create{padding:10px 12px!important}
+.mlb-central-gallery-section.compact-create .mlb-central-gallery-section-head{padding-bottom:7px!important}
+.mlb-gallery-component-create-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.mlb-gallery-create-small{min-width:112px!important;width:auto!important;padding:7px 12px!important;font-size:10px!important;line-height:1.1!important}
+.mlb-custom-save-actions{margin-top:12px!important}

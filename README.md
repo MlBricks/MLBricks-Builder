@@ -1698,7 +1698,7 @@ Programmatic presets: `stateaware-esa-200m`, `soup-200m`, `soup-30m-1l`.
 
 
 
-## v0.7.43 — Custom component Gallery lifecycle
+## v0.7.44 — Custom component Gallery lifecycle
 
 - **Save Component** now saves/upserts the definition in **Gallery → Custom Components** instead of automatically installing it in the left **My Components** palette.
 - Gallery custom components remain reusable templates; **Add to My Components** explicitly installs a saved component into the left palette.
@@ -1711,3 +1711,12 @@ Programmatic presets: `stateaware-esa-200m`, `soup-200m`, `soup-30m-1l`.
 Gallery → Components can now create reusable **API-bound custom components** in addition to visual nested components. A custom API component stores a dotted Python import path (for example `torch.nn.Linear` or `mamba_ssm.Mamba`), a target kind (`module` or `function`), and typed constructor/call parameters. Parameters can be exposed to the component Inspector or bound to the Main, Skip, or Extra tensor lanes and Builder model settings such as model dimension, head count, context, batch, device, and dtype.
 
 External APIs use the same lazy import pool design as MLBricks components: the target is imported only when tested or used and then cached. The runtime supports arbitrary installed PyTorch `nn.Module` classes and callable functions, including multi-input functions through the three Builder tensor lanes. Tuple/list/dict outputs can be reduced with an output selector.
+
+
+### v0.7.44 — simplified custom component flow
+
+- Custom components are created from **Gallery → Components** only; the duplicate sidebar **+ Create Component** button is removed.
+- Gallery creation is reduced to two compact actions: **API Component** and **Component**.
+- Custom component editing uses **Save** and **Save As New** in the right Inspector.
+- The Gallery toolbar no longer shows a second **Save Current Component** action while editing a custom component.
+
