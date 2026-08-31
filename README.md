@@ -1685,3 +1685,13 @@ Programmatic presets: `stateaware-esa-200m`, `soup-200m`, `soup-30m-1l`.
 - Constructor previews now emit canonical import paths.
 - Lifecycle save/load/inspect and Adam/AdamW also resolve through the same pool.
 
+## v0.7.41 — Runtime context repacking compatibility
+
+- Fixed dataset/model context compatibility at the shared compatibility-engine level rather than patching individual presets or architectures.
+- Token IDs no longer inherit a hard context requirement from the tokenizer preparation step. `input_ids` datasets are treated as repackable token streams for every text model.
+- Model context now controls runtime LM packing; prepared tokenizer max length is informational metadata only.
+- A 512-max-length prepared dataset can train a 256-context, 512-context, 1024-context, or other text model without a false incompatibility gate.
+- `_PackedLMBatcher` strips tokenizer padding via `attention_mask` before runtime repacking, so padded prepared datasets do not inject padding into the continuous LM token stream.
+- Prepared dataset metadata now declares `runtime_context_repack` centrally when `input_ids` are present; older datasets remain supported through column-based capability inference.
+- Renamed the data-preparation field display to **Tokenizer Max Length** and palette labels to **Component Library / Core Components** to avoid implying that preprocessing blocks define model context.
+

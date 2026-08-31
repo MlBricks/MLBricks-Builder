@@ -661,6 +661,14 @@ class _PackedLMBatcher:
             if ids is None:
                 raise RuntimeError("Prepared data has no input_ids. Add Tokenize Text to the Data Processing pipeline.")
             ids=[int(v) for v in list(ids)]
+            # Prepared tokenizer max length is not the model training context.
+            # If the dataset was padded during tokenization, remove padding via
+            # attention_mask before appending the row to the repackable stream.
+            mask=row.get("attention_mask") if isinstance(row,dict) else None
+            if mask is not None:
+                mask=list(mask)
+                if len(mask)==len(ids):
+                    ids=[token_id for token_id,keep in zip(ids,mask) if int(keep)!=0]
             if not ids:
                 continue
             self.buffer.extend(ids)
@@ -877,7 +885,7 @@ def train_builder_model(*,state,model_entry,dataset,dataset_meta,config,progress
     custom_components.update(copy.deepcopy(model_entry.get("custom_components_snapshot") or {}))
     builder_package={
         "format":"mlbricks-builder-model-v2",
-        "builder_version":"0.7.40",
+        "builder_version":"0.7.41",
         "project":copy.deepcopy(state.get("project") or {}),
         "model_component":architecture,
         "custom_components":custom_components,

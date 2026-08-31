@@ -350,10 +350,17 @@ class Builder:
             else:
                 total_rows += int(rows)
 
+        default_split = "train" if "train" in splits else next(iter(splits), None)
+        default_columns = list((splits.get(default_split) or {}).get("columns") or []) if default_split else []
+        has_input_ids = "input_ids" in default_columns
         return {
             "splits": splits,
             "total_rows": total_rows if known_total else None,
-            "default_split": "train" if "train" in splits else next(iter(splits), None),
+            "default_split": default_split,
+            "capabilities": {
+                "token_stream": has_input_ids,
+                "runtime_context_repack": has_input_ids,
+            },
         }
 
     def _data_pipeline_snapshot(self):
@@ -966,7 +973,7 @@ class Builder:
             root.mkdir(parents=True, exist_ok=True)
             manifest = {
                 "format": "mlbricks-cloud-bundle-v1",
-                "builder_version": "0.7.40",
+                "builder_version": "0.7.41",
                 "content_type": content_type,
             }
 
@@ -2214,8 +2221,8 @@ class Builder:
         available = [k for k, v in self.mlbricks_api.items() if v.get("available")]
         unavailable = {k: v.get("error") for k, v in self.mlbricks_api.items() if not v.get("available")}
         return {
-            "builder_version": "0.7.40",
-            "frontend_version": "0.7.40",
+            "builder_version": "0.7.41",
+            "frontend_version": "0.7.41",
             "mlbricks": info,
             "import_pool": self.import_pool.status(),
             "api_components_available": available,
@@ -2240,7 +2247,7 @@ class Builder:
         }).replace("</", "<\\/")
         return f"""
 <style>{css}</style>
-<div id="{html.escape(self._instance_id)}" class="mlb-root" data-mlbricks-builder-version="0.7.40"></div>
+<div id="{html.escape(self._instance_id)}" class="mlb-root" data-mlbricks-builder-version="0.7.41"></div>
 <script>
 try {{ delete window.MLBricksBuilder; }} catch (e) {{ window.MLBricksBuilder = undefined; }}
 {js}

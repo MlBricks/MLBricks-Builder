@@ -177,7 +177,7 @@ def primitive_catalog():
             "api": [
                 {"key": "tokenizer_name", "label": "Tokenizer", "type": "text", "value": "gpt2"},
                 {"key": "text_column", "label": "Text Column", "type": "text", "value": "text"},
-                {"key": "context_length", "label": "Context Length", "type": "number", "value": 512},
+                {"key": "context_length", "label": "Tokenizer Max Length", "type": "number", "value": 512},
                 {"key": "truncation", "label": "Truncation", "type": "select", "value": "true", "options": ["false", "true"]},
                 {"key": "padding", "label": "Padding", "type": "select", "value": "false", "options": ["false", "true", "max_length"]},
                 {"key": "add_special_tokens", "label": "Add Special Tokens", "type": "select", "value": "true", "options": ["false", "true"]}
@@ -268,7 +268,7 @@ def primitive_catalog():
             "type": "embedding",
             "name": "Embedding",
             "icon": "EMB",
-            "category": "Core Blocks",
+            "category": "Core Components",
             "description": "Token embedding",
             "accent": "blue",
             "api": [
@@ -284,7 +284,7 @@ def primitive_catalog():
             "type": "esa",
             "name": "ESA",
             "icon": "ESA",
-            "category": "Core Blocks",
+            "category": "Core Components",
             "description": "Entangled State Attention",
             "accent": "purple",
             "api": [
@@ -304,7 +304,7 @@ def primitive_catalog():
             "type": "soup",
             "name": "SOUP",
             "icon": "SUP",
-            "category": "Core Blocks",
+            "category": "Core Components",
             "description": "State-and-memory architecture with configurable ESA/BOLT mixers and FFNs",
             "accent": "purple",
             "api": [],
@@ -313,7 +313,7 @@ def primitive_catalog():
             "type": "stateaware_esa_stack",
             "name": "StateAware ESA Stack",
             "icon": "ESA",
-            "category": "Core Blocks",
+            "category": "Core Components",
             "description": "Notebook-matched StateAware ESA depth stack with recurrent FFN state and bounded residual control",
             "accent": "purple",
             "library_hidden": True,
@@ -335,7 +335,7 @@ def primitive_catalog():
             "type": "vesa",
             "name": "VESA",
             "icon": "VES",
-            "category": "Core Blocks",
+            "category": "Core Components",
             "description": "Visual ESA",
             "accent": "lime",
             "api": [
@@ -349,7 +349,7 @@ def primitive_catalog():
             "type": "rmsnorm",
             "name": "RMSNorm",
             "icon": "RMS",
-            "category": "Core Blocks",
+            "category": "Core Components",
             "description": "RMS normalization",
             "accent": "orange",
             "api": [
@@ -361,7 +361,7 @@ def primitive_catalog():
             "type": "ffn",
             "name": "FFN",
             "icon": "FFN",
-            "category": "Core Blocks",
+            "category": "Core Components",
             "description": "Feed Forward Network",
             "accent": "pink",
             "api": [
@@ -378,7 +378,7 @@ def primitive_catalog():
             "type": "saffn",
             "name": "SAFFN",
             "icon": "SAF",
-            "category": "Core Blocks",
+            "category": "Core Components",
             "description": "State-Aware FFN",
             "accent": "pink",
             "api": [
@@ -392,7 +392,7 @@ def primitive_catalog():
             "type": "residual",
             "name": "Residual Add",
             "icon": "ADD",
-            "category": "Core Blocks",
+            "category": "Core Components",
             "description": "Add residual connection",
             "accent": "cyan",
             "inputs": ["main", "skip"],
@@ -409,7 +409,7 @@ def primitive_catalog():
             "builder_utility": True,
             "name": "Dropout",
             "icon": "DRP",
-            "category": "Core Blocks",
+            "category": "Core Components",
             "description": "Dropout layer",
             "accent": "purple",
             "api": [
@@ -420,7 +420,7 @@ def primitive_catalog():
             "type": "bolt",
             "name": "BOLT",
             "icon": "BLT",
-            "category": "Core Blocks",
+            "category": "Core Components",
             "description": "BOLT block",
             "accent": "blue",
             "api": [
@@ -433,7 +433,7 @@ def primitive_catalog():
             "type": "visualbolt",
             "name": "VisualBOLT",
             "icon": "VBL",
-            "category": "Core Blocks",
+            "category": "Core Components",
             "description": "Visual BOLT block",
             "accent": "cyan",
             "api": [
@@ -584,7 +584,7 @@ def new_project(name: str = "Untitled Model"):
     now = datetime.now(timezone.utc).isoformat()
     return {
         "format": "mlbricks-builder",
-        "format_version": "0.7.40",
+        "format_version": "0.7.41",
         "project": {
             "name": name,
             "created_at": now,
