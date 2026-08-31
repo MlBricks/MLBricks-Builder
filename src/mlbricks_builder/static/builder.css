@@ -2113,20 +2113,6 @@
 /* ------------------------------------------------------------------
    v0.7.47 — focused nested component composition
    ------------------------------------------------------------------ */
-.mlb-insert-arrow{
-  pointer-events:auto!important;display:flex;flex-direction:column;align-items:center;justify-content:center;
-  gap:5px;min-width:30px;color:#607183
-}
-.mlb-layer-insert-btn{
-  width:24px!important;min-width:24px!important;height:24px!important;padding:0!important;border-radius:50%!important;
-  border:1px solid #6855a4!important;background:#171c28!important;color:#c7b2ff!important;font-size:15px!important;line-height:1!important;cursor:pointer!important
-}
-.mlb-layer-insert-btn:hover{background:#241d39!important;border-color:#9b7ce8!important;color:#fff!important}
-.mlb-tail-insert{display:flex;align-items:flex-start;padding-top:134px;min-width:92px}
-.mlb-tail-insert-btn,.mlb-empty-add-component,.mlb-ins-add-component{
-  border:1px dashed #6c58aa!important;background:#151a25!important;color:#c8b5ff!important
-}
-.mlb-tail-insert-btn{white-space:nowrap;padding:7px 10px!important;font-size:9.5px!important}
 .mlb-empty-add-component{display:block;margin:16px auto 0!important;padding:8px 13px!important}
 .mlb-ins-add-component{width:100%;margin:9px 0 3px!important}
 .mlb-nested-create-actions{margin:6px 0 8px!important}
@@ -2145,7 +2131,7 @@
 .mlb-saved-nested-palette button:hover{border-color:#7f68b9!important;background:#1b2030!important}
 
 /* ------------------------------------------------------------------
-   v0.7.51 — focused Module editor + outer-save transaction
+   v0.7.52 — focused Module editor + outer-save transaction
    ------------------------------------------------------------------ */
 .mlb-custom-editor-active .mlb-details{display:none!important}
 .mlb-custom-editor-active .mlb-project-title{cursor:default!important}
@@ -2154,34 +2140,12 @@
   min-width:112px!important;justify-content:center!important
 }
 .mlb-new-module-toolbar:hover{background:#241d39!important;border-color:#9b7ce8!important;color:#fff!important}
-.mlb-custom-editor-active .mlb-tail-insert{min-width:42px!important}
-.mlb-custom-editor-active .mlb-tail-insert-btn{
-  width:26px!important;min-width:26px!important;height:26px!important;padding:0!important;border-radius:50%!important;
-  font-size:15px!important;line-height:1!important
-}
-
 
 /* ------------------------------------------------------------------
-   v0.7.51 — isolated editor history + explicit cancel + API Modules
+   v0.7.52 — isolated editor history + explicit cancel + API Modules
    ------------------------------------------------------------------ */
 .mlb-custom-save-actions.outer{grid-template-columns:repeat(3,minmax(0,1fr))!important}
 .mlb-custom-save-actions.nested{grid-template-columns:repeat(2,minmax(0,1fr))!important}
 .mlb-custom-save-actions button:last-child{border-color:#5a4750!important}
 
 
-/* ------------------------------------------------------------------
-   v0.7.51 — in-canvas Module picker
-   ------------------------------------------------------------------ */
-.mlb-canvas-module-picker-overlay{
-  position:absolute;inset:0;z-index:40;display:flex;align-items:flex-start;justify-content:center;
-  padding:72px 24px 40px;background:rgba(4,8,13,.42);backdrop-filter:blur(1px)
-}
-.mlb-canvas-module-picker{
-  width:min(560px,calc(100% - 48px));max-height:calc(100% - 110px);overflow:auto;
-  border:1px solid #59488b;border-radius:10px;background:#0f1720;box-shadow:0 18px 55px rgba(0,0,0,.48);padding:14px
-}
-.mlb-canvas-module-picker .mlb-section-title{margin-top:0!important}
-.mlb-canvas-module-picker .mlb-api-path{margin-bottom:10px}
-.mlb-canvas-module-picker .mlb-nested-create-actions{grid-template-columns:1fr auto!important;gap:8px!important}
-.mlb-canvas-module-picker .mlb-nested-component-picker-list{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-bottom:0}
-@media (max-width:900px){.mlb-canvas-module-picker .mlb-nested-component-picker-list{grid-template-columns:1fr}}
