@@ -1780,3 +1780,11 @@ Reusable visual custom graphs are now presented as **Modules**. Low-level items 
 - `Add Module` remains the single direct nested-Module action and immediately opens an empty nested Module editor.
 - Cancel discards that nested Module; Done returns it to the parent draft.
 
+
+
+## v0.7.53 — Add Module click fix
+
+- Restores the missing direct nested-Module creation handler removed during the v0.7.52 editor cleanup.
+- `Add Module` now immediately opens a blank child Module in both Module Editor and API Component Editor.
+- `Done` inserts the child at the selected position; `Cancel` discards the child and restores the parent editor.
+- No picker/overlay or per-layer `+` buttons are used.
