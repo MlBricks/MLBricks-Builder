@@ -1741,3 +1741,15 @@ API Component editing now supports a true mixed execution graph. API function/mo
 - Saving a nested child returns to its parent editor and inserts/updates it there; saving the top-level component returns to Gallery → Components.
 - Circular component nesting is rejected in the UI and guarded again by the Python runtime compiler.
 - Gallery component snapshots now carry nested dependency definitions so reusable nested Components remain self-contained when restored later.
+
+## v0.7.48 — focused Module editor and atomic nested save
+
+Reusable visual custom graphs are now presented as **Modules**. Low-level items remain Components, while API Component continues to describe Python/PyTorch API graphs.
+
+- Opening or creating a Module enters a focused Module Editor. The outer Module is the editor root instead of inheriting `Untitled Model` in the breadcrumb/title.
+- Model **Build**, **Gallery**, **Cloud & Repositories**, and the Model Workspace drawer are hidden while a Module or API Component is being authored. Saving the outer item returns to Gallery.
+- In the Module Editor, **+ New Module** replaces Auto Connect. Compact `+` insertion controls remain between layers and after the last layer, and the redundant empty-canvas `+ Add Component` action was removed.
+- Nested Modules use **Done**, not Save. Done applies the child to its parent draft and returns one level. Only the outermost **Save / Save As New** writes a Gallery item.
+- The outer Gallery item carries recursive dependency snapshots, so the saved Module is a self-contained graph with its nested Modules/API Components rather than a stack of separately saved inner layers.
+- Module identity is ID-based, not name-based. Parent and child Modules can therefore have the same display name while circular nesting is still rejected using the dependency-ID graph.
+- Gallery/model restoration remaps definition IDs instead of merging definitions by visible name, preserving same-name nested Modules correctly.

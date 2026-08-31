@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mlbricks-builder"
-version = "0.7.47"
+version = "0.7.48"
 description = "Hierarchical visual node builder for MLBricks models in Jupyter, Kaggle and Colab."
 readme = "README.md"
 requires-python = ">=3.10"

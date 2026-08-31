@@ -2143,3 +2143,19 @@
 .mlb-saved-nested-palette{margin-bottom:4px}
 .mlb-saved-nested-palette button{border-color:#4d416d!important;background:#141925!important}
 .mlb-saved-nested-palette button:hover{border-color:#7f68b9!important;background:#1b2030!important}
+
+/* ------------------------------------------------------------------
+   v0.7.48 — focused Module editor + outer-save transaction
+   ------------------------------------------------------------------ */
+.mlb-custom-editor-active .mlb-details{display:none!important}
+.mlb-custom-editor-active .mlb-project-title{cursor:default!important}
+.mlb-new-module-toolbar{
+  border:1px solid #6c58aa!important;background:#171c28!important;color:#cbb8ff!important;
+  min-width:112px!important;justify-content:center!important
+}
+.mlb-new-module-toolbar:hover{background:#241d39!important;border-color:#9b7ce8!important;color:#fff!important}
+.mlb-custom-editor-active .mlb-tail-insert{min-width:42px!important}
+.mlb-custom-editor-active .mlb-tail-insert-btn{
+  width:26px!important;min-width:26px!important;height:26px!important;padding:0!important;border-radius:50%!important;
+  font-size:15px!important;line-height:1!important
+}
