@@ -1742,6 +1742,14 @@ API Component editing now supports a true mixed execution graph. API function/mo
 - Circular component nesting is rejected in the UI and guarded again by the Python runtime compiler.
 - Gallery component snapshots now carry nested dependency definitions so reusable nested Components remain self-contained when restored later.
 
+## v0.7.50 — in-canvas Module insertion
+
+- **+ Add Module** in the API editor now opens the Module chooser over the canvas instead of replacing Inspector content.
+- Selecting a saved Module inserts it directly into the API execution canvas at the selected position.
+- **+ New Module** starts a nested Module editor and returns the completed Module to the parent API canvas.
+- The Inspector remains dedicated to the selected API function/component while the Module chooser is open.
+- Clicking the canvas backdrop or **Cancel** closes the chooser without changing the graph.
+
 ## v0.7.49 — focused Module editor and atomic nested save
 
 Reusable visual custom graphs are now presented as **Modules**. Low-level items remain Components, while API Component continues to describe Python/PyTorch API graphs.
