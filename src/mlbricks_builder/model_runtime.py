@@ -389,13 +389,13 @@ class _APIOperation(nn.Module):
 
 
 class _APIBoundComponent(nn.Module):
-    """A reusable API Component represented as an explicit function DAG.
+    """Reusable API Component represented as an explicit mixed execution DAG.
 
-    New Builder API Components store one or more ``api_step`` nodes and normal
-    Builder edges.  Each edge carries one of the three tensor lanes (Main,
-    Skip, Extra), allowing serial chains, fan-out parallel branches, and a
-    three-input merge such as Q/K/V attention.  Legacy v0.7.44 single-binding
-    components remain supported.
+    API Components may contain ``api_step`` nodes plus supported built-in
+    Builder components (for example RMSNorm, FFN, Linear, Residual, ESA, SOUP).
+    Saved custom components are intentionally not nested here, preventing
+    circular component definitions. Legacy single-binding API Components remain
+    supported.
     """
 
     def __init__(self, *, definition, params, runtime):
@@ -403,8 +403,9 @@ class _APIBoundComponent(nn.Module):
         self.definition = deepcopy(definition)
         self.params = deepcopy(params or {})
         self.runtime = deepcopy(runtime or {})
-        nodes = [deepcopy(n) for n in (self.definition.get("nodes") or []) if str(n.get("type") or "") == "api_step"]
+        nodes = [deepcopy(n) for n in (self.definition.get("nodes") or [])]
         self.legacy = None
+        self.graph = None
         if not nodes:
             binding = self.definition.get("api_binding") or {}
             self.legacy = _APIOperation(
@@ -413,84 +414,39 @@ class _APIBoundComponent(nn.Module):
                 runtime=self.runtime,
                 label=self.definition.get("name") or "API Component",
             )
-            self.nodes = []
-            self.edges = []
             return
 
-        self.nodes = nodes
-        node_ids = {n.get("id") for n in nodes}
-        self.edges = [
-            deepcopy(e) for e in (self.definition.get("edges") or [])
-            if e.get("source") in node_ids and e.get("target") in node_ids
-        ]
-        self.order = _topological(self.nodes, self.edges)
-        self.by_id = {n["id"]: n for n in self.nodes}
-        self.in_main = {n["id"]: [] for n in self.nodes}
-        self.in_skip = {n["id"]: [] for n in self.nodes}
-        self.in_extra = {n["id"]: [] for n in self.nodes}
-        self.outgoing = {n["id"]: [] for n in self.nodes}
-        for e in self.edges:
-            source, target = e.get("source"), e.get("target")
-            kind = str(e.get("kind") or "main").lower()
-            if kind in {"residual", "skip"}:
-                self.in_skip[target].append(source)
-            elif kind in {"aux", "extra"}:
-                self.in_extra[target].append(source)
-            else:
-                self.in_main[target].append(source)
-            self.outgoing[source].append(target)
-
-        self.ops = nn.ModuleDict()
-        for node in self.nodes:
+        # Apply exposed API parameter values to their owning api_step before the
+        # generic TensorGraph builds modules. Built-in component parameters are
+        # already serialized directly on their nodes.
+        for node in nodes:
+            if str(node.get("type") or "") != "api_step":
+                continue
             binding = deepcopy(node.get("api_binding") or {})
-            step_params = {}
+            node_params = node.setdefault("params", {})
             for spec in binding.get("parameters") or []:
                 name = str(spec.get("name") or spec.get("key") or "").strip()
                 if not name:
                     continue
-                expose_key = str(spec.get("expose_key") or f"{node['id']}::{name}")
+                expose_key = str(spec.get("expose_key") or f"{node.get('id')}::{name}")
                 if expose_key in self.params:
-                    step_params[name] = self.params[expose_key]
-                elif name in (node.get("params") or {}):
-                    step_params[name] = (node.get("params") or {})[name]
-                elif spec.get("default") is not None:
-                    step_params[name] = spec.get("default")
-            self.ops[node["id"]] = _APIOperation(
-                binding=binding,
-                params=step_params,
-                runtime=self.runtime,
-                label=node.get("name") or "API Function",
-            )
+                    node_params[name] = self.params[expose_key]
+                elif name not in node_params and spec.get("default") is not None:
+                    node_params[name] = spec.get("default")
 
-    @staticmethod
-    def _one_input(sources, lane, label):
-        if len(sources) > 1:
-            raise ModelCompileError(f"API function {label!r} has {len(sources)} {lane} inputs; use one source per lane.")
-        return sources[0] if sources else None
+        # TensorGraph is defined below this class and is available by the time a
+        # compiled model instantiates an API component.
+        self.graph = TensorGraph(
+            nodes=nodes,
+            edges=deepcopy(self.definition.get("edges") or []),
+            custom_components={},
+            runtime=self.runtime,
+        )
 
     def forward(self, x, skip=None, extra=None):
         if self.legacy is not None:
             return self.legacy(x, skip=skip, extra=extra)
-        values = {}
-        for node in self.order:
-            nid = node["id"]
-            main_id = self._one_input(self.in_main[nid], "Main", node.get("name"))
-            skip_id = self._one_input(self.in_skip[nid], "Skip", node.get("name"))
-            extra_id = self._one_input(self.in_extra[nid], "Extra", node.get("name"))
-            main_value = values[main_id] if main_id else x
-            skip_value = values[skip_id] if skip_id else skip
-            extra_value = values[extra_id] if extra_id else extra
-            values[nid] = self.ops[nid](main_value, skip=skip_value, extra=extra_value)
-
-        sinks = [n for n in self.order if not self.outgoing[n["id"]]]
-        if not sinks:
-            raise ModelCompileError("API Component graph has no output function.")
-        if len(sinks) > 1:
-            names = ", ".join(str(n.get("name") or n["id"]) for n in sinks)
-            raise ModelCompileError(
-                f"API Component graph has multiple unmerged outputs ({names}). Connect parallel branches into one final function."
-            )
-        return values[sinks[0]["id"]]
+        return self.graph(x, graph_skip=skip, graph_extra=extra)
 
 
 class TensorGraph(nn.Module):
@@ -532,6 +488,15 @@ class TensorGraph(nn.Module):
         backend=str(self.runtime.get("backend") or "pytorch")
         precision=str(self.runtime.get("precision") or "fp16")
         if precision=="auto": precision="fp16" if resolve_device(device).type=="cuda" else "fp32"
+        if t=="api_step":
+            binding=deepcopy(node.get("api_binding") or {})
+            step_params=deepcopy(node.get("params") or {})
+            return _APIOperation(
+                binding=binding,
+                params=step_params,
+                runtime=self.runtime,
+                label=node.get("name") or "API Function",
+            )
         if t in {"text_input","text_output","logits_output"}: return _Identity()
         if t=="embedding":
             Embedding = IMPORT_POOL.resolve_component("embedding")
@@ -663,7 +628,7 @@ class TensorGraph(nn.Module):
         # Not silently faking execution for unsupported advanced blocks.
         raise ModelCompileError(
             f"Training compiler does not yet support component {node.get('name')!r} ({t}). "
-            "Supported today: Text Input/Output, Embedding, Learned/Sinusoidal Position, ESA, StateAware ESA Stack, SOUP, "
+            "Supported today: API Function, Text Input/Output, Embedding, Learned/Sinusoidal Position, ESA, StateAware ESA Stack, SOUP, "
             "RMSNorm, LayerNorm, Linear, FFN, Residual, Dropout, LM Head, nested custom components, and API-bound custom components. "
             "ElasticBit 4–32 is a post-training/inference runtime component, not a differentiable training layer."
         )
@@ -714,7 +679,7 @@ class TensorGraph(nn.Module):
                 )
             head.tie_weights(embedding)
 
-    def forward(self, graph_input):
+    def forward(self, graph_input, graph_skip=None, graph_extra=None):
         values={}
         for node in self.order:
             nid=node["id"]; t=node.get("type"); mod=self.mods[nid]
@@ -727,14 +692,22 @@ class TensorGraph(nn.Module):
                 if len(skip_sources)!=1: raise ModelCompileError(f"Residual {node.get('name')} needs exactly one Skip input.")
                 if extra_sources: raise ModelCompileError(f"Residual {node.get('name')} does not accept an Extra input.")
                 y=mod(values[skip_sources[0]],x)
+            elif t=="api_step":
+                if len(skip_sources)>1 or len(extra_sources)>1:
+                    raise ModelCompileError(f"API function {node.get('name')} accepts at most one Skip and one Extra tensor lane.")
+                skip_value=values[skip_sources[0]] if skip_sources else graph_skip
+                extra_value=values[extra_sources[0]] if extra_sources else graph_extra
+                y=mod(x,skip=skip_value,extra=extra_value)
+                repeat=max(1,int(node.get("repeat") or 1))
+                for _ in range(1,repeat): y=mod(y,skip=skip_value,extra=extra_value)
             elif t=="custom" and str((self.custom_components.get(node.get("definition_id")) or {}).get("implementation") or "graph") == "api":
                 if len(skip_sources)>1 or len(extra_sources)>1:
                     raise ModelCompileError(f"API component {node.get('name')} accepts at most one Skip and one Extra tensor lane.")
-                skip=values[skip_sources[0]] if skip_sources else None
-                extra=values[extra_sources[0]] if extra_sources else None
-                y=mod(x,skip=skip,extra=extra)
+                skip_value=values[skip_sources[0]] if skip_sources else None
+                extra_value=values[extra_sources[0]] if extra_sources else None
+                y=mod(x,skip=skip_value,extra=extra_value)
                 repeat=max(1,int(node.get("repeat") or 1))
-                for _ in range(1,repeat): y=mod(y,skip=skip,extra=extra)
+                for _ in range(1,repeat): y=mod(y,skip=skip_value,extra=extra_value)
             else:
                 if skip_sources: raise ModelCompileError(f"{node.get('name')} has a Skip input but this component does not consume Skip tensors.")
                 if extra_sources: raise ModelCompileError(f"{node.get('name')} has an Extra input but this component does not consume Extra tensors.")
@@ -1173,7 +1146,7 @@ def train_builder_model(*,state,model_entry,dataset,dataset_meta,config,progress
     custom_components.update(copy.deepcopy(model_entry.get("custom_components_snapshot") or {}))
     builder_package={
         "format":"mlbricks-builder-model-v2",
-        "builder_version":"0.7.45",
+        "builder_version":"0.7.46",
         "project":copy.deepcopy(state.get("project") or {}),
         "model_component":architecture,
         "custom_components":custom_components,

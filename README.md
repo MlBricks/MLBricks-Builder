@@ -1726,3 +1726,8 @@ External APIs use the same lazy import pool design as MLBricks components: the t
 API Components are now explicit Python/PyTorch function DAGs rather than a single binding. Creating an API Component starts with one Function block. Each block can bind an import module + function/class, choose Module or Function execution, define init/call parameters, and bind tensor arguments to Main / Skip / Extra lanes. `+ Add Function` adds another operation block; visual links can be added or removed to build serial chains, parallel fan-out, and three-input merges such as Q/K/V-style APIs. Nested Builder components are intentionally disabled inside API Components.
 
 Saving an API Component now returns directly to Gallery → Components. Saved custom API components expose Add to My Components, Edit, and Remove actions. The runtime executes the saved API graph as a differentiable PyTorch DAG, lazily resolves every external import, registers module steps as submodules, and retains compatibility with older single-binding API Components.
+
+
+## v0.7.46 — mixed API + MLBricks component graphs
+
+API Component editing now supports a true mixed execution graph. API function/module blocks can be combined with supported built-in MLBricks components such as FFN, RMSNorm, Linear, Residual, ESA and SOUP directly from the left Component Library. New blocks connect after the selected block by default and all connections remain manually editable for serial, branch and merge execution. Saved custom components are still excluded from API Component internals to prevent circular nesting. The runtime compiler and lazy import preflight now execute/import both API steps and built-in nodes inside the same saved API Component. API composer node spacing was increased for clearer wiring.

@@ -381,7 +381,8 @@ class MLBricksImportPool:
                         visited_defs.add(definition_id)
                         definition = custom_components.get(definition_id) or {}
                         if str(definition.get("implementation") or "graph") == "api":
-                            steps = [n for n in (definition.get("nodes") or []) if str(n.get("type") or "") == "api_step"]
+                            definition_nodes = definition.get("nodes") or []
+                            steps = [n for n in definition_nodes if str(n.get("type") or "") == "api_step"]
                             if steps:
                                 for step in steps:
                                     binding = step.get("api_binding") or {}
@@ -394,6 +395,10 @@ class MLBricksImportPool:
                                         key = f"{definition_id}:{step.get('id') or len(external)}"
                                         label = f"{definition.get('name') or 'API Component'} / {step.get('name') or path}"
                                         external[key] = (path, label)
+                                # API Components may also contain supported built-in
+                                # MLBricks nodes. Visit those nodes so their canonical
+                                # imports are preflighted by the same import pool.
+                                visit([n for n in definition_nodes if str(n.get("type") or "") != "api_step"])
                             else:
                                 binding = definition.get("api_binding") or {}
                                 path = str(binding.get("import_path") or "").strip()

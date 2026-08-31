@@ -2076,7 +2076,7 @@
 .mlb-custom-save-actions{margin-top:12px!important}
 
 /* ------------------------------------------------------------------
-   v0.7.45 — API Component function-graph composer
+   v0.7.46 — API Component function-graph composer
    ------------------------------------------------------------------ */
 .mlb-api-composer-sidebar-note{
   margin:9px 10px 12px;padding:10px;border:1px solid #5b4b7d;border-radius:7px;
@@ -2099,3 +2099,13 @@
 .mlb-api-step-actions .mlb-danger-btn:hover{background:#2b1b20!important;border-color:#9a505b!important}
 .mlb-api-composer-wrap{min-width:100%}
 .mlb-api-composer-flow{min-width:100%;box-sizing:border-box;justify-content:center;padding-left:70px;padding-right:70px}
+
+
+/* ------------------------------------------------------------------
+   v0.7.46 — mixed API/component graph composer
+   Give execution blocks enough breathing room to make manual wiring and
+   parallel branches visually obvious.
+   ------------------------------------------------------------------ */
+.mlb-api-composer-flow{gap:30px!important;padding-left:76px;padding-right:76px}
+.mlb-api-composer-sidebar-note{margin-bottom:8px}
+.mlb-api-composer-sidebar-note + .mlb-category{margin-top:4px}
