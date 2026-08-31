@@ -1731,3 +1731,13 @@ Saving an API Component now returns directly to Gallery → Components. Saved cu
 ## v0.7.46 — mixed API + MLBricks component graphs
 
 API Component editing now supports a true mixed execution graph. API function/module blocks can be combined with supported built-in MLBricks components such as FFN, RMSNorm, Linear, Residual, ESA and SOUP directly from the left Component Library. New blocks connect after the selected block by default and all connections remain manually editable for serial, branch and merge execution. Saved custom components are still excluded from API Component internals to prevent circular nesting. The runtime compiler and lazy import preflight now execute/import both API steps and built-in nodes inside the same saved API Component. API composer node spacing was increased for clearer wiring.
+
+## v0.7.47 — focused nested component composition
+
+- Component editors are now focused workspaces: Gallery navigation is hidden/blocked until the top-level component is saved.
+- Saved custom components are available directly in the left Component Library while composing another Component, so nested components do not require a Gallery detour.
+- Small `+` insertion controls appear between layers and at the end of a Component graph; the Inspector also has `+ Add Component`.
+- The component picker can insert an existing saved Component/API Component or create a new nested Component in-place.
+- Saving a nested child returns to its parent editor and inserts/updates it there; saving the top-level component returns to Gallery → Components.
+- Circular component nesting is rejected in the UI and guarded again by the Python runtime compiler.
+- Gallery component snapshots now carry nested dependency definitions so reusable nested Components remain self-contained when restored later.

@@ -451,13 +451,14 @@ class _APIBoundComponent(nn.Module):
 
 class TensorGraph(nn.Module):
     """Small tensor DAG compiler for the model components Builder can execute today."""
-    def __init__(self, *, nodes, edges, custom_components, runtime, vocab_override=None):
+    def __init__(self, *, nodes, edges, custom_components, runtime, vocab_override=None, _custom_stack=()):
         super().__init__()
         self.nodes=deepcopy(nodes)
         self.edges=deepcopy(edges)
         self.custom_components=custom_components
         self.runtime=runtime
         self.vocab_override=vocab_override
+        self._custom_stack=tuple(_custom_stack or ())
         self.order=_topological(self.nodes,self.edges)
         self.by_id={n["id"]:n for n in self.nodes}
         self.in_main={n["id"]:[] for n in self.nodes}
@@ -618,13 +619,19 @@ class TensorGraph(nn.Module):
         if t=="custom":
             did=node.get("definition_id"); definition=deepcopy(self.custom_components.get(did) or {})
             if not definition: raise ModelCompileError(f"Custom component definition not found for {node.get('name')}.")
+            if did in self._custom_stack:
+                chain=" -> ".join([*self._custom_stack,did])
+                raise ModelCompileError(f"Circular custom component dependency detected: {chain}")
             if str(definition.get("implementation") or "graph") == "api":
                 return _APIBoundComponent(definition=definition, params=p, runtime=self.runtime)
             by_id={n["id"]:n for n in definition.get("nodes") or []}
             for exposed in definition.get("exposed_api") or []:
                 key=exposed.get("key"); sid=exposed.get("source_node")
                 if key in p and sid in by_id: by_id[sid].setdefault("params",{})[key]=p[key]
-            return TensorGraph(nodes=list(by_id.values()),edges=definition.get("edges") or [],custom_components=self.custom_components,runtime=self.runtime,vocab_override=self.vocab_override)
+            return TensorGraph(
+                nodes=list(by_id.values()),edges=definition.get("edges") or [],custom_components=self.custom_components,
+                runtime=self.runtime,vocab_override=self.vocab_override,_custom_stack=(*self._custom_stack,did),
+            )
         # Not silently faking execution for unsupported advanced blocks.
         raise ModelCompileError(
             f"Training compiler does not yet support component {node.get('name')!r} ({t}). "
@@ -1146,7 +1153,7 @@ def train_builder_model(*,state,model_entry,dataset,dataset_meta,config,progress
     custom_components.update(copy.deepcopy(model_entry.get("custom_components_snapshot") or {}))
     builder_package={
         "format":"mlbricks-builder-model-v2",
-        "builder_version":"0.7.46",
+        "builder_version":"0.7.47",
         "project":copy.deepcopy(state.get("project") or {}),
         "model_component":architecture,
         "custom_components":custom_components,

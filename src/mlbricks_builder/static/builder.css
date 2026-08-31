@@ -2109,3 +2109,37 @@
 .mlb-api-composer-flow{gap:30px!important;padding-left:76px;padding-right:76px}
 .mlb-api-composer-sidebar-note{margin-bottom:8px}
 .mlb-api-composer-sidebar-note + .mlb-category{margin-top:4px}
+
+/* ------------------------------------------------------------------
+   v0.7.47 — focused nested component composition
+   ------------------------------------------------------------------ */
+.mlb-insert-arrow{
+  pointer-events:auto!important;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:5px;min-width:30px;color:#607183
+}
+.mlb-layer-insert-btn{
+  width:24px!important;min-width:24px!important;height:24px!important;padding:0!important;border-radius:50%!important;
+  border:1px solid #6855a4!important;background:#171c28!important;color:#c7b2ff!important;font-size:15px!important;line-height:1!important;cursor:pointer!important
+}
+.mlb-layer-insert-btn:hover{background:#241d39!important;border-color:#9b7ce8!important;color:#fff!important}
+.mlb-tail-insert{display:flex;align-items:flex-start;padding-top:134px;min-width:92px}
+.mlb-tail-insert-btn,.mlb-empty-add-component,.mlb-ins-add-component{
+  border:1px dashed #6c58aa!important;background:#151a25!important;color:#c8b5ff!important
+}
+.mlb-tail-insert-btn{white-space:nowrap;padding:7px 10px!important;font-size:9.5px!important}
+.mlb-empty-add-component{display:block;margin:16px auto 0!important;padding:8px 13px!important}
+.mlb-ins-add-component{width:100%;margin:9px 0 3px!important}
+.mlb-nested-create-actions{margin:6px 0 8px!important}
+.mlb-new-nested-component{margin:0!important}
+.mlb-nested-component-picker-list{display:grid;gap:6px;margin:8px 0 12px}
+.mlb-nested-component-choice{
+  width:100%;display:grid;grid-template-columns:34px minmax(0,1fr);gap:8px;align-items:center;text-align:left;
+  border:1px solid #304252;border-radius:7px;background:#111b24;color:#d6e0e9;padding:7px 8px;cursor:pointer
+}
+.mlb-nested-component-choice:hover{border-color:#745db0;background:#171d2a}
+.mlb-nested-choice-icon{width:30px;height:30px;border-radius:6px;background:#604bd0;color:#fff;display:grid;place-items:center;font-size:8px;font-weight:900}
+.mlb-nested-component-choice strong{display:block;font-size:10px;line-height:1.2}
+.mlb-nested-component-choice small{display:block;margin-top:2px;color:#8595a8;font-size:8.5px}
+.mlb-saved-nested-palette{margin-bottom:4px}
+.mlb-saved-nested-palette button{border-color:#4d416d!important;background:#141925!important}
+.mlb-saved-nested-palette button:hover{border-color:#7f68b9!important;background:#1b2030!important}
