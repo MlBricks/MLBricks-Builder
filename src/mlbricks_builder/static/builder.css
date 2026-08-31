@@ -2074,3 +2074,28 @@
 .mlb-gallery-component-create-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .mlb-gallery-create-small{min-width:112px!important;width:auto!important;padding:7px 12px!important;font-size:10px!important;line-height:1.1!important}
 .mlb-custom-save-actions{margin-top:12px!important}
+
+/* ------------------------------------------------------------------
+   v0.7.45 — API Component function-graph composer
+   ------------------------------------------------------------------ */
+.mlb-api-composer-sidebar-note{
+  margin:9px 10px 12px;padding:10px;border:1px solid #5b4b7d;border-radius:7px;
+  background:#121823;color:#9eacc0;display:flex;flex-direction:column;gap:5px;font-size:10px;line-height:1.35
+}
+.mlb-api-composer-sidebar-note strong{color:#c8a9ff;font-size:10px;letter-spacing:.08em}
+.mlb-api-composer-sidebar-note b{color:#d8c8f2}
+.mlb-custom-add-function{width:100%;margin:8px 0 2px;border-color:#6b4bb3!important;color:#d2baff!important;background:#181426!important}
+.mlb-custom-add-function:hover{background:#211a34!important;border-color:#8f6fda!important}
+.mlb-api-step-node{
+  min-width:190px!important;max-width:220px!important;background:linear-gradient(180deg,#171426 0%,#121722 100%)!important;
+  border-color:#654a9a!important;box-shadow:0 0 0 1px rgba(128,84,196,.12) inset!important
+}
+.mlb-api-step-node.selected{border-color:#a77ae8!important;box-shadow:0 0 0 1px rgba(167,122,232,.3),0 8px 28px rgba(0,0,0,.28)!important}
+.mlb-api-step-node .node-icon{background:#6c4cc2!important;color:#fff!important}
+.mlb-api-step-node .node-desc{color:#9c91b3!important}
+.mlb-api-step-node .node-meta{color:#87769e!important}
+.mlb-api-step-actions{margin-top:10px!important}
+.mlb-api-step-actions .mlb-danger-btn{border-color:#633b42!important;color:#e9a0a9!important}
+.mlb-api-step-actions .mlb-danger-btn:hover{background:#2b1b20!important;border-color:#9a505b!important}
+.mlb-api-composer-wrap{min-width:100%}
+.mlb-api-composer-flow{min-width:100%;box-sizing:border-box;justify-content:center;padding-left:70px;padding-right:70px}

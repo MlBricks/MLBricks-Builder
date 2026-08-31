@@ -1720,3 +1720,9 @@ External APIs use the same lazy import pool design as MLBricks components: the t
 - Custom component editing uses **Save** and **Save As New** in the right Inspector.
 - The Gallery toolbar no longer shows a second **Save Current Component** action while editing a custom component.
 
+
+## v0.7.45 — API Component function graph composer
+
+API Components are now explicit Python/PyTorch function DAGs rather than a single binding. Creating an API Component starts with one Function block. Each block can bind an import module + function/class, choose Module or Function execution, define init/call parameters, and bind tensor arguments to Main / Skip / Extra lanes. `+ Add Function` adds another operation block; visual links can be added or removed to build serial chains, parallel fan-out, and three-input merges such as Q/K/V-style APIs. Nested Builder components are intentionally disabled inside API Components.
+
+Saving an API Component now returns directly to Gallery → Components. Saved custom API components expose Add to My Components, Edit, and Remove actions. The runtime executes the saved API graph as a differentiable PyTorch DAG, lazily resolves every external import, registers module steps as submodules, and retains compatibility with older single-binding API Components.

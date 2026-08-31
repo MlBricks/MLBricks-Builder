@@ -381,10 +381,24 @@ class MLBricksImportPool:
                         visited_defs.add(definition_id)
                         definition = custom_components.get(definition_id) or {}
                         if str(definition.get("implementation") or "graph") == "api":
-                            binding = definition.get("api_binding") or {}
-                            path = str(binding.get("import_path") or "").strip()
-                            if path:
-                                external[definition_id] = (path, str(definition.get("name") or path))
+                            steps = [n for n in (definition.get("nodes") or []) if str(n.get("type") or "") == "api_step"]
+                            if steps:
+                                for step in steps:
+                                    binding = step.get("api_binding") or {}
+                                    path = str(binding.get("import_path") or "").strip()
+                                    if not path:
+                                        module = str(binding.get("module_path") or "").strip().strip(".")
+                                        symbol = str(binding.get("symbol") or "").strip().strip(".")
+                                        path = ".".join(part for part in (module, symbol) if part)
+                                    if path:
+                                        key = f"{definition_id}:{step.get('id') or len(external)}"
+                                        label = f"{definition.get('name') or 'API Component'} / {step.get('name') or path}"
+                                        external[key] = (path, label)
+                            else:
+                                binding = definition.get("api_binding") or {}
+                                path = str(binding.get("import_path") or "").strip()
+                                if path:
+                                    external[definition_id] = (path, str(definition.get("name") or path))
                         else:
                             visit(definition.get("nodes") or [])
                 if component_type == "stateaware_esa_stack":
