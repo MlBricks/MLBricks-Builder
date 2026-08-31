@@ -229,6 +229,154 @@ class _StateAwareESAStack(nn.Module):
         return x
 
 
+def _custom_coerce(value: Any, type_name: str, *, label: str) -> Any:
+    kind = str(type_name or "str").lower()
+    if kind in {"int", "integer", "number-int"}:
+        try:
+            return int(value)
+        except Exception as exc:
+            raise ModelCompileError(f"{label} must be an integer, got {value!r}.") from exc
+    if kind in {"float", "number", "number-float"}:
+        try:
+            return float(value)
+        except Exception as exc:
+            raise ModelCompileError(f"{label} must be a number, got {value!r}.") from exc
+    if kind in {"bool", "boolean"}:
+        return _bool(value)
+    if kind in {"json", "dict", "list", "tuple"}:
+        parsed = _literal_or_text(value)
+        if kind == "dict" and not isinstance(parsed, dict):
+            raise ModelCompileError(f"{label} must be a JSON object.")
+        if kind in {"list", "tuple"} and not isinstance(parsed, (list, tuple)):
+            raise ModelCompileError(f"{label} must be a JSON list.")
+        return tuple(parsed) if kind == "tuple" else parsed
+    if kind in {"none", "null"}:
+        return None
+    return str(value) if value is not None else ""
+
+
+def _bound_parameter_value(spec: dict[str, Any], params: dict[str, Any], runtime: dict[str, Any], x=None, skip=None, extra=None):
+    name = str(spec.get("name") or spec.get("key") or "argument")
+    source = str(spec.get("source") or "user").lower()
+    if source in {"input", "main"}:
+        return x
+    if source == "skip":
+        return skip
+    if source == "extra":
+        return extra
+    if source == "device":
+        return str(runtime.get("device") or "auto")
+    if source in {"dtype", "precision"}:
+        precision = str(runtime.get("precision") or "fp16")
+        return {"fp16": torch.float16, "float16": torch.float16, "bf16": torch.bfloat16, "bfloat16": torch.bfloat16, "fp32": torch.float32, "float32": torch.float32}.get(precision.lower(), precision)
+    if source == "model_dim":
+        raw = runtime.get("model_dim", params.get(name, spec.get("default")))
+    elif source == "heads":
+        raw = runtime.get("heads", params.get(name, spec.get("default")))
+    elif source == "context":
+        raw = runtime.get("context_length", params.get(name, spec.get("default")))
+    elif source == "batch":
+        raw = runtime.get("batch_size", params.get(name, spec.get("default")))
+    else:
+        raw = params.get(name, spec.get("default"))
+    if raw in {None, ""} and not spec.get("required"):
+        return None
+    return _custom_coerce(raw, str(spec.get("type") or "str"), label=name)
+
+
+class _APIBoundComponent(nn.Module):
+    """Runtime adapter for a Gallery-created arbitrary Python API component."""
+
+    def __init__(self, *, definition, params, runtime):
+        super().__init__()
+        self.definition = deepcopy(definition)
+        self.params = deepcopy(params or {})
+        self.runtime = deepcopy(runtime or {})
+        binding = self.definition.get("api_binding") or {}
+        self.binding = binding
+        import_path = str(binding.get("import_path") or "").strip()
+        if not import_path:
+            raise ModelCompileError(f"Custom API component {self.definition.get('name')!r} has no import path.")
+        target = IMPORT_POOL.resolve_external(import_path)
+        self.target_kind = str(binding.get("target_kind") or "module").lower()
+        self.parameters = list(binding.get("parameters") or [])
+        init_specs = [spec for spec in self.parameters if str(spec.get("stage") or "init").lower() == "init"]
+        init_args, init_kwargs = self._build_arguments(init_specs, x=None)
+        if self.target_kind in {"module", "class", "nn_module"}:
+            try:
+                instance = target(*init_args, **init_kwargs)
+            except Exception as exc:
+                raise ModelCompileError(
+                    f"Could not construct custom component {self.definition.get('name')!r} from {import_path}: {exc}"
+                ) from exc
+            if not isinstance(instance, nn.Module):
+                raise ModelCompileError(
+                    f"Custom API {import_path} was configured as a Module/Class but returned {type(instance).__name__}."
+                )
+            self.module = instance
+            self.function = None
+        else:
+            if not callable(target):
+                raise ModelCompileError(f"Custom API target {import_path} is not callable.")
+            self.module = None
+            self.function = target
+
+    def _build_arguments(self, specs, x, skip=None, extra=None):
+        positional = []
+        keywords = {}
+        for spec in specs:
+            name = str(spec.get("name") or spec.get("key") or "").strip()
+            if not name and not spec.get("positional"):
+                continue
+            value = _bound_parameter_value(spec, self.params, self.runtime, x=x, skip=skip, extra=extra)
+            if value is None and not spec.get("required"):
+                continue
+            if bool(spec.get("positional")):
+                positional.append(value)
+            else:
+                keywords[name] = value
+        return positional, keywords
+
+    @staticmethod
+    def _select_output(value, selector):
+        text = str(selector or "auto").strip()
+        if text in {"", "auto"}:
+            if torch.is_tensor(value):
+                return value
+            if isinstance(value, (list, tuple)) and value and torch.is_tensor(value[0]):
+                return value[0]
+            return value
+        if isinstance(value, (list, tuple)):
+            try:
+                return value[int(text)]
+            except Exception:
+                pass
+        if isinstance(value, dict) and text in value:
+            return value[text]
+        if hasattr(value, text):
+            return getattr(value, text)
+        raise ModelCompileError(f"Custom API output selector {text!r} could not be applied.")
+
+    def forward(self, x, skip=None, extra=None):
+        call_specs = [spec for spec in self.parameters if str(spec.get("stage") or "init").lower() == "call"]
+        if call_specs:
+            args, kwargs = self._build_arguments(call_specs, x=x, skip=skip, extra=extra)
+            tensor_bound = any(str(spec.get("source") or "user").lower() in {"input", "main", "skip", "extra"} for spec in call_specs)
+            if not tensor_bound:
+                args = [x, *args]
+        else:
+            args, kwargs = [x], {}
+        target = self.module if self.module is not None else self.function
+        method = str(self.binding.get("call_method") or "").strip()
+        if method and method not in {"__call__", "forward"}:
+            target = getattr(target, method)
+        try:
+            out = target(*args, **kwargs)
+        except Exception as exc:
+            raise RuntimeError(f"Custom API component {self.definition.get('name')!r} failed: {exc}") from exc
+        return self._select_output(out, self.binding.get("output_selector"))
+
+
 class TensorGraph(nn.Module):
     """Small tensor DAG compiler for the model components Builder can execute today."""
     def __init__(self, *, nodes, edges, custom_components, runtime, vocab_override=None):
@@ -242,6 +390,7 @@ class TensorGraph(nn.Module):
         self.by_id={n["id"]:n for n in self.nodes}
         self.in_main={n["id"]:[] for n in self.nodes}
         self.in_skip={n["id"]:[] for n in self.nodes}
+        self.in_extra={n["id"]:[] for n in self.nodes}
         self.outgoing={n["id"]:[] for n in self.nodes}
         for e in self.edges:
             a,b=e.get("source"),e.get("target")
@@ -250,7 +399,7 @@ class TensorGraph(nn.Module):
             if kind in {"residual","skip"}: self.in_skip[b].append(a)
             elif kind in {"main",""}: self.in_main[b].append(a)
             elif kind in {"aux","extra"}:
-                raise ModelCompileError("Extra/Aux tensor lanes are not executable in the training compiler yet.")
+                self.in_extra[b].append(a)
             else: self.in_main[b].append(a)
             self.outgoing[a].append(b)
         self.mods=nn.ModuleDict()
@@ -388,6 +537,8 @@ class TensorGraph(nn.Module):
         if t=="custom":
             did=node.get("definition_id"); definition=deepcopy(self.custom_components.get(did) or {})
             if not definition: raise ModelCompileError(f"Custom component definition not found for {node.get('name')}.")
+            if str(definition.get("implementation") or "graph") == "api":
+                return _APIBoundComponent(definition=definition, params=p, runtime=self.runtime)
             by_id={n["id"]:n for n in definition.get("nodes") or []}
             for exposed in definition.get("exposed_api") or []:
                 key=exposed.get("key"); sid=exposed.get("source_node")
@@ -397,7 +548,7 @@ class TensorGraph(nn.Module):
         raise ModelCompileError(
             f"Training compiler does not yet support component {node.get('name')!r} ({t}). "
             "Supported today: Text Input/Output, Embedding, Learned/Sinusoidal Position, ESA, StateAware ESA Stack, SOUP, "
-            "RMSNorm, LayerNorm, Linear, FFN, Residual, Dropout, LM Head and nested custom components made from them. "
+            "RMSNorm, LayerNorm, Linear, FFN, Residual, Dropout, LM Head, nested custom components, and API-bound custom components. "
             "ElasticBit 4–32 is a post-training/inference runtime component, not a differentiable training layer."
         )
 
@@ -451,16 +602,26 @@ class TensorGraph(nn.Module):
         values={}
         for node in self.order:
             nid=node["id"]; t=node.get("type"); mod=self.mods[nid]
-            main_sources=self.in_main[nid]; skip_sources=self.in_skip[nid]
+            main_sources=self.in_main[nid]; skip_sources=self.in_skip[nid]; extra_sources=self.in_extra[nid]
             if main_sources:
                 if len(main_sources)!=1: raise ModelCompileError(f"{node.get('name')} has {len(main_sources)} Main inputs; merge execution is not implemented.")
                 x=values[main_sources[0]]
             else: x=graph_input
             if t=="residual":
                 if len(skip_sources)!=1: raise ModelCompileError(f"Residual {node.get('name')} needs exactly one Skip input.")
+                if extra_sources: raise ModelCompileError(f"Residual {node.get('name')} does not accept an Extra input.")
                 y=mod(values[skip_sources[0]],x)
+            elif t=="custom" and str((self.custom_components.get(node.get("definition_id")) or {}).get("implementation") or "graph") == "api":
+                if len(skip_sources)>1 or len(extra_sources)>1:
+                    raise ModelCompileError(f"API component {node.get('name')} accepts at most one Skip and one Extra tensor lane.")
+                skip=values[skip_sources[0]] if skip_sources else None
+                extra=values[extra_sources[0]] if extra_sources else None
+                y=mod(x,skip=skip,extra=extra)
+                repeat=max(1,int(node.get("repeat") or 1))
+                for _ in range(1,repeat): y=mod(y,skip=skip,extra=extra)
             else:
-                if skip_sources: raise ModelCompileError(f"{node.get('name')} has a Skip input but is not a Residual component.")
+                if skip_sources: raise ModelCompileError(f"{node.get('name')} has a Skip input but this component does not consume Skip tensors.")
+                if extra_sources: raise ModelCompileError(f"{node.get('name')} has an Extra input but this component does not consume Extra tensors.")
                 y=mod(x)
                 repeat=max(1,int(node.get("repeat") or 1))
                 for _ in range(1,repeat): y=mod(y)
@@ -469,6 +630,7 @@ class TensorGraph(nn.Module):
         if not sinks: raise ModelCompileError("Graph has no output node.")
         if len(sinks)>1: raise ModelCompileError("Training compiler currently requires one tensor output.")
         return values[sinks[0]["id"]]
+
 
 
 @dataclass
@@ -588,11 +750,21 @@ def compile_builder_model(state, model_entry, dataset_meta, runtime, *, progress
         raise RuntimeError(f"MLBricks component import preflight failed: {details}")
 
     try:
+        model_settings = copy.deepcopy((model_entry or {}).get("model_settings") or {})
+        runtime_context = {
+            **runtime,
+            "device": str(device),
+            "precision": precision,
+            "model_dim": model_settings.get("embedding_size") or model_settings.get("model_dim"),
+            "heads": model_settings.get("heads"),
+            "context_length": (model_entry or {}).get("context_length") or runtime.get("context_length"),
+            "batch_size": runtime.get("batch_size") or (model_entry or {}).get("batch_size"),
+        }
         raw=TensorGraph(
             nodes=graph.get("nodes") or [],
             edges=graph.get("edges") or [],
             custom_components=custom_components,
-            runtime={**runtime,"device":str(device),"precision":precision},
+            runtime=runtime_context,
             vocab_override=effective_vocab,
         )
     except RuntimeError as exc:
@@ -885,7 +1057,7 @@ def train_builder_model(*,state,model_entry,dataset,dataset_meta,config,progress
     custom_components.update(copy.deepcopy(model_entry.get("custom_components_snapshot") or {}))
     builder_package={
         "format":"mlbricks-builder-model-v2",
-        "builder_version":"0.7.41",
+        "builder_version":"0.7.42",
         "project":copy.deepcopy(state.get("project") or {}),
         "model_component":architecture,
         "custom_components":custom_components,

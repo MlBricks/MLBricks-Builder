@@ -2038,3 +2038,19 @@
 /* v0.7.35 patch — 2px top breathing room for node badges */
 .mlb-node .index{top:9px!important;}
 .mlb-node .node-icon{top:9px!important;}
+
+/* ------------------------------------------------------------------
+   v0.7.42 — user-bound API custom component editor
+   ------------------------------------------------------------------ */
+.mlb-custom-binding-field{display:flex;flex-direction:column;gap:5px;margin:0 0 9px}
+.mlb-custom-binding-field label{font-size:9.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#8292a5}
+.mlb-custom-binding-field input,.mlb-custom-binding-field select,.mlb-custom-binding-field textarea{
+  width:100%;box-sizing:border-box;min-height:34px;border:1px solid #304354;border-radius:6px;background:#0f1821;color:#dce6ef;padding:7px 8px;font-size:11px;outline:none
+}
+.mlb-custom-binding-field textarea{resize:vertical;line-height:1.35}
+.mlb-custom-binding-field input:focus,.mlb-custom-binding-field select:focus,.mlb-custom-binding-field textarea:focus{border-color:#8a68cf;box-shadow:0 0 0 1px rgba(138,104,207,.2)}
+.mlb-custom-arg-card{margin:8px 0;padding:9px;border:1px solid #293b4b;border-radius:7px;background:#111b24}
+.mlb-custom-arg-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;color:#d4dce5;font-size:11px}
+.mlb-custom-arg-remove{min-width:26px!important;width:26px!important;height:26px!important;padding:0!important;border-color:#623942!important;color:#f69aa3!important}
+.mlb-custom-add-arg{width:100%;margin:7px 0 2px}
+.mlb-custom-api-test{border-color:#756037!important;color:#f0c567!important}

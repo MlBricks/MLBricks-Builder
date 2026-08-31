@@ -1695,3 +1695,10 @@ Programmatic presets: `stateaware-esa-200m`, `soup-200m`, `soup-30m-1l`.
 - Prepared dataset metadata now declares `runtime_context_repack` centrally when `input_ids` are present; older datasets remain supported through column-based capability inference.
 - Renamed the data-preparation field display to **Tokenizer Max Length** and palette labels to **Component Library / Core Components** to avoid implying that preprocessing blocks define model context.
 
+
+
+## v0.7.42 — Custom API components
+
+Gallery → Components can now create reusable **API-bound custom components** in addition to visual nested components. A custom API component stores a dotted Python import path (for example `torch.nn.Linear` or `mamba_ssm.Mamba`), a target kind (`module` or `function`), and typed constructor/call parameters. Parameters can be exposed to the component Inspector or bound to the Main, Skip, or Extra tensor lanes and Builder model settings such as model dimension, head count, context, batch, device, and dtype.
+
+External APIs use the same lazy import pool design as MLBricks components: the target is imported only when tested or used and then cached. The runtime supports arbitrary installed PyTorch `nn.Module` classes and callable functions, including multi-input functions through the three Builder tensor lanes. Tuple/list/dict outputs can be reduced with an output selector.

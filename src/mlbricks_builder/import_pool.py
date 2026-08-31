@@ -168,6 +168,39 @@ class ComponentImportError(ImportError):
     """Raised when no registered import route can resolve a Builder component."""
 
 
+def _resolve_dotted_object(path: str) -> Any:
+    """Resolve an arbitrary user-supplied dotted Python object path.
+
+    The longest importable module prefix is imported first, then remaining
+    attributes are traversed. This supports paths such as ``torch.nn.Linear``,
+    ``mamba_ssm.Mamba`` and ``torch.nn.functional.gelu`` without requiring a
+    hard-coded Builder registry entry.
+    """
+    path = str(path or "").strip().replace(":", ".")
+    if not path or "." not in path:
+        raise ComponentImportError(
+            "Custom API import path must be a dotted path such as 'torch.nn.Linear'."
+        )
+    parts = [part for part in path.split(".") if part]
+    failures: list[str] = []
+    for split in range(len(parts), 0, -1):
+        module_name = ".".join(parts[:split])
+        try:
+            obj: Any = importlib.import_module(module_name)
+        except Exception as exc:
+            failures.append(f"{module_name}: {type(exc).__name__}: {exc}")
+            continue
+        try:
+            for attr in parts[split:]:
+                obj = getattr(obj, attr)
+            return obj
+        except Exception as exc:
+            failures.append(f"{path}: {type(exc).__name__}: {exc}")
+    raise ComponentImportError(
+        f"Could not resolve custom API {path!r}. Tried: {'; '.join(failures)}"
+    )
+
+
 class MLBricksImportPool:
     def __init__(self) -> None:
         self._cache: dict[str, Any] = {}
@@ -281,14 +314,60 @@ class MLBricksImportPool:
                 "error": f"{type(exc).__name__}: {exc}",
             }
 
+    def resolve_external(self, import_path: str, *, required: bool = True) -> Any:
+        """Resolve and cache an arbitrary API object used by a custom component."""
+        import_path = str(import_path or "").strip().replace(":", ".")
+        key = f"external.{import_path}"
+        with self._lock:
+            if key in self._cache:
+                return self._cache[key]
+            try:
+                obj = _resolve_dotted_object(import_path)
+                self._cache[key] = obj
+                self._resolved[key] = import_path
+                self._errors.pop(key, None)
+                return obj
+            except Exception as exc:
+                self._errors[key] = f"{type(exc).__name__}: {exc}"
+                if required:
+                    raise
+                return None
+
+    def ensure_external(self, import_path: str, *, label: str | None = None) -> dict[str, Any]:
+        import_path = str(import_path or "").strip().replace(":", ".")
+        key = f"external.{import_path}"
+        was_cached = key in self._cache
+        try:
+            self.resolve_external(import_path)
+            return {
+                "component_type": label or import_path,
+                "import_path": import_path,
+                "ok": True,
+                "cached": was_cached,
+                "imported_now": not was_cached,
+                "resolved_from": self._resolved.get(key),
+                "error": None,
+            }
+        except Exception as exc:
+            return {
+                "component_type": label or import_path,
+                "import_path": import_path,
+                "ok": False,
+                "cached": False,
+                "imported_now": False,
+                "resolved_from": None,
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+
     def ensure_graph(
         self,
         nodes: Iterable[dict[str, Any]],
         custom_components: dict[str, Any] | None = None,
     ) -> dict[str, dict[str, Any]]:
-        """Preload imports needed by a graph, including nested custom components."""
+        """Preload imports needed by a graph, including user API components."""
         custom_components = custom_components or {}
         needed: set[str] = set()
+        external: dict[str, tuple[str, str]] = {}
         visited_defs: set[str] = set()
 
         def visit(items: Iterable[dict[str, Any]]) -> None:
@@ -301,12 +380,21 @@ class MLBricksImportPool:
                     if definition_id and definition_id not in visited_defs:
                         visited_defs.add(definition_id)
                         definition = custom_components.get(definition_id) or {}
-                        visit(definition.get("nodes") or [])
+                        if str(definition.get("implementation") or "graph") == "api":
+                            binding = definition.get("api_binding") or {}
+                            path = str(binding.get("import_path") or "").strip()
+                            if path:
+                                external[definition_id] = (path, str(definition.get("name") or path))
+                        else:
+                            visit(definition.get("nodes") or [])
                 if component_type == "stateaware_esa_stack":
                     needed.update({"esa", "rmsnorm", "saffn", "rescontroller"})
 
         visit(nodes)
-        return {name: self.ensure_component(name) for name in sorted(needed)}
+        result = {name: self.ensure_component(name) for name in sorted(needed)}
+        for definition_id, (path, label) in external.items():
+            result[f"custom:{definition_id}"] = self.ensure_external(path, label=label)
+        return result
 
     def import_info(self, component_type: str) -> dict[str, Any]:
         component_type = str(component_type)

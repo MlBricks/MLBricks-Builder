@@ -249,6 +249,19 @@ class Builder:
             status["message"] = status.get("error") or f"Could not import {component_type}."
         return status
 
+    def ensure_external_import(self, import_path, *, label=None):
+        """Resolve a user-bound custom component API through the shared import pool."""
+        import_path = str(import_path or "").strip()
+        if not import_path:
+            raise ValueError("import_path is required")
+        result = self.import_pool.ensure_external(import_path, label=label)
+        result["message"] = (
+            f"{label or import_path} ready from {import_path}."
+            if result.get("ok")
+            else result.get("error") or f"Could not import {import_path}."
+        )
+        return result
+
     def validate_component_imports(self, *, eager=True):
         """Validate that every MLBricks-backed catalog component has an import route.
 
@@ -973,7 +986,7 @@ class Builder:
             root.mkdir(parents=True, exist_ok=True)
             manifest = {
                 "format": "mlbricks-cloud-bundle-v1",
-                "builder_version": "0.7.41",
+                "builder_version": "0.7.42",
                 "content_type": content_type,
             }
 
@@ -2118,6 +2131,19 @@ class Builder:
                         "component_api": result.get("api"),
                         "component_type": component_type,
                     })
+                elif action == "ensure_external_import":
+                    import_path = str(command.get("import_path") or "").strip()
+                    label = str(command.get("label") or import_path).strip()
+                    result = self.ensure_external_import(import_path, label=label)
+                    self._publish_bridge_progress({
+                        "status": "done" if result.get("ok") else "error",
+                        "runtime_kind": "external_import",
+                        "phase": "custom_component",
+                        "overall": 100,
+                        "message": result.get("message") or "Custom API import checked.",
+                        "external_import": result,
+                        "definition_id": command.get("definition_id"),
+                    })
                 elif action == "train":
                     self.train_model(model_id, progress_callback=self._publish_bridge_progress)
                 elif action == "generate":
@@ -2221,8 +2247,8 @@ class Builder:
         available = [k for k, v in self.mlbricks_api.items() if v.get("available")]
         unavailable = {k: v.get("error") for k, v in self.mlbricks_api.items() if not v.get("available")}
         return {
-            "builder_version": "0.7.41",
-            "frontend_version": "0.7.41",
+            "builder_version": "0.7.42",
+            "frontend_version": "0.7.42",
             "mlbricks": info,
             "import_pool": self.import_pool.status(),
             "api_components_available": available,
@@ -2247,7 +2273,7 @@ class Builder:
         }).replace("</", "<\\/")
         return f"""
 <style>{css}</style>
-<div id="{html.escape(self._instance_id)}" class="mlb-root" data-mlbricks-builder-version="0.7.41"></div>
+<div id="{html.escape(self._instance_id)}" class="mlb-root" data-mlbricks-builder-version="0.7.42"></div>
 <script>
 try {{ delete window.MLBricksBuilder; }} catch (e) {{ window.MLBricksBuilder = undefined; }}
 {js}
