@@ -1647,14 +1647,14 @@ The separate-tab launcher is configured for `https://builder.mlbricks.io/`. Depl
 - Prebuilt Models and My Models are full-width Gallery sections with responsive two-column card grids.
 
 
-## v0.7.37 — SOUP and ElasticBit 4–32 components
+## v0.7.38 — SOUP and ElasticBit 4–32 components
 
 - Added the MLBricks SOUP architecture to the model component library and training compiler.
 - SOUP supports ESA/BOLT mixer selection, SAFFN/FFN selection, per-layer comma-separated routing, JSON mixer/FFN configs, observer memory and fusion settings.
 - Added ElasticBit 4–32 as the primary adaptive native runtime component with compact/fast execution and 4–32 bit analysis controls.
 - Removed the legacy ElasticBit 2–8 bit quantizer from the AI Builder component library; ElasticBit 4–32 is now the only ElasticBit component exposed in the Builder.
 
-## v0.7.37 — Whole-model training parity + MLBricks lifecycle API
+## v0.7.38 — Whole-model training parity + MLBricks lifecycle API
 
 - Eager and compiled language-model training now use the same packed fixed-shape `[batch, context]` batches, eliminating padding-biased throughput comparisons.
 - Compiled training captures one full causal-LM graph (model + LM head + cross entropy) through one explicit `torch.compile(..., mode="reduce-overhead", fullgraph=True, dynamic=False)` call and performs two untimed forward/backward warm-up passes. Builder uses the explicit PyTorch call so these benchmark flags are forwarded unchanged for visual `TensorGraph` models.
@@ -1666,3 +1666,12 @@ The separate-tab launcher is configured for `https://builder.mlbricks.io/`. Depl
 - Learned and sinusoidal position modules are executable in the Builder runtime.
 - SOUP and ElasticBit 4–32 remain aligned with the supplied MLBricks 1.0.0 source API.
 - Generic `Brick` / `Bricks` composition-container APIs are not exposed as Builder palette components; reusable visual compositions live under **My Components** instead.
+
+
+## v0.7.38 — 200M ESA/SOUP and 30M one-layer SOUP presets
+
+- **StateAware ESA 200M** — 8 layers, d_model 384, 6 ESA heads, state_dim 2749, context 256, **199,982,344 parameters**.
+- **SOUP 200M** — 3 layers, d_model 1152, state width 2864, 18-head ESA mixers, observer memory 256, fusion hidden 1728, **199,916,160 parameters**.
+- **SOUP 30M 1L** — one SOUP layer, d_model 384, state width 1408, 6-head ESA mixer, context 512, **30,003,528 parameters**.
+
+Programmatic presets: `stateaware-esa-200m`, `soup-200m`, `soup-30m-1l`.

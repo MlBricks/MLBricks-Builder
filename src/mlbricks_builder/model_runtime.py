@@ -185,6 +185,43 @@ class _Identity(nn.Module):
     def forward(self,x): return x
 
 
+class _StateAwareESAStack(nn.Module):
+    """Exact StateAware ESA depth stack used by the supplied 200M notebook."""
+    def __init__(self, *, dim, state_dim, layers, heads, block, batch, depth_dim,
+                 compass, backend, precision, update_ratio_start=0.20,
+                 update_ratio_end=0.14, stream_ratio=1.08):
+        super().__init__()
+        from mlbricks import ESA, RMSNorm, StateAwareFFN, ResController
+        self.dim=int(dim); self.state_dim=int(state_dim); self.layer_count=int(layers)
+        if self.layer_count < 1: raise ValueError("StateAware ESA layers must be >= 1.")
+        self.layers=nn.ModuleList(); self.write_gates=nn.ParameterList()
+        for index in range(self.layer_count):
+            depth=index/max(self.layer_count-1,1)
+            ratio=float(update_ratio_start)+depth*(float(update_ratio_end)-float(update_ratio_start))
+            self.layers.append(nn.ModuleDict({
+                "norm": RMSNorm(self.dim),
+                "esa": ESA(embd=self.dim, head=int(heads), batch=int(batch), block=int(block),
+                           backend=backend, precision=precision, compass=int(compass), auto_compile=False),
+                "ffn": StateAwareFFN(d_model=self.dim, state_dim=self.state_dim,
+                                     depth_embedding_dim=int(depth_dim), layer_index=index,
+                                     total_layers=self.layer_count, backend="pytorch"),
+                "residual": ResController(update_ratio=ratio, stream_ratio=float(stream_ratio),
+                                          update_softness=8.0, stream_softness=8.0, backend="pytorch"),
+            }))
+            self.write_gates.append(nn.Parameter(torch.tensor(-1.0)))
+    @property
+    def parameter_count(self):
+        return sum(p.numel() for p in self.parameters() if p.requires_grad)
+    def forward(self,x):
+        state=x.new_zeros(*x.shape[:-1],self.state_dim); previous_esa=torch.zeros_like(x)
+        for layer,write_gate in zip(self.layers,self.write_gates):
+            z=layer["norm"](x); esa_update=layer["esa"](z)
+            ffn_update,state=layer["ffn"](z,esa_update,previous_esa,state)
+            update=torch.sigmoid(write_gate)*(esa_update.float()+ffn_update.float())
+            x=layer["residual"](x,update); previous_esa=esa_update
+        return x
+
+
 class TensorGraph(nn.Module):
     """Small tensor DAG compiler for the model components Builder can execute today."""
     def __init__(self, *, nodes, edges, custom_components, runtime, vocab_override=None):
@@ -260,6 +297,21 @@ class TensorGraph(nn.Module):
                 device=device, auto_compile=False, auto_move_input=True,
                 strict_checks=_bool(p.get("strict_checks",False)),
             )
+        if t=="stateaware_esa_stack":
+            return _StateAwareESAStack(
+                dim=runtime_int(p.get("dim"),384,f"{node.get('name','StateAware ESA')} model dim",minimum=1),
+                state_dim=runtime_int(p.get("state_dim"),2749,f"{node.get('name','StateAware ESA')} state dim",minimum=1),
+                layers=runtime_int(p.get("layers"),8,f"{node.get('name','StateAware ESA')} layer count",minimum=1),
+                heads=runtime_int(p.get("heads"),6,f"{node.get('name','StateAware ESA')} head count",minimum=1),
+                block=runtime_int(p.get("block"),256,f"{node.get('name','StateAware ESA')} block size",minimum=1),
+                batch=runtime_int(p.get("batch"),16,f"{node.get('name','StateAware ESA')} batch",minimum=1),
+                depth_dim=runtime_int(p.get("depth_dim"),64,f"{node.get('name','StateAware ESA')} depth embedding dim",minimum=1),
+                compass=runtime_int(p.get("compass"),16,f"{node.get('name','StateAware ESA')} compass",minimum=1),
+                backend=backend, precision=precision,
+                update_ratio_start=runtime_float(p.get("update_ratio_start"),0.20,f"{node.get('name','StateAware ESA')} update ratio start",minimum=1e-9),
+                update_ratio_end=runtime_float(p.get("update_ratio_end"),0.14,f"{node.get('name','StateAware ESA')} update ratio end",minimum=1e-9),
+                stream_ratio=runtime_float(p.get("stream_ratio"),1.08,f"{node.get('name','StateAware ESA')} stream ratio",minimum=1e-9),
+            )
         if t=="soup":
             depth = runtime_int(p.get("depth"), 2, f"{node.get('name','SOUP')} depth", minimum=1)
             width = _scalar_or_sequence(
@@ -327,7 +379,7 @@ class TensorGraph(nn.Module):
         # Not silently faking execution for unsupported advanced blocks.
         raise ModelCompileError(
             f"Training compiler does not yet support component {node.get('name')!r} ({t}). "
-            "Supported today: Text Input/Output, Embedding, Learned/Sinusoidal Position, ESA, SOUP, "
+            "Supported today: Text Input/Output, Embedding, Learned/Sinusoidal Position, ESA, StateAware ESA Stack, SOUP, "
             "RMSNorm, LayerNorm, Linear, FFN, Residual, Dropout, LM Head and nested custom components made from them. "
             "ElasticBit 4–32 is a post-training/inference runtime component, not a differentiable training layer."
         )
@@ -792,7 +844,7 @@ def train_builder_model(*,state,model_entry,dataset,dataset_meta,config,progress
     custom_components.update(copy.deepcopy(model_entry.get("custom_components_snapshot") or {}))
     builder_package={
         "format":"mlbricks-builder-model-v2",
-        "builder_version":"0.7.37",
+        "builder_version":"0.7.38",
         "project":copy.deepcopy(state.get("project") or {}),
         "model_component":architecture,
         "custom_components":custom_components,

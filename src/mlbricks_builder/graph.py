@@ -310,6 +310,28 @@ def primitive_catalog():
             "api": [],
         },
         {
+            "type": "stateaware_esa_stack",
+            "name": "StateAware ESA Stack",
+            "icon": "ESA",
+            "category": "Core Blocks",
+            "description": "Notebook-matched StateAware ESA depth stack with recurrent FFN state and bounded residual control",
+            "accent": "purple",
+            "library_hidden": True,
+            "api": [
+                {"key": "dim", "label": "Model Dim", "type": "number", "value": 384},
+                {"key": "state_dim", "label": "State Dim", "type": "number", "value": 2749},
+                {"key": "layers", "label": "Physical Layers", "type": "number", "value": 8},
+                {"key": "heads", "label": "ESA Heads", "type": "number", "value": 6},
+                {"key": "block", "label": "Block Size", "type": "number", "value": 256},
+                {"key": "batch", "label": "ESA Batch", "type": "number", "value": 16},
+                {"key": "depth_dim", "label": "Depth Embedding Dim", "type": "number", "value": 64},
+                {"key": "compass", "label": "Compass", "type": "number", "value": 16},
+                {"key": "update_ratio_start", "label": "Update Ratio Start", "type": "number", "value": 0.20},
+                {"key": "update_ratio_end", "label": "Update Ratio End", "type": "number", "value": 0.14},
+                {"key": "stream_ratio", "label": "Stream Ratio", "type": "number", "value": 1.08},
+            ],
+        },
+        {
             "type": "vesa",
             "name": "VESA",
             "icon": "VES",
@@ -562,7 +584,7 @@ def new_project(name: str = "Untitled Model"):
     now = datetime.now(timezone.utc).isoformat()
     return {
         "format": "mlbricks-builder",
-        "format_version": "0.7.37",
+        "format_version": "0.7.38",
         "project": {
             "name": name,
             "created_at": now,
@@ -759,3 +781,88 @@ def tinystories_30m_project():
     project["components"][root_id]["edges"] = edges
     return project
 
+
+
+
+def stateaware_esa_200m_project():
+    """Notebook-matched StateAware ESA 200M starter (199,982,344 params)."""
+    project = new_project("StateAware ESA 200M")
+    project["project"].update({
+        "context_length": 256, "batch_size": 16, "dataset": None,
+        "estimated_parameters": "199,982,344",
+        "description": "Notebook-matched 8-layer StateAware ESA causal LM",
+        "model_settings": {"embedding_size": 384, "heads": 6, "block": 256,
+                           "default_batch": 16, "vocab_size": 50257, "precision": "fp16"},
+    })
+    root_id = project["root_component_id"]
+    nodes = [
+        _node("text_input", "Text Input", {"prompt": "Once upon a time"}),
+        _node("embedding", "Token Embedding", {"vocab_size": 50257, "embedding_dim": 384}),
+        _node("stateaware_esa_stack", "StateAware ESA ×8", {
+            "dim": 384, "state_dim": 2749, "layers": 8, "heads": 6,
+            "block": 256, "batch": 16, "depth_dim": 64, "compass": 16,
+            "update_ratio_start": 0.20, "update_ratio_end": 0.14, "stream_ratio": 1.08,
+        }),
+        _node("rmsnorm", "Final RMSNorm", {"normalized_shape": 384, "eps": 1e-6, "elementwise_affine": True}),
+        _node("lm_head", "LM Head", {"hidden_size": 384, "vocab_size": 50257, "bias": False, "tie_embeddings": True}),
+        _node("text_output", "Text Output", {"max_new_tokens": 64, "temperature": 0.8, "top_p": 0.95}),
+    ]
+    project["components"][root_id]["nodes"] = nodes
+    project["components"][root_id]["edges"] = [_edge(a["id"], b["id"]) for a,b in zip(nodes[:-1],nodes[1:])]
+    return project
+
+
+def soup_200m_project():
+    """Exact supplied-notebook SOUP 200M starter (199,916,160 params)."""
+    project = new_project("SOUP 200M")
+    project["project"].update({
+        "context_length": 256, "batch_size": 16, "dataset": None,
+        "estimated_parameters": "199,916,160",
+        "description": "Notebook-matched SOUP 200M causal LM with three physical layers",
+        "model_settings": {"embedding_size": 1152, "heads": 18, "block": 256,
+                           "default_batch": 16, "vocab_size": 50257, "precision": "fp16"},
+    })
+    root_id = project["root_component_id"]
+    nodes = [
+        _node("text_input", "Text Input", {"prompt": "Once upon a time"}),
+        _node("embedding", "Token Embedding", {"vocab_size": 50257, "embedding_dim": 1152}),
+        _node("soup", "SOUP ×3", {
+            "dim": 1152, "width": 2864, "depth": 3, "mixer": "esa", "ffn": "saffn",
+            "mixer_config": {"head": 18, "batch": 16, "block": 256, "compass": 16, "auto_compile": False},
+            "ffn_config": {"depth_dim": 128}, "memory_dim": 256, "fusion_hidden": 1728,
+        }),
+        _node("rmsnorm", "Final RMSNorm", {"normalized_shape": 1152, "eps": 1e-6, "elementwise_affine": True}),
+        _node("lm_head", "LM Head", {"hidden_size": 1152, "vocab_size": 50257, "bias": False, "tie_embeddings": True}),
+        _node("text_output", "Text Output", {"max_new_tokens": 64, "temperature": 0.8, "top_p": 0.95}),
+    ]
+    project["components"][root_id]["nodes"] = nodes
+    project["components"][root_id]["edges"] = [_edge(a["id"], b["id"]) for a,b in zip(nodes[:-1],nodes[1:])]
+    return project
+
+
+def soup_30m_1l_project():
+    """One-layer SOUP ~30M starter (30,003,528 params)."""
+    project = new_project("SOUP 30M 1L")
+    project["project"].update({
+        "context_length": 512, "batch_size": 16, "dataset": "TinyStories",
+        "estimated_parameters": "30,003,528",
+        "description": "One-layer SOUP causal LM at ~30M parameters",
+        "model_settings": {"embedding_size": 384, "heads": 6, "block": 512,
+                           "default_batch": 16, "vocab_size": 50257, "precision": "fp16"},
+    })
+    root_id = project["root_component_id"]
+    nodes = [
+        _node("text_input", "Text Input", {"prompt": "Once upon a time"}),
+        _node("embedding", "Token Embedding", {"vocab_size": 50257, "embedding_dim": 384}),
+        _node("soup", "SOUP ×1", {
+            "dim": 384, "width": 1408, "depth": 1, "mixer": "esa", "ffn": "saffn",
+            "mixer_config": {"head": 6, "batch": 16, "block": 512, "compass": 16, "auto_compile": False},
+            "ffn_config": {"depth_dim": 64}, "memory_dim": 128, "fusion_hidden": 928,
+        }),
+        _node("rmsnorm", "Final RMSNorm", {"normalized_shape": 384, "eps": 1e-6, "elementwise_affine": True}),
+        _node("lm_head", "LM Head", {"hidden_size": 384, "vocab_size": 50257, "bias": False, "tie_embeddings": True}),
+        _node("text_output", "Text Output", {"max_new_tokens": 64, "temperature": 0.8, "top_p": 0.95}),
+    ]
+    project["components"][root_id]["nodes"] = nodes
+    project["components"][root_id]["edges"] = [_edge(a["id"], b["id"]) for a,b in zip(nodes[:-1],nodes[1:])]
+    return project

@@ -16,7 +16,10 @@ from pathlib import Path
 from datetime import datetime, timezone
 from collections.abc import Mapping
 
-from .graph import new_project, primitive_catalog, tinystories_30m_project
+from .graph import (
+    new_project, primitive_catalog, tinystories_30m_project,
+    stateaware_esa_200m_project, soup_200m_project, soup_30m_1l_project,
+)
 from .runtime import get_mlbricks_info
 from .api_registry import discover_mlbricks_api
 from .runner import execute_data_pipeline, validate_data_pipeline, PipelineValidationError, PipelineStopped
@@ -40,6 +43,12 @@ class Builder:
             self.state = project
         elif preset in {"tinystories", "tinystories-30m", "demo"}:
             self.state = tinystories_30m_project()
+        elif preset in {"esa-200m", "stateaware-esa-200m", "stateaware_esa_200m"}:
+            self.state = stateaware_esa_200m_project()
+        elif preset in {"soup-200m", "soup_200m"}:
+            self.state = soup_200m_project()
+        elif preset in {"soup-30m", "soup-30m-1l", "soup_30m_1l"}:
+            self.state = soup_30m_1l_project()
         else:
             self.state = new_project()
         self.catalog = primitive_catalog()
@@ -857,7 +866,7 @@ class Builder:
             root.mkdir(parents=True, exist_ok=True)
             manifest = {
                 "format": "mlbricks-cloud-bundle-v1",
-                "builder_version": "0.7.37",
+                "builder_version": "0.7.38",
                 "content_type": content_type,
             }
 
@@ -2092,8 +2101,8 @@ class Builder:
         available = [k for k, v in self.mlbricks_api.items() if v.get("available")]
         unavailable = {k: v.get("error") for k, v in self.mlbricks_api.items() if not v.get("available")}
         return {
-            "builder_version": "0.7.37",
-            "frontend_version": "0.7.37",
+            "builder_version": "0.7.38",
+            "frontend_version": "0.7.38",
             "mlbricks": info,
             "api_components_available": available,
             "api_components_unavailable": unavailable,
@@ -2117,7 +2126,7 @@ class Builder:
         }).replace("</", "<\\/")
         return f"""
 <style>{css}</style>
-<div id="{html.escape(self._instance_id)}" class="mlb-root" data-mlbricks-builder-version="0.7.37"></div>
+<div id="{html.escape(self._instance_id)}" class="mlb-root" data-mlbricks-builder-version="0.7.38"></div>
 <script>
 try {{ delete window.MLBricksBuilder; }} catch (e) {{ window.MLBricksBuilder = undefined; }}
 {js}
